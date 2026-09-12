@@ -151,13 +151,11 @@ def diagnostic_12_points(symptom: str, car: str = "") -> str:
            "", "ВАЖНО: это план диагностики, а не готовый диагноз.",
            "", "ПРИОРИТЕТНЫЕ НАПРАВЛЕНИЯ:"] + [f"- {x}" for x in priority] + ["", "12 ПУНКТОВ:"]
     for title, check, proof in points:
-        out += [f"
-{title}", f"Проверка: {check}", f"Подтверждение: {proof}"]
+        out += [f"\n{title}", f"Проверка: {check}", f"Подтверждение: {proof}"]
     out += ["", "ФИНАЛ: если неисправность не подтверждена — деталь не приговаривать.",
             "Если подтверждена — показать доказательство и только затем принимать решение о ремонте.",
             "", AVTOHIRURG_RULES]
-    return "
-".join(out)
+   return "\n".join(out)
 
 @mcp.tool()
 def client_conclusion(car: str, symptom: str, confirmed_faults: str = "",
