@@ -155,7 +155,7 @@ def diagnostic_12_points(symptom: str, car: str = "") -> str:
     out += ["", "ФИНАЛ: если неисправность не подтверждена — деталь не приговаривать.",
             "Если подтверждена — показать доказательство и только затем принимать решение о ремонте.",
             "", AVTOHIRURG_RULES]
-        return "\n".join(out)
+    return "\n".join(out)
 
 @mcp.tool()
 def client_conclusion(car: str, symptom: str, confirmed_faults: str = "",
