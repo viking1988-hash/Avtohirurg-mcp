@@ -18,6 +18,9 @@ AVTOHIRURG_RULES = """
 Главный принцип: НЕ УГАДЫВАЕМ ДЕТАЛЬ. ДОКАЗЫВАЕМ НЕИСПРАВНОСТЬ.
 """.strip()
 
+def _log_tool(name: str):
+    print(f"[AVTOHIRURG_TOOL] {name}", flush=True)
+
 def _critical():
     return ["не тормозит","тормоза пропали","педаль тормоза проваливается",
             "руль заклинивает","руль не поворачивается","рулевое управление отказало",
@@ -33,6 +36,7 @@ def _attention():
 
 @mcp.tool()
 def diagnose(service: str, audience: str) -> str:
+    _log_tool("diagnose")
     """Создаёт понятное описание услуги Автохирург."""
     return f"""Автохирург — {service}.
 Для {audience}, которым важно понимать, за что они платят.
@@ -45,6 +49,7 @@ def diagnose(service: str, audience: str) -> str:
 
 @mcp.tool()
 def diagnose_symptom(symptom: str, car: str = "") -> str:
+    _log_tool("diagnose_symptom")
     """Предварительный анализ симптома без окончательного диагноза."""
     s = symptom.lower()
     critical = any(x in s for x in _critical())
@@ -73,6 +78,7 @@ def diagnose_symptom(symptom: str, car: str = "") -> str:
 
 @mcp.tool()
 def repair_urgency(symptom: str, car: str = "") -> str:
+    _log_tool("repair_urgency")
     """Предварительная оценка срочности."""
     s = symptom.lower()
     if any(x in s for x in _critical()):
@@ -96,6 +102,7 @@ def repair_urgency(symptom: str, car: str = "") -> str:
 
 @mcp.tool()
 def avtohirurg_protocol(symptom: str, car: str = "", diagnostic_results: str = "") -> str:
+    _log_tool("avtohirurg_protocol")
     """Единый структурированный протокол."""
     return f"""АВТОХИРУРГ — ЕДИНЫЙ ПРОТОКОЛ
 Автомобиль: {car or "не указан"}
@@ -116,6 +123,7 @@ def avtohirurg_protocol(symptom: str, car: str = "", diagnostic_results: str = "
 
 @mcp.tool()
 def diagnostic_12_points(symptom: str, car: str = "") -> str:
+    _log_tool("diagnostic_12_points")
     """Полный 12-пунктный диагностический протокол."""
     s = symptom.lower()
     priority = []
@@ -146,7 +154,7 @@ def diagnostic_12_points(symptom: str, car: str = "") -> str:
         ("11. Подтверждающий тест","Изменить один контролируемый фактор и повторить проверку.","Воспроизводимым результатом."),
         ("12. Доказательство и вывод","Зафиксировать подтверждённый дефект и разделить ремонт сейчас/позже.","Фото, видео, измерением или тестом.")
     ]
-    out = [f"АВТОХИРУРГ — ДИАГНОСТИКА ПО 12 ПУНКТАМ",
+    out = ["АВТОХИРУРГ — ДИАГНОСТИКА ПО 12 ПУНКТАМ",
            f"Автомобиль: {car or 'не указан'}", f"Симптом: {symptom}",
            "", "ВАЖНО: это план диагностики, а не готовый диагноз.",
            "", "ПРИОРИТЕТНЫЕ НАПРАВЛЕНИЯ:"] + [f"- {x}" for x in priority] + ["", "12 ПУНКТОВ:"]
@@ -161,6 +169,7 @@ def diagnostic_12_points(symptom: str, car: str = "") -> str:
 def client_conclusion(car: str, symptom: str, confirmed_faults: str = "",
                       evidence: str = "", recommended_repairs: str = "",
                       can_postpone: str = "") -> str:
+    _log_tool("client_conclusion")
     """Формирует итоговое заключение для клиента."""
     return f"""АВТОХИРУРГ — ЗАКЛЮЧЕНИЕ ДЛЯ КЛИЕНТА
 
@@ -183,6 +192,7 @@ def client_conclusion(car: str, symptom: str, confirmed_faults: str = "",
 
 @mcp.tool()
 def checklist() -> str:
+    _log_tool("checklist")
     """Чек-лист Автохирурга."""
     return """ЧЕК-ЛИСТ АВТОХИРУРГА — 12 ПУНКТОВ
 1. Жалоба и условия
@@ -202,3 +212,4 @@ def checklist() -> str:
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
+
