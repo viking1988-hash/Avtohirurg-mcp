@@ -1,14 +1,29 @@
+#!/usr/bin/env python3
+"""
+Avtohirurg MCP Server
+Protocolized vehicle diagnostic expert via Model Context Protocol (MCP).
+Runs on port 8000 (or PORT env var) with /mcp endpoint for MCP StreamableHTTP transport.
+Health check available at GET /health (via wrapper HTTP layer).
+"""
 import os
 import base64
 import json
 import urllib.request
 import urllib.error
 from typing import Any
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
+import sys
+import time
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource
 
-mcp = FastMCP("Avtohirurg", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+PORT = int(os.environ.get("PORT", 8000))
+mcp = FastMCP("Avtohirurg", host="0.0.0.0", port=PORT)
+
+# Global state for health checks
+health_check_state = {"ready": False, "mcp_running": False}
 
 AVTOHIRURG_RULES = """
 ПРОТОКОЛ АВТОХИРУРГА
@@ -356,5 +371,25 @@ def generate_diagnostic_pdf(car: str, symptom: str) -> EmbeddedResource:
     return _pdf_resource(pdf, "avtohirurg-diagnostic.pdf")
 
 
+def start_mcp_server():
+    """Run MCP server with streamable-http transport on port."""
+    global health_check_state
+    try:
+        print(f"[INIT] Starting Avtohirurg MCP on port {PORT}", flush=True)
+        print(f"[INIT] Endpoint: http://0.0.0.0:{PORT}/mcp (StreamableHTTP)", flush=True)
+        health_check_state["mcp_running"] = True
+        mcp.run(transport="streamable-http")
+    except Exception as e:
+        print(f"[ERROR] MCP startup failed: {e}", flush=True)
+        health_check_state["mcp_running"] = False
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    health_check_state["ready"] = True
+    print(f"[STARTUP] Avtohirurg MCP Server v1.0", flush=True)
+    print(f"[STARTUP] Port: {PORT}", flush=True)
+    print(f"[STARTUP] Carbone integration: {'enabled (check CARBONE_API_KEY)' if _carbone_key() else 'disabled (no CARBONE_API_KEY)'}", flush=True)
+    
+    start_mcp_server()
+
