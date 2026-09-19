@@ -7,6 +7,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource
+import wordpress_client as wp
 
 mcp = FastMCP("Avtohirurg", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
@@ -127,6 +128,49 @@ def _pdf_resource(pdf: bytes, filename: str) -> EmbeddedResource:
             blob=base64.b64encode(pdf).decode("ascii"),
         )
     )
+
+
+
+
+@mcp.tool()
+def wordpress_health() -> str:
+    """Проверяет доступность WordPress REST API без изменения сайта."""
+    _log_tool("wordpress_health")
+    return json.dumps(wp.health(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def wordpress_current_user() -> str:
+    """Проверяет авторизацию WordPress Application Password и возвращает профиль текущего пользователя."""
+    _log_tool("wordpress_current_user")
+    return json.dumps(wp.current_user(), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def wordpress_get_page(page_id: int) -> str:
+    """Читает страницу WordPress по ID без изменения сайта."""
+    _log_tool("wordpress_get_page", page_id=page_id)
+    return json.dumps(wp.get_page(page_id), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def wordpress_update_page(page_id: int, fields_json: str) -> str:
+    """Обновляет разрешённые поля страницы WordPress. fields_json должен быть JSON-объектом."""
+    fields = json.loads(fields_json)
+    if not isinstance(fields, dict):
+        raise ValueError("fields_json must decode to a JSON object")
+    _log_tool("wordpress_update_page", page_id=page_id, fields=list(fields.keys()))
+    return json.dumps(wp.update_page(page_id, fields), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def wordpress_cf7_feedback(form_id: int, fields_json: str) -> str:
+    """Отправляет тестовый payload в Contact Form 7 REST endpoint. Не логирует секреты."""
+    fields = json.loads(fields_json)
+    if not isinstance(fields, dict):
+        raise ValueError("fields_json must decode to a JSON object")
+    _log_tool("wordpress_cf7_feedback", form_id=form_id, field_names=list(fields.keys()))
+    return json.dumps(wp.cf7_feedback(form_id, fields), ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
