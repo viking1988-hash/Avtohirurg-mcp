@@ -19,10 +19,12 @@ def _auth_header() -> str:
     token = base64.b64encode(f"{WP_USERNAME}:{WP_APP_PASSWORD}".encode()).decode()
     return f"Basic {token}"
 
-def request(path: str, method: str = "GET", payload: Any | None = None) -> dict:
+def request(path: str, method: str = "GET", payload: Any | None = None, auth_required: bool = True) -> dict:
     url = f"{WP_URL}{path}"
     data = None
-    headers = {"Accept": "application/json", "Authorization": _auth_header()}
+    headers = {"Accept": "application/json"}
+    if auth_required:
+        headers["Authorization"] = _auth_header()
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode()
         headers["Content-Type"] = "application/json"
@@ -46,7 +48,7 @@ def request(path: str, method: str = "GET", payload: Any | None = None) -> dict:
         return {"ok": False, "url": url, "error": str(exc)}
 
 def health() -> dict:
-    return request("/wp-json/")
+    return request("/wp-json/", auth_required=False)
 
 def current_user() -> dict:
     return request("/wp-json/wp/v2/users/me")
