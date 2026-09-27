@@ -20,7 +20,7 @@ if not MCP_TOKEN:
 PUBLIC_HOST = os.environ.get("MCP_ALLOWED_HOST", "").strip() or os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
 ALLOWED_HOSTS = [PUBLIC_HOST, f"{PUBLIC_HOST}:*"] if PUBLIC_HOST else ["localhost:*"]
 
-mcp = FastMCP("Avtohirurg", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+mcp = FastMCP("Avtohirurg", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), streamable_http_path="/mcp")
 
 AVTOHIRURG_RULES = """
 ПРОТОКОЛ АВТОХИРУРГА
@@ -459,7 +459,6 @@ transport_security = TransportSecuritySettings(
 )
 
 app = mcp.streamable_http_app(
-    streamable_http_path="/mcp",
     stateless_http=True,
     json_response=True,
     transport_security=transport_security,
