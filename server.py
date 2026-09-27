@@ -20,7 +20,20 @@ if not MCP_TOKEN:
 PUBLIC_HOST = os.environ.get("MCP_ALLOWED_HOST", "").strip() or os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
 ALLOWED_HOSTS = [PUBLIC_HOST, f"{PUBLIC_HOST}:*"] if PUBLIC_HOST else ["localhost:*"]
 
-mcp = FastMCP("Avtohirurg", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), streamable_http_path="/mcp", stateless_http=True, json_response=True, transport_security=transport_security)
+transport_security = TransportSecuritySettings(
+    allowed_hosts=ALLOWED_HOSTS,
+    allowed_origins=[f"https://{PUBLIC_HOST}"] if PUBLIC_HOST else ["http://localhost"],
+)
+
+mcp = FastMCP(
+    "Avtohirurg",
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", 8000)),
+    streamable_http_path="/mcp",
+    stateless_http=True,
+    json_response=True,
+    transport_security=transport_security,
+)
 
 AVTOHIRURG_RULES = """
 ПРОТОКОЛ АВТОХИРУРГА
@@ -452,11 +465,6 @@ async def health(_request):
         "auth": "bearer"
     })
 
-
-transport_security = TransportSecuritySettings(
-    allowed_hosts=ALLOWED_HOSTS,
-    allowed_origins=[f"https://{PUBLIC_HOST}"] if PUBLIC_HOST else ["http://localhost"],
-)
 
 app = mcp.streamable_http_app(
     custom_starlette_routes=[Route("/health", health, methods=["GET"])],
