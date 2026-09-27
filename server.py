@@ -7,7 +7,18 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
+from mcp.server.transport_security import TransportSecuritySettings
 import wordpress_client as wp
+
+MCP_TOKEN = os.environ.get("MCP_TOKEN", "").strip()
+if not MCP_TOKEN:
+    raise RuntimeError("MCP_TOKEN is required for remote Avtohirurg MCP")
+
+PUBLIC_HOST = os.environ.get("MCP_ALLOWED_HOST", "").strip() or os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+ALLOWED_HOSTS = [PUBLIC_HOST, f"{PUBLIC_HOST}:*"] if PUBLIC_HOST else ["localhost:*"]
 
 mcp = FastMCP("Avtohirurg", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
@@ -400,5 +411,62 @@ def generate_diagnostic_pdf(car: str, symptom: str) -> EmbeddedResource:
     return _pdf_resource(pdf, "avtohirurg-diagnostic.pdf")
 
 
+class BearerTokenMiddleware:
+    """Fail-closed bearer gate for the public remote MCP endpoint."""
+
+    def __init__(self, app: ASGIApp, token: str):
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http" or scope.get("path") == "/health":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            k.decode("latin-1").lower(): v.decode("latin-1")
+            for k, v in scope.get("headers", [])
+        }
+        if headers.get("authorization", "") != f"Bearer {self.token}":
+            body = b'{"error":"Unauthorized"}'
+            await send({
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"www-authenticate", b'Bearer realm="avtohirurg-mcp"'),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
+
+        await self.app(scope, receive, send)
+
+
+async def health(_request):
+    return JSONResponse({
+        "ok": True,
+        "service": "avtohirurg-mcp",
+        "mcp_path": "/mcp",
+        "auth": "bearer"
+    })
+
+
+transport_security = TransportSecuritySettings(
+    allowed_hosts=ALLOWED_HOSTS,
+    allowed_origins=[f"https://{PUBLIC_HOST}"] if PUBLIC_HOST else ["http://localhost"],
+)
+
+app = mcp.streamable_http_app(
+    streamable_http_path="/mcp",
+    stateless_http=True,
+    json_response=True,
+    transport_security=transport_security,
+    custom_starlette_routes=[Route("/health", health, methods=["GET"])],
+)
+app.add_middleware(BearerTokenMiddleware, token=MCP_TOKEN)
+
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

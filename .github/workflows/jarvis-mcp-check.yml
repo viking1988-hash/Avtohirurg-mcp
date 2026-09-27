@@ -1,0 +1,16 @@
+name: Avtohirurg MCP check
+
+on:
+  push:
+    branches: ["main", "jarvis-mcp-runtime"]
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile server.py wordpress_client.py
