@@ -8,7 +8,8 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 from mcp.server.transport_security import TransportSecuritySettings
 import wordpress_client as wp
@@ -466,8 +467,13 @@ async def health(_request):
     })
 
 
-app = mcp.streamable_http_app(
-    custom_starlette_routes=[Route("/health", health, methods=["GET"])],
+mcp_app = mcp.streamable_http_app()
+
+app = Starlette(
+    routes=[
+        Route("/health", health, methods=["GET"]),
+        Mount("/", app=mcp_app),
+    ],
 )
 app.add_middleware(BearerTokenMiddleware, token=MCP_TOKEN)
 
