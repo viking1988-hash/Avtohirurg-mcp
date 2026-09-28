@@ -3,6 +3,7 @@ import base64
 import json
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -57,6 +58,26 @@ def _log_tool(name: str, **data):
         f"{k}={str(v)[:180]!r}" for k, v in data.items() if v not in (None, "")
     )
     print(f"[AVTOHIRURG_TOOL] {name}{(' ' + details) if details else ''}", flush=True)
+
+
+def _audit_log(action: str, level: str, outcome: str, **meta):
+    event = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "service": "avtohirurg-mcp",
+        "action": action,
+        "level": level,
+        "outcome": outcome,
+        "meta": {k: str(v)[:240] for k, v in meta.items() if v not in (None, "")},
+    }
+    print("[AVTOHIRURG_AUDIT] " + json.dumps(event, ensure_ascii=False), flush=True)
+
+
+def _action_policy(level: str) -> str:
+    return {
+        "AUTO": "Можно выполнять автоматически: анализ, подготовка, структурирование и безопасное чтение.",
+        "APPROVAL": "Требуется подтверждение человека перед внешним действием или изменением данных.",
+        "HUMAN": "Решение и действие только человеком: деньги, возвраты, критические решения и спорные случаи.",
+    }.get(level, "Политика не определена.")
 
 
 def _critical():
@@ -423,6 +444,10 @@ def generate_diagnostic_pdf(car: str, symptom: str) -> EmbeddedResource:
     template = """<!doctype html><html><head><meta charset='utf-8'><style>body{font-family:Arial,sans-serif;margin:32px}h1{font-size:22px}h2{font-size:16px;margin-top:20px}.meta{padding:10px;border:1px solid #ddd}.diag{font-size:11px;line-height:1.45;white-space:normal}</style></head><body><h1>Автохирург — диагностический протокол</h1><div class='meta'><b>Автомобиль:</b> {d.car}<br><b>Симптом:</b> {d.symptom}</div><h2>Протокол 12 пунктов</h2><div class='diag'>{d.diagnostic}</div></body></html>"""
     pdf = _carbone_pdf(template, {"car": car, "symptom": symptom, "diagnostic": safe_diag}, "avtohirurg-diagnostic.pdf")
     return _pdf_resource(pdf, "avtohirurg-diagnostic.pdf")
+
+
+from ai_admin import register_ai_admin_tools
+register_ai_admin_tools(mcp, _log_tool, _audit_log, _action_policy, diagnostic_12_points, repair_urgency)
 
 
 class BearerTokenMiddleware:
