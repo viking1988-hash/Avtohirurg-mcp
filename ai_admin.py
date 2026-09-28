@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, timezone
 
+import history_store
+
 WORKFLOW_STATES = (
     "NEW", "INTAKE", "DIAGNOSIS", "APPROVAL", "BOOKED",
     "REPAIR", "COMPLETED", "REVIEW", "CONTENT", "RETURN",
@@ -117,6 +119,46 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
         audit_log("diagnostic_plan","AUTO","prepared",car=car)
         return plan+"\n\n"+urgency+"\n\nПолитика: "+action_policy("AUTO")
 
+    def client_history(name, phone, limit=10):
+        """AUTO: возвращает историю визитов клиента без изменения данных."""
+        history_store.init_store()
+        visits = history_store.get_history(phone, limit)
+        audit_log("client_history","AUTO","read",visit_count=len(visits))
+        return json.dumps({
+            "status":"ok",
+            "client":name or None,
+            "visits":visits,
+            "policy":action_policy("AUTO"),
+        },ensure_ascii=False,indent=2)
+
+    def save_diagnostic_visit(name, phone, state, card_json):
+        """APPROVAL: сохраняет диагностическую карту в историю клиента."""
+        card = json.loads(card_json)
+        if not isinstance(card, dict):
+            raise ValueError("card_json must decode to a JSON object")
+        history_store.init_store()
+        result = history_store.save_visit(name, phone, state, card)
+        audit_log("save_diagnostic_visit","APPROVAL","saved",visit_id=result["visit_id"])
+        return json.dumps({
+            "status":"approval_required",
+            "result":result,
+            "policy":action_policy("APPROVAL"),
+        },ensure_ascii=False,indent=2)
+
+    def set_client_state(name, phone, state):
+        """APPROVAL: обновляет состояние клиента в истории."""
+        state = _normalize(state).upper()
+        if state not in WORKFLOW_STATES:
+            raise ValueError("unknown workflow state")
+        history_store.init_store()
+        result = history_store.set_state(phone, state, name)
+        audit_log("set_client_state","APPROVAL","updated",state=state)
+        return json.dumps({
+            "status":"approval_required",
+            "result":result,
+            "policy":action_policy("APPROVAL"),
+        },ensure_ascii=False,indent=2)
+
     def workflow_state(current_state, event):
         """AUTO: проверяет безопасный переход клиента между состояниями."""
         result = next_workflow_state(current_state, event)
@@ -191,6 +233,9 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
 
     mcp.tool()(client_intake)
     mcp.tool()(diagnostic_plan)
+    mcp.tool()(client_history)
+    mcp.tool()(save_diagnostic_visit)
+    mcp.tool()(set_client_state)
     mcp.tool()(workflow_state)
     mcp.tool()(diagnostic_card)
     mcp.tool()(second_opinion)
