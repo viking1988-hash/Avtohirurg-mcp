@@ -13,4 +13,4 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m py_compile server.py wordpress_client.py
+      - run: python -m py_compile server.py wordpress_client.py ai_admin.py
