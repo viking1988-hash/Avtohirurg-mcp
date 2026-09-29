@@ -14,6 +14,7 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 from mcp.server.transport_security import TransportSecuritySettings
 import wordpress_client as wp
+import history_store
 
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "").strip()
 if not MCP_TOKEN:
@@ -483,6 +484,52 @@ class BearerTokenMiddleware:
         await self.app(scope, receive, send)
 
 
+
+async def jarvis_return_queue_api(request):
+    """Authenticated JSON endpoint for n8n/Jarvis polling of the internal return queue."""
+    try:
+        limit = int(request.query_params.get("limit", "50"))
+    except ValueError:
+        limit = 50
+    limit = max(1, min(limit, 200))
+    history_store.init_store()
+    queue = history_store.list_open_return_tasks(limit)
+    _audit_log("jarvis_return_queue_api", "AUTO", "read", task_count=len(queue))
+    return JSONResponse({
+        "status": "ready",
+        "queue": queue,
+        "integration": "jarvis_n8n",
+        "approval_required_before_external_action": True,
+        "policy": _action_policy("AUTO"),
+    })
+
+
+async def jarvis_return_task_status_api(request):
+    """Authenticated JSON endpoint for n8n/Jarvis to update an internal task status."""
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"status": "error", "error": "invalid_json"}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"status": "error", "error": "json_object_required"}, status_code=400)
+    task_id = payload.get("task_id")
+    status = str(payload.get("status") or "").strip().upper()
+    if task_id is None:
+        return JSONResponse({"status": "error", "error": "task_id_required"}, status_code=400)
+    if status not in {"OPEN", "READY", "DONE", "CANCELLED"}:
+        return JSONResponse({"status": "error", "error": "invalid_status"}, status_code=400)
+    try:
+        history_store.init_store()
+        result = history_store.update_return_task_status(int(task_id), status)
+    except (ValueError, TypeError) as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=400)
+    _audit_log("jarvis_return_task_status_api", "APPROVAL", "updated", task_id=task_id, status=status)
+    return JSONResponse({
+        "status": "approval_required",
+        "result": result,
+        "policy": _action_policy("APPROVAL"),
+    })
+
 async def health(_request):
     return JSONResponse({
         "ok": True,
@@ -497,6 +544,8 @@ mcp_app = mcp.streamable_http_app()
 app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
+        Route("/api/jarvis/return-queue", jarvis_return_queue_api, methods=["GET"]),
+        Route("/api/jarvis/return-task/status", jarvis_return_task_status_api, methods=["POST"]),
         Mount("/", app=mcp_app),
     ],
 )
