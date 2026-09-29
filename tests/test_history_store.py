@@ -19,6 +19,10 @@ class HistoryStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "DATABASE_URL"):
                 history_store._connect()
 
+    def test_return_task_status_validation(self):
+        with self.assertRaises(ValueError):
+            history_store.update_return_task_status(1, "BAD")
+
     def test_visit_payload_is_json_serializable(self):
         card = {"car": "Toyota Camry", "confirmed_faults": ["Рулевая тяга"]}
         payload = json.dumps(card, ensure_ascii=False)

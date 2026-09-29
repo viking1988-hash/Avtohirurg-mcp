@@ -159,6 +159,29 @@ def get_return_tasks(phone, limit=20):
             rows = cur.fetchall()
     return [{"task_id":r[0],"task_type":r[1],"due_date":r[2],"status":r[3],"payload":r[4],"created_at":r[5].isoformat() if r[5] else None} for r in rows]
 
+def list_open_return_tasks(limit=100):
+    limit = max(1, min(int(limit), 200))
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id,client_key,task_type,due_date,status,payload,created_at
+                FROM avtohirurg_return_tasks WHERE status='OPEN'
+                ORDER BY created_at ASC LIMIT %s""", (limit,))
+            rows = cur.fetchall()
+    return [{"task_id":r[0],"client_key":r[1],"task_type":r[2],"due_date":r[3],"status":r[4],"payload":r[5],"created_at":r[6].isoformat() if r[6] else None} for r in rows]
+
+def update_return_task_status(task_id, status):
+    status = str(status or "").strip().upper()
+    if status not in {"OPEN", "READY", "DONE", "CANCELLED"}:
+        raise ValueError("invalid task status")
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE avtohirurg_return_tasks SET status=%s WHERE id=%s RETURNING id,status", (status, task_id))
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        raise ValueError("return task not found")
+    return {"task_id": row[0], "status": row[1]}
+
 def health():
     with _connect() as conn:
         with conn.cursor() as cur:
