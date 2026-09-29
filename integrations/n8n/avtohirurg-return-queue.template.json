@@ -1,0 +1,211 @@
+{
+  "name": "Avtohirurg Return Queue",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://avtohirurg-mcp-production-0596.up.railway.app/api/jarvis/return-queue?limit=50",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.AVTOHIRURG_MCP_TOKEN}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-queue",
+      "name": "Get Return Queue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const q=$json.queue||[]; return q.map(t=>({json:t}));"
+      },
+      "id": "split",
+      "name": "Split Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "OPEN",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "READY",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "gate",
+      "name": "Ready For Approval",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{task_id:$json.id,client_key:$json.client_key,task_type:$json.task_type,due_date:$json.due_date,payload:$json.payload,approval_required:true}}];"
+      },
+      "id": "draft",
+      "name": "Prepare Approval Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://avtohirurg-mcp-production-0596.up.railway.app/api/jarvis/return-task/status",
+        "sendHeaders": true,
+        "sendBody": true,
+        "contentType": "json",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.AVTOHIRURG_MCP_TOKEN}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "task_id",
+              "value": "={{$json.task_id}}"
+            },
+            {
+              "name": "status",
+              "value": "DONE"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "done",
+      "name": "Mark DONE (after approval + send)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        -100
+      ],
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "Get Return Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Return Queue": {
+      "main": [
+        [
+          {
+            "node": "Split Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Queue": {
+      "main": [
+        [
+          {
+            "node": "Ready For Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ready For Approval": {
+      "main": [
+        [
+          {
+            "node": "Prepare Approval Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Approval Payload": {
+      "main": [
+        [
+          {
+            "node": "Mark DONE (after approval + send)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
