@@ -14,6 +14,7 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 from mcp.server.transport_security import TransportSecuritySettings
 import wordpress_client as wp
+import history_store
 
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "").strip()
 if not MCP_TOKEN:
