@@ -4,6 +4,7 @@ import unittest
 from ai_admin import (
     WORKFLOW_STATES,
     build_diagnostic_card,
+    build_return_loop,
     next_workflow_state,
 )
 
@@ -41,6 +42,23 @@ class AiAdminV2Tests(unittest.TestCase):
         result = next_workflow_state("DIAGNOSIS", "something_else")
         self.assertEqual(result["status"], "unknown_event")
         self.assertIn("APPROVAL", result["allowed_next_states"])
+
+    def test_return_loop_starts_after_completion(self):
+        result = build_return_loop("COMPLETED", next_due_date="2026-10-15", recommendations=["Проверить пыльник"])
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["next_state"], "RETURN")
+        self.assertIn("запросить отзыв", result["steps"])
+        self.assertEqual(result["next_due_date"], "2026-10-15")
+
+    def test_return_loop_is_blocked_before_completion(self):
+        result = build_return_loop("DIAGNOSIS")
+        self.assertEqual(result["status"], "blocked")
+        self.assertNotIn("next_state", result)
+
+    def test_return_loop_does_not_promote_deferred_items(self):
+        result = build_return_loop("COMPLETED", deferred_items=["Проверка задней подвески"])
+        self.assertEqual(result["deferred_items"], ["Проверка задней подвески"])
+        self.assertIn("Не выдумывать сроки", result["rule"])
 
     def test_diagnostic_card_preserves_only_supplied_facts(self):
         card = build_diagnostic_card(
