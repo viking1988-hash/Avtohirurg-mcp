@@ -301,4 +301,6 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
     mcp.tool()(booking_request)
     mcp.tool()(content_case)
     mcp.tool()(return_loop)
+    mcp.tool()(create_return_task)
+    mcp.tool()(return_tasks)
     mcp.tool()(ai_admin_policy)
