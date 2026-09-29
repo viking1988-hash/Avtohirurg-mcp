@@ -317,4 +317,6 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
     mcp.tool()(return_loop)
     mcp.tool()(create_return_task)
     mcp.tool()(return_tasks)
+    mcp.tool()(jarvis_return_queue)
+    mcp.tool()(mark_return_task)
     mcp.tool()(ai_admin_policy)
