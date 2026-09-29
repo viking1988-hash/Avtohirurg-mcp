@@ -278,6 +278,20 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
         audit_log("return_tasks", "AUTO", "read", task_count=len(tasks))
         return json.dumps({"status":"ok", "tasks":tasks, "policy":action_policy("AUTO")}, ensure_ascii=False, indent=2)
 
+    def jarvis_return_queue(limit=50):
+        """AUTO: готовит очередь задач для Jarvis/n8n; внешних действий не выполняет."""
+        history_store.init_store()
+        tasks = history_store.list_open_return_tasks(limit)
+        audit_log("jarvis_return_queue", "AUTO", "read", task_count=len(tasks))
+        return json.dumps({"status":"ready", "queue":tasks, "integration":"jarvis_n8n", "policy":action_policy("AUTO")}, ensure_ascii=False, indent=2)
+
+    def mark_return_task(task_id, status):
+        """APPROVAL: меняет статус внутренней задачи; не отправляет клиенту сообщение."""
+        history_store.init_store()
+        result = history_store.update_return_task_status(task_id, status)
+        audit_log("mark_return_task", "APPROVAL", "updated", task_id=task_id, status=status)
+        return json.dumps({"status":"approval_required", "result":result, "policy":action_policy("APPROVAL")}, ensure_ascii=False, indent=2)
+
     def ai_admin_policy():
         """AUTO: возвращает матрицу прав AI-администратора."""
         log_tool("ai_admin_policy")
