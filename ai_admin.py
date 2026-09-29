@@ -258,6 +258,26 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
         audit_log("return_loop", "AUTO", result.get("status", "unknown"), current=current_state)
         return json.dumps({**result, "policy": action_policy("AUTO")}, ensure_ascii=False, indent=2)
 
+    def create_return_task(name, phone, task_type, due_date="", payload_json="{}"):
+        """APPROVAL: создаёт внутреннюю задачу повторного контакта; внешнее сообщение не отправляет."""
+        payload = json.loads(payload_json or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("payload_json must decode to a JSON object")
+        if due_date and not _normalize(due_date):
+            raise ValueError("invalid due_date")
+        history_store.init_store()
+        history_store.upsert_client(name, phone, "RETURN")
+        result = history_store.create_return_task(phone, task_type, due_date, payload)
+        audit_log("create_return_task", "APPROVAL", "created", task_type=task_type)
+        return json.dumps({"status":"approval_required", "result":result, "policy":action_policy("APPROVAL")}, ensure_ascii=False, indent=2)
+
+    def return_tasks(name, phone, limit=20):
+        """AUTO: читает внутренние задачи повторного контакта."""
+        history_store.init_store()
+        tasks = history_store.get_return_tasks(phone, limit)
+        audit_log("return_tasks", "AUTO", "read", task_count=len(tasks))
+        return json.dumps({"status":"ok", "tasks":tasks, "policy":action_policy("AUTO")}, ensure_ascii=False, indent=2)
+
     def ai_admin_policy():
         """AUTO: возвращает матрицу прав AI-администратора."""
         log_tool("ai_admin_policy")
@@ -281,4 +301,6 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
     mcp.tool()(booking_request)
     mcp.tool()(content_case)
     mcp.tool()(return_loop)
+    mcp.tool()(create_return_task)
+    mcp.tool()(return_tasks)
     mcp.tool()(ai_admin_policy)

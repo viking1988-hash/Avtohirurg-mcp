@@ -124,6 +124,41 @@ def get_history(phone, limit=10):
         for row in rows
     ]
 
+def create_return_task(phone, task_type, due_date="", payload=None):
+    key = _client_key(phone)
+    task_type = str(task_type or "").strip()
+    if not task_type:
+        raise ValueError("task_type is required")
+    payload = payload or {}
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS avtohirurg_return_tasks (
+                id BIGSERIAL PRIMARY KEY,
+                client_key TEXT NOT NULL REFERENCES avtohirurg_clients(client_key),
+                task_type TEXT NOT NULL,
+                due_date TEXT,
+                status TEXT NOT NULL DEFAULT 'OPEN',
+                payload JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )""")
+            cur.execute("""INSERT INTO avtohirurg_return_tasks(client_key,task_type,due_date,payload)
+                VALUES (%s,%s,%s,%s::jsonb) RETURNING id""",
+                (key, task_type, str(due_date or "").strip() or None, json.dumps(payload, ensure_ascii=False)))
+            task_id = cur.fetchone()[0]
+        conn.commit()
+    return {"task_id": task_id, "client_key": key, "status": "OPEN"}
+
+def get_return_tasks(phone, limit=20):
+    key = _client_key(phone)
+    limit = max(1, min(int(limit), 50))
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id,task_type,due_date,status,payload,created_at
+                FROM avtohir_return_tasks WHERE client_key=%s
+                ORDER BY created_at DESC LIMIT %s""", (key, limit))
+            rows = cur.fetchall()
+    return [{"task_id":r[0],"task_type":r[1],"due_date":r[2],"status":r[3],"payload":r[4],"created_at":r[5].isoformat() if r[5] else None} for r in rows]
+
 def health():
     with _connect() as conn:
         with conn.cursor() as cur:
