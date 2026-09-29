@@ -23,6 +23,10 @@ class HistoryStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             history_store.update_return_task_status(1, "BAD")
 
+    def test_idempotency_key_normalization(self):
+        self.assertEqual(history_store._normalize_idempotency_key("  task-1  "), "task-1")
+        self.assertIsNone(history_store._normalize_idempotency_key(""))
+
     def test_visit_payload_is_json_serializable(self):
         card = {"car": "Toyota Camry", "confirmed_faults": ["Рулевая тяга"]}
         payload = json.dumps(card, ensure_ascii=False)

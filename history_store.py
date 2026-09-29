@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS avtohirurg_visits (
 );
 CREATE INDEX IF NOT EXISTS idx_avtohirurg_visits_client
     ON avtohirurg_visits(client_key, created_at DESC);
+CREATE TABLE IF NOT EXISTS avtohirurg_return_tasks (id BIGSERIAL PRIMARY KEY, client_key TEXT NOT NULL REFERENCES avtohirurg_clients(client_key), task_type TEXT NOT NULL, due_date TEXT, status TEXT NOT NULL DEFAULT 'OPEN', payload JSONB NOT NULL, idempotency_key TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE UNIQUE INDEX IF NOT EXISTS uq_avtohirurg_return_task_idempotency ON avtohirurg_return_tasks(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_avtohirurg_return_tasks_status_created ON avtohirurg_return_tasks(status, created_at ASC);
 """
 
 def _dsn():
@@ -124,29 +127,31 @@ def get_history(phone, limit=10):
         for row in rows
     ]
 
-def create_return_task(phone, task_type, due_date="", payload=None):
+def _normalize_idempotency_key(value):
+    value = str(value or "").strip()
+    return value or None
+
+def create_return_task(phone, task_type, due_date="", payload=None, idempotency_key=""):
     key = _client_key(phone)
     task_type = str(task_type or "").strip()
     if not task_type:
         raise ValueError("task_type is required")
     payload = payload or {}
+    idem = _normalize_idempotency_key(idempotency_key)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("""CREATE TABLE IF NOT EXISTS avtohirurg_return_tasks (
-                id BIGSERIAL PRIMARY KEY,
-                client_key TEXT NOT NULL REFERENCES avtohirurg_clients(client_key),
-                task_type TEXT NOT NULL,
-                due_date TEXT,
-                status TEXT NOT NULL DEFAULT 'OPEN',
-                payload JSONB NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )""")
-            cur.execute("""INSERT INTO avtohirurg_return_tasks(client_key,task_type,due_date,payload)
-                VALUES (%s,%s,%s,%s::jsonb) RETURNING id""",
-                (key, task_type, str(due_date or "").strip() or None, json.dumps(payload, ensure_ascii=False)))
-            task_id = cur.fetchone()[0]
+            cur.execute("""ALTER TABLE avtohirurg_return_tasks ADD COLUMN IF NOT EXISTS idempotency_key TEXT""")
+            cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_avtohirurg_return_task_idempotency ON avtohirurg_return_tasks(idempotency_key) WHERE idempotency_key IS NOT NULL""")
+            if idem:
+                cur.execute("SELECT id,client_key,task_type,due_date,status,payload,created_at FROM avtohirurg_return_tasks WHERE idempotency_key=%s", (idem,))
+                existing = cur.fetchone()
+                if existing:
+                    return {"task_id":existing[0],"client_key":existing[1],"task_type":existing[2],"due_date":existing[3],"status":existing[4],"payload":existing[5],"created_at":existing[6].isoformat() if existing[6] else None,"created":False,"deduplicated":True,"idempotency_key":idem}
+            cur.execute("""INSERT INTO avtohirurg_return_tasks(client_key,task_type,due_date,payload,idempotency_key) VALUES (%s,%s,%s,%s::jsonb,%s) RETURNING id""",
+                (key,task_type,str(due_date or "").strip() or None,json.dumps(payload,ensure_ascii=False),idem))
+            task_id=cur.fetchone()[0]
         conn.commit()
-    return {"task_id": task_id, "client_key": key, "status": "OPEN"}
+    return {"task_id":task_id,"client_key":key,"status":"OPEN","created":True,"deduplicated":False,"idempotency_key":idem}
 
 def get_return_tasks(phone, limit=20):
     key = _client_key(phone)
@@ -160,13 +165,11 @@ def get_return_tasks(phone, limit=20):
     return [{"task_id":r[0],"task_type":r[1],"due_date":r[2],"status":r[3],"payload":r[4],"created_at":r[5].isoformat() if r[5] else None} for r in rows]
 
 def list_open_return_tasks(limit=100):
-    limit = max(1, min(int(limit), 200))
+    limit=max(1,min(int(limit),200))
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("""SELECT id,client_key,task_type,due_date,status,payload,created_at
-                FROM avtohirurg_return_tasks WHERE status='OPEN'
-                ORDER BY created_at ASC LIMIT %s""", (limit,))
-            rows = cur.fetchall()
+            cur.execute("SELECT id,client_key,task_type,due_date,status,payload,created_at FROM avtohirurg_return_tasks WHERE status IN ('OPEN','READY') ORDER BY created_at ASC LIMIT %s",(limit,))
+            rows=cur.fetchall()
     return [{"task_id":r[0],"client_key":r[1],"task_type":r[2],"due_date":r[3],"status":r[4],"payload":r[5],"created_at":r[6].isoformat() if r[6] else None} for r in rows]
 
 def update_return_task_status(task_id, status):

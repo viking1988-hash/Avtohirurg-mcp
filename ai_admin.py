@@ -258,7 +258,7 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
         audit_log("return_loop", "AUTO", result.get("status", "unknown"), current=current_state)
         return json.dumps({**result, "policy": action_policy("AUTO")}, ensure_ascii=False, indent=2)
 
-    def create_return_task(name, phone, task_type, due_date="", payload_json="{}"):
+    def create_return_task(name, phone, task_type, due_date="", payload_json="{}", idempotency_key=""):
         """APPROVAL: создаёт внутреннюю задачу повторного контакта; внешнее сообщение не отправляет."""
         payload = json.loads(payload_json or "{}")
         if not isinstance(payload, dict):
@@ -267,8 +267,8 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
             raise ValueError("invalid due_date")
         history_store.init_store()
         history_store.upsert_client(name, phone, "RETURN")
-        result = history_store.create_return_task(phone, task_type, due_date, payload)
-        audit_log("create_return_task", "APPROVAL", "created", task_type=task_type)
+        result = history_store.create_return_task(phone, task_type, due_date, payload, idempotency_key)
+        audit_log("create_return_task", "APPROVAL", "deduplicated" if result.get("deduplicated") else "created", task_type=task_type)
         return json.dumps({"status":"approval_required", "result":result, "policy":action_policy("APPROVAL")}, ensure_ascii=False, indent=2)
 
     def return_tasks(name, phone, limit=20):
@@ -283,7 +283,7 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
         history_store.init_store()
         tasks = history_store.list_open_return_tasks(limit)
         audit_log("jarvis_return_queue", "AUTO", "read", task_count=len(tasks))
-        return json.dumps({"status":"ready", "queue":tasks, "integration":"jarvis_n8n", "policy":action_policy("AUTO")}, ensure_ascii=False, indent=2)
+        return json.dumps({"status":"ready", "queue":tasks, "integration":"jarvis_n8n", "approval_required_before_external_action":True, "policy":action_policy("AUTO")}, ensure_ascii=False, indent=2)
 
     def mark_return_task(task_id, status):
         """APPROVAL: меняет статус внутренней задачи; не отправляет клиенту сообщение."""
