@@ -252,6 +252,12 @@ def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_
             "policy":action_policy("AUTO")
         },ensure_ascii=False,indent=2)
 
+    def return_loop(current_state, review_status="", next_due_date="", recommendations=None, deferred_items=None):
+        """AUTO: готовит следующий контакт после ремонта; не отправляет сообщения и не бронирует."""
+        result = build_return_loop(current_state, review_status, next_due_date, recommendations, deferred_items)
+        audit_log("return_loop", "AUTO", result.get("status", "unknown"), current=current_state)
+        return json.dumps({**result, "policy": action_policy("AUTO")}, ensure_ascii=False, indent=2)
+
     def ai_admin_policy():
         """AUTO: возвращает матрицу прав AI-администратора."""
         log_tool("ai_admin_policy")
