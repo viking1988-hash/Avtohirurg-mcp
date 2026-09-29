@@ -94,6 +94,39 @@ def build_diagnostic_card(
         "principle": "НЕ УГАДЫВАЕМ ДЕТАЛЬ. ДОКАЗЫВАЕМ НЕИСПРАВНОСТЬ.",
     }
 
+def build_return_loop(current_state, review_status="", next_due_date="", recommendations=None, deferred_items=None):
+    """Build a safe post-repair return loop without inventing dates or urgency."""
+    current = _normalize(current_state).upper()
+    if current not in WORKFLOW_STATES:
+        return {"status": "invalid", "current_state": current}
+    if current not in {"COMPLETED", "REVIEW", "CONTENT", "RETURN"}:
+        return {
+            "status": "blocked",
+            "current_state": current,
+            "rule": "Возвратный цикл запускается после завершения ремонта.",
+        }
+    recommendations = [str(x).strip() for x in (recommendations or []) if str(x).strip()]
+    deferred_items = [str(x).strip() for x in (deferred_items or []) if str(x).strip()]
+    if current == "COMPLETED":
+        steps = ["запросить отзыв", "зафиксировать результат ремонта"]
+    elif current == "REVIEW":
+        steps = ["обработать отзыв", "подготовить повторный контакт"]
+    elif current == "CONTENT":
+        steps = ["подготовить повторный контакт"]
+    else:
+        steps = ["связаться с клиентом по согласованной дате"]
+    return {
+        "status": "ready",
+        "current_state": current,
+        "next_state": "RETURN" if current != "RETURN" else "INTAKE",
+        "review_status": _normalize(review_status) or None,
+        "next_due_date": _normalize(next_due_date) or None,
+        "steps": steps,
+        "confirmed_recommendations": recommendations,
+        "deferred_items": deferred_items,
+        "rule": "Не выдумывать сроки и не превращать отложенные работы в срочные.",
+    }
+
 def register_ai_admin_tools(mcp, log_tool, audit_log, action_policy, diagnostic_12_points, repair_urgency):
     def client_intake(name="", phone="", car="", year="", symptom="", preferred_time=""):
         """AUTO: принимает первичную заявку; не бронирует и не меняет CRM."""
