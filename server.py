@@ -544,6 +544,8 @@ mcp_app = mcp.streamable_http_app()
 app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
+        Route("/api/jarvis/return-queue", jarvis_return_queue_api, methods=["GET"]),
+        Route("/api/jarvis/return-task/status", jarvis_return_task_status_api, methods=["POST"]),
         Mount("/", app=mcp_app),
     ],
 )
