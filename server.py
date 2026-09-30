@@ -563,4 +563,11 @@ app.add_middleware(BearerTokenMiddleware, token=MCP_TOKEN)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    # FastMCP's StreamableHTTP session manager must run inside its lifespan
+    # so the internal task group is initialized before /mcp accepts requests.
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8000)),
+        lifespan="on",
+    )
