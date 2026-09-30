@@ -551,6 +551,9 @@ async def health(_request):
 
 mcp_app = mcp.streamable_http_app()
 
+# The MCP app is mounted inside a parent Starlette app. Starlette does not
+# automatically run lifespans of mounted sub-apps, so the parent must run
+# FastMCP's lifespan; otherwise /mcp fails with an uninitialized task group.
 app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
@@ -558,6 +561,7 @@ app = Starlette(
         Route("/api/jarvis/return-task/status", jarvis_return_task_status_api, methods=["POST"]),
         Mount("/", app=mcp_app),
     ],
+    lifespan=mcp_app.router.lifespan_context,
 )
 app.add_middleware(BearerTokenMiddleware, token=MCP_TOKEN)
 
