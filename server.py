@@ -168,6 +168,45 @@ def _carbone_pdf(template_html: str, data: dict[str, Any], report_name: str) -> 
         raise RuntimeError(f"Не удалось подключиться к Carbone: {exc.reason}") from exc
 
 
+CARBONE_DIAGNOSTIC_TEMPLATE_ID = os.environ.get(
+    "CARBONE_DIAGNOSTIC_TEMPLATE_ID",
+    "fa10eb8b2cb6fbdeb182f6117f94990a9e76a97f5e919ddff7c15c149a386bef",
+).strip()
+
+def _carbone_saved_template_pdf(data: dict[str, Any], report_name: str) -> bytes:
+    token = _carbone_key()
+    if not token:
+        raise RuntimeError("Не найден ключ Carbone. Укажи CARBONE_API_KEY в Railway Variables.")
+    template_id = CARBONE_DIAGNOSTIC_TEMPLATE_ID
+    payload = {"data": data, "convertTo": "pdf", "reportName": report_name}
+    req = urllib.request.Request(
+        f"https://api.carbone.io/render/{template_id}",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            rendered = json.loads(response.read().decode("utf-8"))
+        render_id = (rendered.get("data") or {}).get("renderId") or rendered.get("renderId")
+        if not render_id:
+            raise RuntimeError(f"Carbone не вернул renderId: {rendered}")
+        get_req = urllib.request.Request(
+            f"https://api.carbone.io/render/{render_id}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/pdf"},
+            method="GET",
+        )
+        with urllib.request.urlopen(get_req, timeout=60) as response:
+            pdf = response.read()
+        if not pdf.startswith(b"%PDF"):
+            raise RuntimeError("Carbone вернул ответ, который не является PDF.")
+        return pdf
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:1500]
+        raise RuntimeError(f"Carbone HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Не удалось подключиться к Carbone: {exc.reason}") from exc
+
 def _pdf_resource(pdf: bytes, filename: str) -> EmbeddedResource:
     return EmbeddedResource(
         resource=BlobResourceContents(
@@ -446,6 +485,29 @@ def generate_diagnostic_pdf(car: str, symptom: str) -> EmbeddedResource:
     template = """<!doctype html><html><head><meta charset='utf-8'><style>body{font-family:Arial,sans-serif;margin:32px}h1{font-size:22px}h2{font-size:16px;margin-top:20px}.meta{padding:10px;border:1px solid #ddd}.diag{font-size:11px;line-height:1.45;white-space:normal}</style></head><body><h1>Автохирург — диагностический протокол</h1><div class='meta'><b>Автомобиль:</b> {d.car}<br><b>Симптом:</b> {d.symptom}</div><h2>Протокол 12 пунктов</h2><div class='diag'>{d.diagnostic}</div></body></html>"""
     pdf = _carbone_pdf(template, {"car": car, "symptom": symptom, "diagnostic": safe_diag}, "avtohirurg-diagnostic.pdf")
     return _pdf_resource(pdf, "avtohirurg-diagnostic.pdf")
+
+
+@mcp.tool()
+def generate_client_diagnostic_pdf(data_json: str, report_name: str = "avtohirurg-diagnostic.pdf") -> EmbeddedResource:
+    """Формирует клиентский PDF по боевому шаблону Carbone V2 из структурированного JSON диагностики."""
+    data = json.loads(data_json)
+    if not isinstance(data, dict):
+        raise ValueError("data_json must decode to a JSON object")
+    required = ("complaint", "report", "vehicle", "diagnostic", "conclusion", "media", "specialist")
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise ValueError("Не хватает полей Carbone: " + ", ".join(missing))
+    points = data.get("diagnostic") or {}
+    missing_points = [f"p{i}" for i in range(1, 13) if f"p{i}" not in points]
+    if missing_points:
+        raise ValueError("Не хватает пунктов диагностики: " + ", ".join(missing_points))
+    safe_name = (report_name or "avtohirurg-diagnostic.pdf").strip()
+    if not safe_name.lower().endswith(".pdf"):
+        safe_name += ".pdf"
+    _log_tool("generate_client_diagnostic_pdf", report_name=safe_name)
+    pdf = _carbone_saved_template_pdf(data, safe_name)
+    _audit_log("generate_client_diagnostic_pdf", "AUTO", "generated", report_name=safe_name)
+    return _pdf_resource(pdf, safe_name)
 
 
 @mcp.tool()
