@@ -209,6 +209,7 @@ def _carbone_saved_template_pdf(data: dict[str, Any], report_name: str) -> bytes
 
 def _pdf_resource(pdf: bytes, filename: str) -> EmbeddedResource:
     return EmbeddedResource(
+        type="resource",
         resource=BlobResourceContents(
             uri=f"urn:avtohirurg:{filename}",
             mimeType="application/pdf",
