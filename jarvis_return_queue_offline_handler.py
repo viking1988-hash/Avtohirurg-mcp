@@ -77,8 +77,12 @@ def process(conn, task_id, owner, transport, now):
             WHERE task_id=? AND state='APPROVED'
               AND approved_by IS NOT NULL AND approved_fingerprint=fingerprint
               AND approval_expires_at>? AND destination LIKE 'sandbox:%'
-            RETURNING fingerprint,payload""", (owner,task_id,now.isoformat())).fetchone()
+            RETURNING fingerprint,payload,destination""", (owner,task_id,now.isoformat())).fetchone()
         if not row:
+            return False
+        if action_fingerprint(task_id, row[2], row[1]) != row[0]:
+            # Reject changed content before any delivery or event is committed.
+            conn.execute("UPDATE queue SET state='APPROVED',owner=NULL,version=version-1 WHERE task_id=? AND state='PROCESSING' AND owner=?", (task_id, owner))
             return False
         conn.execute("INSERT INTO events(task_id,from_state,to_state,actor) VALUES (?,'APPROVED','PROCESSING',?)", (task_id,owner))
     # Never retry automatically if fake delivery raises: manual reconciliation.
