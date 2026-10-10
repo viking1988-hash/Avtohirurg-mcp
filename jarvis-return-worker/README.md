@@ -53,3 +53,9 @@ Migration is additive; do not run DROP. Old prototype APIs are not changed.
 pytest jarvis-return-worker/tests. PostgreSQL integration requires an ephemeral CI database
 via JARVIS_WORKER_CI_DATABASE_URL. This suite verifies new runtime behavior and does not
 rerun the previous 29 acceptance tests. No real customer destination is permitted.
+
+## Sandbox interruption verification
+JARVIS_FAKE_DELAY_SECONDS (0 default, maximum 180) delays only Fake delivery.
+Use temporarily for an operator-controlled worker interruption while PROCESSING;
+restore to 0 after verification. Repository checks ownership again after delay.
+No forced-exit API or real transport is exposed.

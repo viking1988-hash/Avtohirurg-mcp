@@ -94,3 +94,9 @@ def test_api_does_not_accept_caller_actor_or_real_destination():
     assert client.post('/enqueue',json=payload,headers={'Authorization':'Bearer '+'r'*32}).status_code==422
     payload={'task_id':'test','fingerprint':'a'*64,'expires_at':NOW.isoformat(),'actor':'forged-human'}
     assert client.post('/approve',json=payload,headers={'Authorization':'Bearer '+'a'*32}).status_code==422
+
+
+def test_fake_fault_delay_is_bounded():
+    from jarvis_return_worker.transport import FakeTransport
+    with pytest.raises(ValueError): FakeTransport(None,'worker',181)
+    with pytest.raises(ValueError): FakeTransport(None,'worker',-1)

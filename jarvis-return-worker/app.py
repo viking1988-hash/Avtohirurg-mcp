@@ -16,7 +16,7 @@ async def lifespan(app):
     repo=QueueRepository(config)
     await asyncio.to_thread(repo.migrate)
     stop=asyncio.Event()
-    worker=Worker(repo,FakeTransport(repo,config.worker_id),stop)
+    worker=Worker(repo,FakeTransport(repo,config.worker_id,float(__import__('os').environ.get('JARVIS_FAKE_DELAY_SECONDS','0'))),stop)
     recovery=RecoveryWorker(repo,stop)
     app.state.config,app.state.repository,app.state.stop=config,repo,stop
     app.state.loops=[asyncio.create_task(worker.run()),asyncio.create_task(recovery.run())]
