@@ -26,8 +26,10 @@ def validate_target(url: str, declared_name: str) -> None:
         raise ValueError("Refusing migration: database name does not match Jarvis sandbox")
     if not parsed.hostname or not parsed.username or not parsed.password:
         raise ValueError("Database host, user and password required")
-    if parsed.hostname in ("localhost", "127.0.0.1"):
-        raise ValueError("Refusing ambiguous local database target")
+    if parsed.username != "jarvis_sandbox":
+        raise ValueError("Refusing non-sandbox database user")
+    if parsed.hostname != "jarvis-sandbox-postgres.railway.internal":
+        raise ValueError("Refusing non-sandbox database host")
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -46,6 +48,9 @@ def main() -> None:
             cur.execute("SELECT current_database()")
             if cur.fetchone()[0] != EXPECTED_DB:
                 raise RuntimeError("Server database identity mismatch")
+            cur.execute("SELECT current_user")
+            if cur.fetchone()[0] != "jarvis_sandbox":
+                raise RuntimeError("Server database user mismatch")
             # Proposal includes a parameterized UPDATE example; only apply DDL.
             sql = SQL_PATH.read_text(encoding="utf-8").split("-- Example single-winner claim")[0]
             cur.execute(sql)
