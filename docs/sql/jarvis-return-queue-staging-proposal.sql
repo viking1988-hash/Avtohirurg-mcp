@@ -1,8 +1,6 @@
-"""PostgreSQL DDL proposal for Jarvis return queue (NOT executed).
-
-Apply only to an isolated Jarvis staging database after reviewing existing schema.
-Do not apply to CRM Booking or any production database.
-"""
+-- PostgreSQL DDL proposal for Jarvis return queue (NOT executed).
+-- Apply only to isolated Jarvis staging after schema review.
+-- Never apply to CRM Booking or production.
 CREATE TABLE IF NOT EXISTS jarvis_return_actions (
     task_id text PRIMARY KEY,
     action_fingerprint char(64) NOT NULL,
