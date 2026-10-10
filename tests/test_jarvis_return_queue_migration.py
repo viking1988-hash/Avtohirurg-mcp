@@ -10,6 +10,14 @@ class SandboxMigrationGuardTests(unittest.TestCase):
             with self.subTest(database=database), self.assertRaises(ValueError):
                 validate_target(f"postgresql://jarvis_sandbox:example@db.internal/{database}", EXPECTED_DB)
 
+    def test_reject_other_host_even_with_matching_database(self):
+        with self.assertRaises(ValueError):
+            validate_target("postgresql://jarvis_sandbox:example@production-db.railway.internal/jarvis_return_queue_test", EXPECTED_DB)
+
+    def test_reject_other_user_even_with_matching_database(self):
+        with self.assertRaises(ValueError):
+            validate_target("postgresql://postgres:example@jarvis-sandbox-postgres.railway.internal/jarvis_return_queue_test", EXPECTED_DB)
+
     def test_reject_missing_password(self):
         with self.assertRaises(ValueError):
             validate_target("postgresql://jarvis_sandbox@db.internal/jarvis_return_queue_test", EXPECTED_DB)
