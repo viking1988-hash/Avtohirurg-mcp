@@ -18,13 +18,13 @@ WHERE conrelid IN (
   to_regclass('public.jarvis_return_action_events')
 )
 ORDER BY conrelid::regclass::text, conname;
--- Run the following only if both tables exist.
--- SELECT task_id, state, version, attempt_count, lease_owner, updated_at
--- FROM public.jarvis_return_actions
--- WHERE task_id LIKE 'sandbox_return_queue_smoke_20261010%'
--- ORDER BY task_id;
--- SELECT task_id, count(*) AS event_count, max(event_time) AS latest_event
--- FROM public.jarvis_return_action_events
--- WHERE task_id LIKE 'sandbox_return_queue_smoke_20261010%'
--- GROUP BY task_id ORDER BY task_id;
+-- Stable read-only snapshot: compare exact rows before/after authorized restart.
+SELECT task_id, state, version, attempt_count, lease_owner, updated_at
+FROM public.jarvis_return_actions
+WHERE task_id LIKE 'sandbox_return_queue_smoke_20261010%'
+ORDER BY task_id;
+SELECT task_id, count(*) AS event_count, max(event_time) AS latest_event
+FROM public.jarvis_return_action_events
+WHERE task_id LIKE 'sandbox_return_queue_smoke_20261010%'
+GROUP BY task_id ORDER BY task_id;
 COMMIT;
