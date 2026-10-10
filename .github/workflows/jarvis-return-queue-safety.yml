@@ -29,3 +29,31 @@ jobs:
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_safety.py' -v
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_claims.py' -v
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_migration.py' -v
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: jarvis_sandbox
+          POSTGRES_PASSWORD: ci_only_not_a_real_secret
+          POSTGRES_DB: jarvis_return_queue_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jarvis_sandbox -d jarvis_return_queue_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install 'psycopg[binary]>=3.2,<4'
+      - name: Verify PostgreSQL 18 schema and constraints
+        env:
+          JARVIS_CI_DATABASE_URL: postgresql://jarvis_sandbox:ci_only_not_a_real_secret@127.0.0.1:5432/jarvis_return_queue_test
+        run: python -m unittest discover -s tests -p 'test_jarvis_return_queue_postgres.py' -v
