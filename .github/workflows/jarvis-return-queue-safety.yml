@@ -1,0 +1,28 @@
+name: Jarvis Return Queue Safety
+
+on:
+  push:
+    branches:
+      - feat/jarvis-return-queue-safety-20261010
+  pull_request:
+    paths:
+      - 'jarvis_return_queue_safety.py'
+      - 'jarvis_return_queue_claims.py'
+      - 'tests/test_jarvis_return_queue_*.py'
+      - '.github/workflows/jarvis-return-queue-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safety-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run isolated safety unit tests
+        run: python -m unittest discover -s tests -p 'test_jarvis_return_queue_*.py' -v
