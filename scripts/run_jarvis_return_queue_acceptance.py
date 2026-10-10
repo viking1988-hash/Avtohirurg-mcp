@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 PATTERNS = (
+    "test_jarvis_return_queue_acceptance_dsn.py",
     "test_jarvis_return_queue_offline_e2e.py",
     "test_jarvis_return_queue_adversarial.py",
     "test_jarvis_return_queue_postgres.py",
