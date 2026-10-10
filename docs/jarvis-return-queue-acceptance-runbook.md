@@ -35,9 +35,10 @@ python -m unittest discover -s tests -p 'test_jarvis_return_queue_postgres_sandb
 7. No production rollout is permitted based on these tests alone.
 
 The GitHub Actions workflow now executes the full isolated acceptance runner:
-`scripts/run_jarvis_return_queue_acceptance.py`. On commit `938ea282`,
-workflow run `38074219278` completed successfully with 22 acceptance tests
+`scripts/run_jarvis_return_queue_acceptance.py`. On commit `f8c64e00`,
+workflow run `38075932708` completed successfully with 29 acceptance tests
 against an ephemeral PostgreSQL 18 service, plus the separate safety-tests job.
+The 29 tests include seven strict DSN checks against lookalike and remote URLs.
 This certifies only the ephemeral CI tests, not Railway persistent staging.
 
 ## Persistent Railway staging: read-only first
