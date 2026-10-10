@@ -31,6 +31,8 @@ jobs:
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_migration.py' -v
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_handler_offline.py' -v
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_fake_transport.py' -v
+          python -m unittest discover -s tests -p 'test_jarvis_return_queue_offline_e2e.py' -v
+          python -m unittest discover -s tests -p 'test_jarvis_return_queue_adversarial.py' -v
 
   postgres-integration:
     runs-on: ubuntu-latest
@@ -58,4 +60,4 @@ jobs:
       - name: Verify PostgreSQL 18 schema and constraints
         env:
           JARVIS_CI_DATABASE_URL: postgresql://jarvis_sandbox:ci_only_not_a_real_secret@127.0.0.1:5432/jarvis_return_queue_test
-        run: python -m unittest discover -s tests -p 'test_jarvis_return_queue_postgres.py' -v
+        run: python scripts/run_jarvis_return_queue_acceptance.py
