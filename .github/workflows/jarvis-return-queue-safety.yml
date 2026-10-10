@@ -29,6 +29,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_safety.py' -v
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_claims.py' -v
           python -m unittest discover -s tests -p 'test_jarvis_return_queue_migration.py' -v
+          python -m unittest discover -s tests -p 'test_jarvis_return_queue_handler_offline.py' -v
 
   postgres-integration:
     runs-on: ubuntu-latest
