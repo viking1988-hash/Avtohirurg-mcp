@@ -17,7 +17,7 @@ WHERE conrelid IN (
   to_regclass('public.jarvis_return_actions'),
   to_regclass('public.jarvis_return_action_events')
 )
-ORDER BY table_name::text, conname;
+ORDER BY conrelid::regclass::text, conname;
 -- Run the following only if both tables exist.
 -- SELECT task_id, state, version, attempt_count, lease_owner, updated_at
 -- FROM public.jarvis_return_actions
