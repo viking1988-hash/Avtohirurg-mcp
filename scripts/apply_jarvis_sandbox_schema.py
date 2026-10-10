@@ -54,7 +54,23 @@ def main() -> None:
             # Proposal includes a parameterized UPDATE example; only apply DDL.
             sql = SQL_PATH.read_text(encoding="utf-8").split("-- Example single-winner claim")[0]
             cur.execute(sql)
-    print("Jarvis sandbox schema applied successfully")
+            cur.execute("""SELECT tablename FROM pg_tables
+                           WHERE schemaname = current_schema()
+                             AND tablename IN (%s, %s)
+                           ORDER BY tablename""",
+                        ("jarvis_return_action_events", "jarvis_return_actions"))
+            tables = {row[0] for row in cur.fetchall()}
+            expected_tables = {"jarvis_return_actions", "jarvis_return_action_events"}
+            if tables != expected_tables:
+                raise RuntimeError(f"Sandbox schema verification failed: {sorted(tables)}")
+            cur.execute("""SELECT 1 FROM pg_indexes
+                           WHERE schemaname = current_schema()
+                             AND tablename = %s AND indexname = %s""",
+                        ("jarvis_return_action_events",
+                         "jarvis_return_action_events_task_time_idx"))
+            if cur.fetchone() is None:
+                raise RuntimeError("Sandbox event index verification failed")
+    print("Jarvis sandbox schema verified: 2 tables and event index")
 
 if __name__ == "__main__":
     main()
