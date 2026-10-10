@@ -3,13 +3,13 @@ import os
 import unittest
 from pathlib import Path
 
-import psycopg
-
 SQL_PATH = Path(__file__).resolve().parents[1] / "docs/sql/jarvis-return-queue-staging-proposal.sql"
 
 
 class JarvisPostgresIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("JARVIS_CI_DATABASE_URL"), "CI PostgreSQL service not configured")
     def test_schema_and_guards(self):
+        import psycopg
         url = os.environ["JARVIS_CI_DATABASE_URL"]
         ddl = SQL_PATH.read_text(encoding="utf-8").split("-- Example single-winner claim")[0]
         with psycopg.connect(url) as conn:
