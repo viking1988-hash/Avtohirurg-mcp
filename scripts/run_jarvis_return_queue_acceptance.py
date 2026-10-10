@@ -7,6 +7,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from urllib.parse import urlsplit, unquote
 
 # Direct script execution adds scripts/ to sys.path, not the repository root.
 # Import queue modules from the checked-out repository under test.
@@ -23,12 +24,27 @@ PATTERNS = (
 )
 
 
+def validate_ci_dsn(url):
+    """Reject remote hosts and lookalike DSNs, without opening a connection."""
+    try:
+        parts = urlsplit(url)
+        valid = (
+            parts.scheme in ("postgresql", "postgres")
+            and parts.hostname in ("127.0.0.1", "localhost", "::1")
+            and unquote(parts.username or "") == "jarvis_sandbox"
+            and unquote(parts.path) == "/jarvis_return_queue_test"
+            and parts.port == 5432
+            and not parts.query
+            and not parts.fragment
+        )
+    except (ValueError, TypeError):
+        valid = False
+    if not valid:
+        raise SystemExit("REFUSED: only exact local ephemeral CI PostgreSQL DSN is allowed")
+
+
 def main():
-    url = os.environ.get("JARVIS_CI_DATABASE_URL", "")
-    if not url or "127.0.0.1" not in url and "localhost" not in url:
-        raise SystemExit("REFUSED: only local ephemeral CI PostgreSQL is allowed")
-    if "/jarvis_return_queue_test" not in url or "jarvis_sandbox" not in url:
-        raise SystemExit("REFUSED: incorrect test database or role")
+    validate_ci_dsn(os.environ.get("JARVIS_CI_DATABASE_URL", ""))
     total = 0
     for pattern in PATTERNS:
         suite = unittest.defaultTestLoader.discover("tests", pattern=pattern)
