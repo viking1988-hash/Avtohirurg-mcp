@@ -25,4 +25,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Run isolated safety unit tests
-        run: python -m unittest discover -s tests -p 'test_jarvis_return_queue_*.py' -v
+        run: |
+          python -m unittest discover -s tests -p 'test_jarvis_return_queue_safety.py' -v
+          python -m unittest discover -s tests -p 'test_jarvis_return_queue_claims.py' -v
+          python -m unittest discover -s tests -p 'test_jarvis_return_queue_migration.py' -v
