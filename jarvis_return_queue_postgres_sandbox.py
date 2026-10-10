@@ -7,6 +7,8 @@ from jarvis_return_queue_safety import action_fingerprint, validate_transition
 
 
 def guard(conn):
+    if conn.autocommit is not True:
+        raise RuntimeError("sandbox repository requires autocommit connection")
     with conn.cursor() as cur:
         cur.execute("SELECT current_database(), current_user")
         if cur.fetchone() != ("jarvis_return_queue_test", "jarvis_sandbox"):
@@ -55,13 +57,14 @@ def approve(conn, task_id, human, fingerprint, expires_at, now):
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute("""UPDATE jarvis_return_actions
-                SET state='APPROVED',approved_by=%s,approved_at=%s,
+                SET state='APPROVED',approved_by=%s,approved_at=now(),
                     approved_fingerprint=%s,approval_expires_at=%s,
                     version=version+1,updated_at=now()
                 WHERE task_id=%s AND state='READY'
                   AND action_fingerprint=%s AND destination_key LIKE 'sandbox:%%'
+                  AND %s > now()
                 RETURNING task_id""",
-                (human,now,fingerprint,expires_at,task_id,fingerprint))
+                (human,fingerprint,expires_at,task_id,fingerprint,expires_at))
             if cur.fetchone() is None:
                 return False
             cur.execute("""INSERT INTO jarvis_return_action_events
@@ -97,7 +100,7 @@ def claim(conn, task_id, owner, fingerprint, lease_seconds=60):
 def finish_fake(conn, task_id, owner, receipt):
     """Only sandbox fake receipts may mark DONE."""
     guard(conn)
-    if not receipt or not receipt.startswith("sandbox:receipt:"):
+    if not isinstance(receipt, str) or receipt != "sandbox:receipt:" + task_id:
         return False
     with conn.transaction():
         with conn.cursor() as cur:
