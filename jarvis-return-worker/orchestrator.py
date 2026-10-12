@@ -79,6 +79,7 @@ class Orchestrator:
 
     async def process(self, task, owner):
         started=time.monotonic()
+        from .metrics import observe_orchestrator
         provider_name=task.get("provider") or self._provider_for(task)
         if self.policy.approval(task).action != "send":
             await asyncio.to_thread(self.repository.fail,task["task_id"],owner,task["attempt_count"])
@@ -94,7 +95,6 @@ class Orchestrator:
                 from .metrics import dispatcher_failure
                 dispatcher_failure(str(exc))
                 raise
-            from .metrics import observe_orchestrator
             result=await asyncio.to_thread(self._send,provider,task)
             receipt=result.get("receipt_id") or result.get("receipt") or result.get("message_id")
             message_id=result.get("message_id")
