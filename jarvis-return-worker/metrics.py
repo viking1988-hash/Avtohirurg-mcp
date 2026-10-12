@@ -65,11 +65,15 @@ def _sync_outbox(repo):
   row=conn.execute("""SELECT
     (SELECT count(*) FROM jarvis_outbox_events) AS events,
     (SELECT count(*) FROM jarvis_outbox_deliveries WHERE status='PUBLISHED') AS replayed,
-    (SELECT count(*) FROM jarvis_outbox_deliveries WHERE status='FAILED') AS failed,
+    (SELECT count(*) FROM jarvis_outbox_audit
+      WHERE action IN ('retry_scheduled','permanent_failure')) AS failed,
     (SELECT coalesce(sum(error_count),0) FROM jarvis_event_subscribers) AS errors,
-    (SELECT count(*) FROM jarvis_outbox_events e WHERE e.status IN ('PENDING','FAILED')
-      OR EXISTS (SELECT 1 FROM jarvis_outbox_deliveries d
-        WHERE d.event_id=e.event_id AND d.status IN ('PENDING','PROCESSING'))) AS pending""").fetchone()
+    (SELECT count(DISTINCT e.event_id) FROM jarvis_outbox_events e
+      JOIN jarvis_event_subscribers s ON (s.event_type=e.event_type OR s.event_type='*')
+        AND s.event_version=e.event_version AND s.status='ACTIVE'
+      LEFT JOIN jarvis_outbox_deliveries d ON d.event_id=e.event_id
+        AND d.subscriber_name=s.subscriber_name AND d.event_version=s.event_version
+      WHERE d.event_id IS NULL OR d.status IN ('PENDING','PROCESSING')) AS pending""").fetchone()
  for key,counter in (('events',_outbox_events),('replayed',_outbox_replayed),
                      ('failed',_outbox_failed),('errors',_subscriber_errors)):
   with _metric_lock:
