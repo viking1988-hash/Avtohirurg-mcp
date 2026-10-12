@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import postgres from 'postgres';
 
 const url=process.env.TELEGRAM_TEST_DATABASE_URL;
+if(!url && process.env.CI)throw new Error('CI requires TELEGRAM_TEST_DATABASE_URL; PostgreSQL tests must not be skipped');
 if(!url){test('migration SQL requires disposable PostgreSQL',{skip:true},()=>{});}
 else {
  const parsed=new URL(url);
