@@ -283,9 +283,9 @@ class OutboxReplay:
             conn.execute(
                 """UPDATE jarvis_event_subscribers SET error_count=error_count+1,
                    updated_at=clock_timestamp()
-                   WHERE subscriber_name=%s AND event_type IN (
+                   WHERE subscriber_name=%s AND (event_type IN (
                      SELECT event_type FROM jarvis_outbox_events WHERE event_id=%s)
-                     AND event_version=%s""", (name, event_id, version))
+                     OR event_type='*') AND event_version=%s""", (name, event_id, version))
             conn.execute(
                 """INSERT INTO jarvis_outbox_audit
                    (event_id,subscriber_name,event_version,action,actor,detail)
