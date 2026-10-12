@@ -231,11 +231,11 @@ CREATE INDEX IF NOT EXISTS jarvis_crm_pending_idx
 
 CREATE TABLE IF NOT EXISTS jarvis_crm_operation_events (
  event_id text NOT NULL REFERENCES jarvis_crm_operations(event_id),
- sequence bigint GENERATED ALWAYS AS IDENTITY,
+ event_sequence bigint GENERATED ALWAYS AS IDENTITY,
  action text NOT NULL,
  actor text NOT NULL,
  reason text,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- PRIMARY KEY(event_id,sequence)
+ PRIMARY KEY(event_id,event_sequence)
 );
 
