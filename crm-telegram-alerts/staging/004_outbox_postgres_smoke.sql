@@ -227,4 +227,21 @@ BEGIN
     AND status='pending' AND attempts=0)
   THEN RAISE EXCEPTION 'future retry modified'; END IF;
 END $priority$;
+-- An exhausted retry stays untouched even if it is overdue.
+DO $retrylimit$
+DECLARE k bigint; before_attempts integer;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,next_attempt_at)
+  VALUES(90000013,'overdue','retryable_error',6,now()-interval '1 day')
+  RETURNING id INTO k;
+  SELECT attempts INTO before_attempts FROM crm_telegram_outbox WHERE id=k;
+  UPDATE crm_telegram_outbox SET status='leased',attempts=attempts+1,
+    lease_until=now()+interval '2 minutes',lease_token=gen_random_uuid()
+  WHERE id=k AND status IN ('pending','retryable_error')
+    AND attempts<5 AND next_attempt_at<=now();
+  IF FOUND THEN RAISE EXCEPTION 'retry ceiling bypassed'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k
+    AND status='retryable_error' AND attempts=before_attempts)
+  THEN RAISE EXCEPTION 'exhausted job was modified'; END IF;
+END $retrylimit$;
 ROLLBACK;
