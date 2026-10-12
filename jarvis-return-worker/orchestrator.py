@@ -15,6 +15,8 @@ class Orchestrator:
         self.policy=policy or PolicyEngine()
         self.event_bus=event_bus or EventBus()
 
+    def enqueue(self, *args, **kwargs): return self.repository.enqueue(*args, **kwargs)
+    def list_tasks(self, limit=100): return self.repository.list(limit)
     def claim(self, owner): return self.repository.claim(owner)
     def recover(self, owner): return self.repository.recover(owner)
     def cancel(self, task_id, actor): return self.repository.cancel(task_id, actor)
