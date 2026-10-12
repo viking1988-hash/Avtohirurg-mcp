@@ -177,3 +177,6 @@ def mutate(repo, task_id, actor, action, expected_version, *, reason, comment=No
         _failed(repo, task_id, actor, action, str(exc), expected_version)
         raise
 
+
+def log_rejected(repo, task_id, actor, action, reason):
+    _failed(repo, task_id, actor, action, reason)
