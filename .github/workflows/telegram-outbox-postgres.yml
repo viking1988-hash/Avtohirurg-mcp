@@ -42,6 +42,11 @@ jobs:
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox WHERE lead_id=99000001 AND alert_type='new' AND status='sent' AND telegram_message_id=123456")" = "1"
           psql -X -v ON_ERROR_STOP=1 -c "DELETE FROM crm_telegram_outbox WHERE lead_id=99000001"
           echo "PASS: existing receipt preserved after repeated migration"
+      - name: Verify expected schema columns and constraints
+        run: |
+          test "$(psql -X -tA -c "SELECT count(*) FROM information_schema.columns WHERE table_name='crm_telegram_outbox' AND column_name IN ('lease_token','lease_until','telegram_message_id','next_attempt_at','attempts')")" = "5"
+          test "$(psql -X -tA -c "SELECT count(*) FROM pg_constraint WHERE conrelid='crm_telegram_outbox'::regclass AND contype='u')" = "1"
+          echo "PASS: schema columns and uniqueness constraint"
       - name: Execute transaction and rollback smoke tests
         run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/004_outbox_postgres_smoke.sql
       - name: Install isolated PostgreSQL test client
