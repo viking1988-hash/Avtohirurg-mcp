@@ -59,3 +59,14 @@ JARVIS_FAKE_DELAY_SECONDS (0 default, maximum 180) delays only Fake delivery.
 Use temporarily for an operator-controlled worker interruption while PROCESSING;
 restore to 0 after verification. Repository checks ownership again after delay.
 No forced-exit API or real transport is exposed.
+
+## Project registry (Sandbox)
+The registry records work across projects; it is separate from the return-action queue and cannot trigger a transport. Projects and tasks are stored in the same guarded Sandbox database and migration is additive.
+
+- `GET/POST /projects`: read/list or idempotently register a project with the read/preparer token.
+- `GET /project-tasks`: list tasks, optionally filtered by project and state.
+- `POST /project-tasks`: add an `INBOX` task with the read/preparer token; this has no external effect.
+- `POST /project-tasks/{task_id}/transition`: operator-token only. Allowed path: `INBOX → READY → IN_PROGRESS → REVIEW → DONE`; tasks may move to `BLOCKED` or `CANCELLED` only through defined transitions.
+- A `DONE` transition requires completion evidence. Task status changes are written to an append-only event history.
+
+The project registry has no public domain in this change. It is not connected to production CRM, customer chat, WordPress, email, or real messaging. Do not put customer personal data, passwords, or tokens in project task descriptions.
