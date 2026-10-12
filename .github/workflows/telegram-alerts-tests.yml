@@ -1,0 +1,36 @@
+name: Telegram alerts reliability tests
+on:
+  push:
+    branches: [feature/crm-telegram-alerts]
+    paths:
+      - 'crm-telegram-alerts/**'
+      - '.github/workflows/telegram-alerts-tests.yml'
+  workflow_dispatch:
+jobs:
+  reliability:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: telegram_ci
+          POSTGRES_PASSWORD: ci_disposable_only
+          POSTGRES_DB: telegram_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U telegram_ci -d telegram_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TELEGRAM_TEST_DATABASE_URL: postgresql://telegram_ci:ci_disposable_only@127.0.0.1:5432/telegram_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install worker dependencies
+        working-directory: crm-telegram-alerts
+        run: npm install --no-audit --no-fund
+      - name: Run unit and real PostgreSQL concurrency tests
+        working-directory: crm-telegram-alerts
+        run: node --test reliability-policy.test.mjs reliability-policy.integration.test.mjs postgres-concurrency.test.mjs
