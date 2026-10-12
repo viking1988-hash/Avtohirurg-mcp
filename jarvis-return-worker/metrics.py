@@ -25,6 +25,13 @@ _outbox_failed=Counter('outbox_failed_total','Subscriber deliveries failed or re
 _subscriber_errors=Counter('subscriber_errors_total','Subscriber invocation errors',registry=_registry)
 _replay_latency=Histogram('replay_latency_seconds','Transactional outbox replay latency',registry=_registry)
 _replay_queue=Gauge('replay_queue_size','Pending durable outbox subscriber deliveries',registry=_registry)
+_crm_requests=Counter('crm_requests_total','CRM provider requests',registry=_registry)
+_crm_success=Counter('crm_success_total','Successful CRM provider requests',registry=_registry)
+_crm_failed=Counter('crm_failed_total','Definitively failed CRM provider requests',registry=_registry)
+_crm_unknown=Counter('crm_unknown_total','CRM requests with unknown outcome',registry=_registry)
+_crm_reconciliation=Counter('crm_reconciliation_total','CRM operations requiring reconciliation',registry=_registry)
+_crm_duplicates=Counter('crm_duplicate_prevented_total','Duplicate CRM operations prevented',registry=_registry)
+_crm_latency=Histogram('crm_latency_seconds','CRM provider request latency',registry=_registry)
 _outbox_last={'events':0,'replayed':0,'failed':0,'errors':0}
 
 _reconciliation_metrics={
@@ -57,6 +64,18 @@ def outbox_replayed(): _outbox_replayed.inc()
 def outbox_failed(): _outbox_failed.inc()
 def subscriber_error(): _subscriber_errors.inc()
 def replay_queue_size(value): _replay_queue.set(max(0,int(value)))
+
+def observe_crm(outcome, elapsed):
+ _crm_requests.inc()
+ _crm_latency.observe(max(0,elapsed))
+ if outcome=='success': _crm_success.inc()
+ elif outcome=='unknown':
+  _crm_unknown.inc()
+  _crm_reconciliation.inc()
+ else: _crm_failed.inc()
+
+def prevent_crm_duplicate(): _crm_duplicates.inc()
+def crm_reconciliation_required(): _crm_reconciliation.inc()
 
 def _sync_outbox(repo):
  if not hasattr(repo,'connection'):
@@ -119,3 +138,4 @@ def render_metrics(repo):
  totals=_reconciliation_totals(repo) if hasattr(repo,'connection') else {name:0 for name in _reconciliation_metrics}
  for name,counter in _reconciliation_metrics.items(): _sync_counter(counter,name,totals[name])
  return generate_latest(_registry)
+

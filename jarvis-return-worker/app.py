@@ -15,6 +15,7 @@ from .api import router
 from .health import ready
 from .events import EventBus
 from .outbox import OutboxReplay, ReplayWorker
+from .crm import CRMAdapter, CRMProvider
 
 
 def _project_event(conn,event):
@@ -39,6 +40,13 @@ def make_dispatcher(config, repository):
         dispatcher.register('fake',FakeTransport(float(os.environ.get('JARVIS_FAKE_DELAY_SECONDS','0'))),enabled=True)
     else:
         raise ValueError('unknown transport; refusing startup')
+    crm_url=os.environ.get('JARVIS_CRM_SANDBOX_URL','')
+    crm_token=os.environ.get('JARVIS_CRM_SANDBOX_TOKEN','')
+    if crm_url or crm_token:
+        if not crm_url or not crm_token:
+            raise ValueError('CRM Sandbox endpoint and token must be configured together')
+        dispatcher.register('crm',CRMProvider(crm_url,crm_token,
+            int(os.environ.get('JARVIS_CRM_TIMEOUT_SECONDS','8'))),enabled=True)
     return dispatcher
 
 
@@ -57,6 +65,7 @@ async def lifespan(app):
     dispatcher=make_dispatcher(config,repo)
     registry=EventBus()
     registry.register("jarvis.lifecycle-projector","*",_project_event,version=1)
+    CRMAdapter().register(registry)
     replay=OutboxReplay(repo,registry,owner=config.worker_id)
     orchestrator=Orchestrator(repo,dispatcher,event_bus=registry)
     transport=dispatcher.dispatch(os.environ.get('JARVIS_TRANSPORT','fake')).client
@@ -90,3 +99,4 @@ async def health():
 @app.get('/ready')
 async def readiness(request:Request):
     return await ready(request)
+

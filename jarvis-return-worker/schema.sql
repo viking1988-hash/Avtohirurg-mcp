@@ -201,3 +201,30 @@ CREATE TABLE IF NOT EXISTS jarvis_event_projection (
  projected_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(event_id,subscriber_name)
 );
+
+-- CRM operations are materialized only by the outbox subscriber. The unique
+-- event/idempotency keys fence repeated replay; provider delivery is a separate
+-- Orchestrator-controlled step and is never performed inside replay's DB txn.
+CREATE TABLE IF NOT EXISTS jarvis_crm_operations (
+ event_id text PRIMARY KEY REFERENCES jarvis_outbox_events(event_id),
+ idempotency_key text NOT NULL UNIQUE,
+ booking_id text NOT NULL,
+ operation text NOT NULL CHECK(operation IN ('send','update','cancel')),
+ crm_status text NOT NULL,
+ external_booking_id text,
+ provider_receipt text,
+ reconciliation_reason text,
+ payload jsonb NOT NULL,
+ correlation_id text,
+ state text NOT NULL DEFAULT 'PENDING'
+   CHECK(state IN ('PENDING','PROCESSING','DONE','FAILED','RECONCILIATION_REQUIRED')),
+ attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+ lease_owner text,
+ lease_until timestamptz,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS jarvis_crm_pending_idx
+ ON jarvis_crm_operations(state,created_at,event_id);
+

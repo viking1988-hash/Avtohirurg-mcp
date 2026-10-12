@@ -153,10 +153,14 @@ class Orchestrator:
         name=getattr(provider,"provider","unknown")
         try:
             transport_dispatch(name)
-            provider_call(name,"send")
+            operation=task.get("operation")
+            method=getattr(provider,operation,None) if operation in ("send","update","cancel") else None
+            method=method or provider.send
+            provider_call(name,operation if method is not provider.send and operation else "send")
             key=f"{task['task_id']}:{task.get('action_fingerprint','')}"
-            return provider.send(task,key)
+            return method(task,key)
         except Exception as exc:
             if exc.__class__.__name__=="DispatcherError":
                 dispatcher_failure(str(exc))
             raise
+

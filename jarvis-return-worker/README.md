@@ -55,6 +55,24 @@ Queue and reconciliation transitions insert their outbox event atomically with t
 
 Authenticated /metrics includes outbox_events_total, outbox_pending_total, outbox_replayed_total, outbox_failed_total, subscriber_errors_total, replay_latency_seconds and replay_queue_size. Durable totals are reconstructed from PostgreSQL after restart.
 
+## CRM Booking integration (Sandbox)
+
+`CRMAdapter` maps version-1 `BookingCreated`, `BookingUpdated`, `BookingCancelled`,
+`BookingConfirmed` and `BookingCompleted` outbox events into deduplicated rows in
+`jarvis_crm_operations`. It runs as a PostgreSQL outbox subscriber and makes no
+network calls. `CRMProvider` is registered with the same provider registry as other
+transports only when both `JARVIS_CRM_SANDBOX_URL` and
+`JARVIS_CRM_SANDBOX_TOKEN` are set. The endpoint must use HTTPS and identify itself
+as Sandbox or Staging. Never configure a Production URL or credential here.
+
+The provider uses stable idempotency keys, minimizes stored responses to booking
+IDs/status/receipt, and classifies ambiguous network/5xx responses as UNKNOWN;
+Orchestrator policy sends UNKNOWN outcomes to reconciliation and never retries them.
+Metrics include `crm_requests_total`, `crm_success_total`, `crm_failed_total`,
+`crm_unknown_total`, `crm_reconciliation_total`,
+`crm_duplicate_prevented_total`, and `crm_latency_seconds`. See
+[CRM transport and recovery](docs/crm-transport.md).
+
 ## Audit and metrics
 
 The append-only event journal includes task ID, actor, provider, action, previous and new state, reason, event time, correlation ID, and action metadata. It supports a replay of state changes and operator decisions.
@@ -66,3 +84,4 @@ Authenticated /metrics includes queue gauges, the existing Telegram-specific cou
 PostgreSQL integration tests use only the disposable CI database configured via JARVIS_WORKER_CI_DATABASE_URL. They cover delivered and undelivered confirmation, stale versions, concurrent operators, restart during review, missing provider identifiers/receipt and post-reconciliation recovery. Telegram integration may use only a dedicated test bot and test chat.
 
 Rollback only the Sandbox worker. Keep the additive schema and audit history; never delete delivery evidence or restore an older database snapshot.
+
