@@ -18,6 +18,14 @@ _policy_reconcile=Counter('policy_reconcile_total','Policy decisions requiring r
 _event_bus_events=Counter('event_bus_events_total','Events published to the internal event bus',['event'],registry=_registry)
 _dispatcher_failures=Counter('dispatcher_failures_total','Provider dispatch failures',['reason'],registry=_registry)
 _provider_calls=Counter('provider_calls_total','Provider interface calls',['provider','method'],registry=_registry)
+_outbox_events=Counter('outbox_events_total','Persisted transactional outbox events',registry=_registry)
+_outbox_pending=Gauge('outbox_pending_total','Outbox events awaiting subscriber delivery',registry=_registry)
+_outbox_replayed=Counter('outbox_replayed_total','Subscriber deliveries committed exactly once',registry=_registry)
+_outbox_failed=Counter('outbox_failed_total','Subscriber deliveries failed or retried',registry=_registry)
+_subscriber_errors=Counter('subscriber_errors_total','Subscriber invocation errors',registry=_registry)
+_replay_latency=Histogram('replay_latency_seconds','Transactional outbox replay latency',registry=_registry)
+_replay_queue=Gauge('replay_queue_size','Pending durable outbox subscriber deliveries',registry=_registry)
+_outbox_last={'events':0,'replayed':0,'failed':0,'errors':0}
 
 _reconciliation_metrics={
  name:Counter(name,description,registry=_registry)
@@ -43,6 +51,33 @@ def policy_reconcile(): _policy_reconcile.inc()
 def provider_call(provider,method): _provider_calls.labels(provider=provider,method=method).inc()
 def dispatcher_failure(reason): _dispatcher_failures.labels(reason=reason).inc()
 def event_published(name): _event_bus_events.labels(event=name).inc()
+
+def replay_latency(elapsed): _replay_latency.observe(max(0,elapsed))
+def outbox_replayed(): _outbox_replayed.inc()
+def outbox_failed(): _outbox_failed.inc()
+def subscriber_error(): _subscriber_errors.inc()
+def replay_queue_size(value): _replay_queue.set(max(0,int(value)))
+
+def _sync_outbox(repo):
+ if not hasattr(repo,'connection'):
+  return
+ with repo.connection() as conn:
+  row=conn.execute("""SELECT
+    (SELECT count(*) FROM jarvis_outbox_events) AS events,
+    (SELECT count(*) FROM jarvis_outbox_deliveries WHERE status='PUBLISHED') AS replayed,
+    (SELECT count(*) FROM jarvis_outbox_deliveries WHERE status='FAILED') AS failed,
+    (SELECT coalesce(sum(error_count),0) FROM jarvis_event_subscribers) AS errors,
+    (SELECT count(*) FROM jarvis_outbox_events e WHERE e.status IN ('PENDING','FAILED')
+      OR EXISTS (SELECT 1 FROM jarvis_outbox_deliveries d
+        WHERE d.event_id=e.event_id AND d.status IN ('PENDING','PROCESSING'))) AS pending""").fetchone()
+ for key,counter in (('events',_outbox_events),('replayed',_outbox_replayed),
+                     ('failed',_outbox_failed),('errors',_subscriber_errors)):
+  with _metric_lock:
+   delta=max(0,int(row[key])-_outbox_last[key])
+   if delta: counter.inc(delta)
+   _outbox_last[key]=int(row[key])
+ _outbox_pending.set(row['pending'])
+ _replay_queue.set(row['pending'])
 
 def observe_telegram(outcome, elapsed):
  _telegram_send.inc()
@@ -79,6 +114,7 @@ def render_metrics(repo):
  values=(sum(s.get(k,0) for k in ('OPEN','READY','APPROVED','RETRY')),s.get('oldest_task',0),
   s.get('PROCESSING',0),s.get('FAILED',0),s.get('RECONCILIATION_REQUIRED',0),s.get('retry_count',0),s.get('recovery',0),s.get('approve',0))
  for name,value in zip(NAMES,values): _gauges[name].set(value)
+ _sync_outbox(repo)
  totals=_reconciliation_totals(repo) if hasattr(repo,'connection') else {name:0 for name in _reconciliation_metrics}
  for name,counter in _reconciliation_metrics.items(): _sync_counter(counter,name,totals[name])
  return generate_latest(_registry)
