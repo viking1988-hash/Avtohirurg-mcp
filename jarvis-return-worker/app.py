@@ -3,6 +3,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
+from psycopg.types.json import Jsonb
 from .config import Config
 from .queue import QueueRepository
 from .transport import FakeTransport, TelegramTransport
