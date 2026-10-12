@@ -38,7 +38,7 @@ The SQL scripts are a prototype and do not yet implement an end-to-end outbox wo
 
 ## Explicit blockers to production readiness
 - An isolated rollback-only mock worker ran successfully in Railway staging, but **no real outbox delivery worker** has been deployed or exercised.
-- No proof of real network timeout, 429 handling or mock-transport crash-after-acknowledgement.
+- Pure transport-policy and database-backed mock scenarios cover timeout, 429 and crash-after-acknowledgement, but no actual network transport has been exercised.
 - Manual review and reconciliation workflow is not implemented.
 - No rollout/rollback evidence for an existing production database.
 
@@ -47,7 +47,7 @@ The SQL scripts are a prototype and do not yet implement an end-to-end outbox wo
 - Pinned mock runner `bcb330ff`: deployment log recorded `PASS: isolated staging schema applied` and `PASS: staging mock claim, receipt, fencing and rollback`.
 - Mock runner rejects Telegram credentials, requires `OUTBOX_STAGING_MOCK=true`, checks database name against `outbox_ci` and `outbox_sandbox`, and intentionally rolls back the fake job transaction.
 - GitHub Actions `Avtohirurg MCP check`, `CRM Telegram alerts isolated tests`, `Telegram Outbox PostgreSQL integration` passed on `d14cd89c`; integration CI also tests missing safety flag and injected Telegram token.
-- The schema persists in the **disposable** Railway database. The mock transaction rolls back its test row; an independent read-only Railway row-count verification has **not** yet been performed.
+- The schema persists in the **disposable** Railway database. The mock transaction rolls back its test row; independent read-only Railway verification later confirmed zero rows (see audit evidence below).
 - No live Telegram delivery, production deployment, production database migration, or PR merge was performed. PR #32 remains draft.
 
 ## Simulated transport failure policy (CI PASS at `5ce028c`, 2026-10-12)
@@ -73,3 +73,12 @@ The SQL scripts are a prototype and do not yet implement an end-to-end outbox wo
 - `outbox_committed_crash.py` terminates an actual disposable PostgreSQL backend **after committing the lease**, before any external send, then verifies persisted lease, expiry-to-`review`, no automatic reclaim, stale-token acknowledgement refusal, and cleanup.
 - All three workflows passed at `9bf50328789ff4dbbe96ec9099c9ea2e3604ef55`.
 - Scope limitation: backend termination simulates loss of worker DB connection, not OS process kill after a Telegram HTTP send; exactly-once external delivery is not proven. Human review of uncertain outcomes remains mandatory.
+
+## Remaining release gates (do not infer completion from green CI)
+1. Implement a one-shot staging-only worker using a **fake transport**, explicit disposable DB allowlist, and a hard refusal when Telegram credentials are present. It must claim in a committed transaction, apply outcomes with a matching lease token, and exit without opening any Telegram connection.
+2. Run a persistent-state integration test: `pending → leased → sent` with synthetic receipt; `429 → retryable_error` with future retry time; timeout/5xx → `review`; verify retry ceiling, idempotent enqueue and stale-token refusal. Delete synthetic rows afterward and audit independently.
+3. Test actual worker-process termination both before and after a fake acknowledgement. After a potentially delivered message, recovery must require human review, not automatic resend.
+4. Provide an operator-only review procedure: show evidence and receipt ID, permit explicitly audited mark-sent or authorized retry, require actor/reason/timestamp, and forbid silent automatic release from `review`.
+5. Only after staging evidence and a separately approved production backup/rollback plan consider a production rollout. Never merge this draft as a shortcut.
+
+**Safety note:** a previous attempt to create the persistent staging worker was blocked by platform safeguards. Do not repeatedly retry the blocked write or bypass it; the release gate remains open.
