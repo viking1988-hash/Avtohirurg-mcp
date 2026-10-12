@@ -44,8 +44,10 @@ jobs:
           echo "PASS: existing receipt preserved after repeated migration"
       - name: Verify expected schema columns and constraints
         run: |
-          test "$(psql -X -tA -c "SELECT count(*) FROM information_schema.columns WHERE table_name='crm_telegram_outbox' AND column_name IN ('lease_token','lease_until','telegram_message_id','next_attempt_at','attempts')")" = "5"
-          test "$(psql -X -tA -c "SELECT count(*) FROM pg_constraint WHERE conrelid='crm_telegram_outbox'::regclass AND contype='u')" = "1"
+          columns=$(psql -X -tA -c "SELECT count(*) FROM information_schema.columns WHERE table_name='crm_telegram_outbox' AND column_name IN ('lease_token','lease_until','telegram_message_id','next_attempt_at','attempts')")
+          unique_constraints=$(psql -X -tA -c "SELECT count(*) FROM pg_constraint WHERE conrelid='crm_telegram_outbox'::regclass AND contype='u'")
+          test "$columns" = "5"
+          test "$unique_constraints" = "1"
           echo "PASS: schema columns and uniqueness constraint"
       - name: Execute transaction and rollback smoke tests
         run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/004_outbox_postgres_smoke.sql
