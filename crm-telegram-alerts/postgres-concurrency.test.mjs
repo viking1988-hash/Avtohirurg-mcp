@@ -41,10 +41,11 @@ else {
       assert.equal(rows.length,1);acquired();
       await locked;
    });
-   await ready;
-   const second=await sql.begin(tx=>tx.unsafe(claim,['worker-B']));
-   assert.equal(second.length,0,'concurrent worker must not claim locked row');
-   release();await first;
+   try {
+     await Promise.race([ready,new Promise((_,reject)=>setTimeout(()=>reject(new Error('first_claim_timeout')),10000))]);
+     const second=await Promise.race([sql.begin(tx=>tx.unsafe(claim,['worker-B'])),new Promise((_,reject)=>setTimeout(()=>reject(new Error('second_claim_timeout')),10000))]);
+     assert.equal(second.length,0,'concurrent worker must not claim locked row');
+   } finally { release(); await first; }
    assert.equal((await sql.unsafe(claim,['worker-B'])).length,0,'committed sending row must not be reclaimed');
    await sql.unsafe("UPDATE telegram_ci.delivery SET lease_until=now()-interval '1 second' WHERE lead_id=900000001");
    assert.equal((await sql.unsafe(claim,['worker-B'])).length,0,'expired sending lease is ambiguous');
