@@ -63,7 +63,8 @@ Authenticated /metrics includes outbox_events_total, outbox_pending_total, outbo
 network calls. `CRMProvider` is registered with the same provider registry as other
 transports only when both `JARVIS_CRM_SANDBOX_URL` and
 `JARVIS_CRM_SANDBOX_TOKEN` are set. The endpoint must use HTTPS and identify itself
-as Sandbox or Staging. Never configure a Production URL or credential here.
+as a Railway Sandbox hostname. Staging and Production endpoints are rejected. Never
+configure Production credentials here.
 
 The provider uses stable idempotency keys, minimizes stored responses to booking
 IDs/status/receipt, and classifies ambiguous network/5xx responses as UNKNOWN;

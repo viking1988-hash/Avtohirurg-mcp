@@ -33,10 +33,13 @@ class CRMProvider:
     def __init__(self, base_url, token, timeout_seconds=8, opener=None):
         parsed = urlsplit(base_url or "")
         host = (parsed.hostname or "").lower()
-        if (parsed.scheme != "https" or not host or not token
-                or not ("sandbox" in host or "staging" in host)
+        labels=host.split(".")
+        sandbox_host=any("sandbox" in label for label in labels)
+        production_host=any("production" in label or label=="prod" or label.startswith("prod-") for label in labels)
+        if (parsed.scheme != "https" or not host.endswith(".up.railway.app") or not token
+                or not sandbox_host or production_host
                 or not 1 <= timeout_seconds <= 30):
-            raise ValueError("CRM transport requires HTTPS Sandbox/Staging endpoint and bounded timeout")
+            raise ValueError("CRM transport requires HTTPS Railway Sandbox endpoint and bounded timeout")
         self.__base_url = base_url.rstrip("/")
         self.__token = token
         self.timeout_seconds = timeout_seconds

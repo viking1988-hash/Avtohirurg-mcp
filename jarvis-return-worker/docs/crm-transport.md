@@ -17,8 +17,9 @@ no external request. CRM Booking cannot call the queue or provider directly.
 ## Provider
 
 `CRMProvider` implements send, update, cancel, reconcile, and checkStatus. It
-requires an HTTPS endpoint whose hostname contains `sandbox` or `staging`, a
-bounded request timeout, and an explicit token. Mutations send the event-derived
+requires an HTTPS Railway `*.up.railway.app` Sandbox hostname containing the
+`sandbox` label, a bounded request timeout, and an explicit token. Staging and
+Production endpoints are rejected. Mutations send the event-derived
 idempotency key in `Idempotency-Key`. Responses are reduced to booking identifiers,
 status, and receipt. Tokens, request headers, response bodies, and customer fields
 are not included in errors or logs.
@@ -31,7 +32,7 @@ UNKNOWN delivery and routes it to `RECONCILIATION_REQUIRED`.
 
 The Sandbox app registers the provider only when both
 `JARVIS_CRM_SANDBOX_URL` and `JARVIS_CRM_SANDBOX_TOKEN` are configured. A URL
-without an explicit Sandbox/Staging hostname is rejected. No CRM credentials or
+without an explicit Railway Sandbox hostname is rejected. No CRM credentials or
 endpoint are currently enabled by this code change. Adapter-created operations
 remain PENDING; the CRM operation claim, provider call, receipt persistence, and
 reconciliation executor are a follow-up step. Do not mark this integration as

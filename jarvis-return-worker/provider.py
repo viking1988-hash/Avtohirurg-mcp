@@ -1,4 +1,5 @@
 """Provider contract and compatibility adapter; providers never receive a Queue repository."""
+import inspect
 from typing import Protocol
 
 
@@ -52,8 +53,14 @@ class ProviderAdapter:
         method = getattr(self.client, "cancel", None)
         if not method:
             return False
+        # Decide the legacy call shape before invoking it. Catching TypeError
+        # around a provider call could repeat a side effect after it was sent.
         try:
-            return method(provider_message_id, idempotency_key)
-        except TypeError:
-            return bool(method(provider_message_id))
+            params=inspect.signature(method).parameters.values()
+            accepts_key=any(p.kind==p.VAR_POSITIONAL for p in params) or len([
+                p for p in params if p.kind in (p.POSITIONAL_ONLY,p.POSITIONAL_OR_KEYWORD)
+            ])>=2
+        except (TypeError,ValueError):
+            accepts_key=False
+        return method(provider_message_id,idempotency_key) if accepts_key else bool(method(provider_message_id))
 

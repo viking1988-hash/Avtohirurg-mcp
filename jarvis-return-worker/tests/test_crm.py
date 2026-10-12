@@ -49,9 +49,11 @@ def test_adapter_ignores_unrelated_and_malformed_events():
 
 
 def test_provider_requires_sandbox_or_staging_https_endpoint():
-    with pytest.raises(ValueError): CRMProvider("http://crm-sandbox.example", "secret")
-    with pytest.raises(ValueError): CRMProvider("https://crm.example", "secret")
-    with pytest.raises(ValueError): CRMProvider("https://crm-sandbox.example", "")
+    with pytest.raises(ValueError): CRMProvider("http://crm-sandbox.up.railway.app", "secret")
+    with pytest.raises(ValueError): CRMProvider("https://crm-staging.up.railway.app", "secret")
+    with pytest.raises(ValueError): CRMProvider("https://crm-production-sandbox.up.railway.app", "secret")
+    with pytest.raises(ValueError): CRMProvider("https://crm-sandbox.example", "secret")
+    with pytest.raises(ValueError): CRMProvider("https://crm-sandbox.up.railway.app", "")
 
 
 def test_provider_sends_idempotency_and_minimizes_receipt_without_logging_token():
@@ -60,7 +62,7 @@ def test_provider_sends_idempotency_and_minimizes_receipt_without_logging_token(
         captured["request"]=request
         captured["timeout"]=timeout
         return Response({"external_booking_id":"ext-9", "status":"created", "customer_phone":"private"})
-    provider=CRMProvider("https://crm-sandbox.example/api", "never-log-this", opener=opener)
+    provider=CRMProvider("https://crm-sandbox.up.railway.app/api", "never-log-this", opener=opener)
     result=provider.send({"booking_id":"b-9"}, "stable-key")
     assert captured["request"].get_header("Idempotency-key")=="stable-key"
     assert "never-log-this" not in repr(result)
@@ -74,7 +76,7 @@ def test_provider_sends_idempotency_and_minimizes_receipt_without_logging_token(
 def test_provider_http_errors_are_classified_without_response_leak(status,classification):
     def opener(request, timeout):
         raise HTTPError(request.full_url,status,"private body",{},io.BytesIO(b"sensitive response"))
-    provider=CRMProvider("https://crm-staging.example", "secret-token", opener=opener)
+    provider=CRMProvider("https://crm-sandbox.up.railway.app", "secret-token", opener=opener)
     with pytest.raises(DeliveryError) as error:
         provider.update({"booking_id":"b-1"},"event-key")
     assert error.value.classification==classification
@@ -89,7 +91,7 @@ def test_network_timeout_is_unknown_and_reconcile_remains_read_only():
         if request.get_method()=="GET":
             return Response({"status":"confirmed","external_booking_id":"ext-1"})
         raise URLError("timeout")
-    provider=CRMProvider("https://crm-sandbox.example", "secret-token", opener=opener)
+    provider=CRMProvider("https://crm-sandbox.up.railway.app", "secret-token", opener=opener)
     with pytest.raises(DeliveryError) as error:
         provider.send({"booking_id":"b-1"},"event-key")
     assert error.value.classification==Classification.UNKNOWN
