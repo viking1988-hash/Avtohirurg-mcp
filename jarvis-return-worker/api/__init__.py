@@ -73,3 +73,62 @@ async def requeue(body:TaskID,request:Request,actor:str=Depends(human)):
 @router.get('/metrics',dependencies=[Depends(read)])
 async def metrics(request:Request):
     return Response(await call(render_metrics,request.app.state.repository),media_type='text/plain; version=0.0.4')
+
+
+# Project registry endpoints are Sandbox-local and do not invoke the action worker.
+import uuid
+from typing import Literal
+
+from ..projects import ProjectRepository
+
+class ProjectCreate(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    project_key: str=Field(min_length=2,max_length=64,pattern=r'^[a-z0-9][a-z0-9_-]{1,63}$')
+    title: str=Field(min_length=1,max_length=160)
+    description: str=Field(default='',max_length=2000)
+
+class ProjectTaskCreate(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    task_id: str=Field(default_factory=lambda:'project-'+uuid.uuid4().hex,
+        min_length=1,max_length=128,pattern=r'^[A-Za-z0-9:_-]+$')
+    project_key: str=Field(min_length=2,max_length=64,pattern=r'^[a-z0-9][a-z0-9_-]{1,63}$')
+    title: str=Field(min_length=1,max_length=240)
+    details: str=Field(default='',max_length=4000)
+    priority: Literal['LOW','NORMAL','HIGH','URGENT']='NORMAL'
+    source: str=Field(default='',max_length=128)
+
+class ProjectTaskTransition(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    state: Literal['READY','IN_PROGRESS','BLOCKED','REVIEW','DONE','CANCELLED']
+    completion_evidence: str=Field(default='',max_length=2000)
+
+@router.get('/projects',dependencies=[Depends(read)])
+async def projects(request:Request,limit:int=100):
+    if not 1<=limit<=500:
+        raise HTTPException(422,'limit must be 1..500')
+    return await call(ProjectRepository(request.app.state.config).list_projects,limit)
+
+@router.post('/projects',dependencies=[Depends(read)])
+async def create_project(body:ProjectCreate,request:Request):
+    return await call(ProjectRepository(request.app.state.config).create_project,
+        body.project_key,body.title,body.description)
+
+@router.get('/project-tasks',dependencies=[Depends(read)])
+async def project_tasks(request:Request,project_key:str|None=None,
+                        state:Literal['INBOX','READY','IN_PROGRESS','BLOCKED','REVIEW','DONE','CANCELLED']|None=None,
+                        limit:int=100):
+    if not 1<=limit<=500:
+        raise HTTPException(422,'limit must be 1..500')
+    return await call(ProjectRepository(request.app.state.config).list_tasks,
+        project_key,state,limit)
+
+@router.post('/project-tasks',dependencies=[Depends(read)])
+async def create_project_task(body:ProjectTaskCreate,request:Request):
+    return await call(ProjectRepository(request.app.state.config).create_task,
+        body.task_id,body.project_key,body.title,body.details,body.priority,body.source)
+
+@router.post('/project-tasks/{task_id}/transition')
+async def transition_project_task(task_id:str,body:ProjectTaskTransition,
+                                  request:Request,actor:str=Depends(human)):
+    return await call(ProjectRepository(request.app.state.config).transition_task,
+        task_id,body.state,actor,body.completion_evidence)
