@@ -31,9 +31,9 @@ def _auth(role):
 read_actor = _auth("read")
 operator = _auth("operator")
 
-async def _call(fn, *args):
+async def _call(fn, *args, **kwargs):
     try:
-        return await asyncio.to_thread(fn, *args)
+        return await asyncio.to_thread(fn, *args, **kwargs)
     except Conflict as exc:
         if str(exc) == "task not found":
             raise HTTPException(404, "task not found") from None
