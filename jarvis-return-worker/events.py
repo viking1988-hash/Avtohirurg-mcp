@@ -19,6 +19,8 @@ class OrchestratorEvent:
 
 class EventBus:
     """Subscribers are notifications; the PostgreSQL action journal remains authoritative."""
+    BUILTIN_EVENTS=frozenset({"TaskApproved","DeliveryStarted","DeliverySucceeded","DeliveryUnknown",
+        "DeliveryFailed","ReconciliationRequired","ReconciliationCompleted","TaskFinished"})
     def __init__(self, observers=()):
         self._observers = list(observers)
         self._lock = RLock()
