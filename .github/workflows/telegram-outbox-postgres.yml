@@ -1,0 +1,40 @@
+name: Telegram Outbox PostgreSQL integration
+on:
+  pull_request:
+    paths:
+      - 'crm-telegram-alerts/staging/**'
+      - '.github/workflows/telegram-outbox-postgres.yml'
+  workflow_dispatch:
+jobs:
+  postgres-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: outbox_test
+          POSTGRES_PASSWORD: disposable_ci_password
+          POSTGRES_DB: outbox_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U outbox_test -d outbox_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: outbox_test
+      PGPASSWORD: disposable_ci_password
+      PGDATABASE: outbox_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply schema to disposable CI PostgreSQL
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/001_telegram_outbox.sql
+      - name: Execute transaction and rollback smoke tests
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/004_outbox_postgres_smoke.sql
+      - name: Verify no smoke data persisted
+        run: |
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
+          echo "PASS: schema, uniqueness, lease, review, stale token, rollback"
