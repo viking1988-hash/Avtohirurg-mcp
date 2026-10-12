@@ -121,37 +121,45 @@ class QueueRepository:
             record(c,b,r,'heartbeat',owner)
             return r
 
-    def mark_delivery_started(self, task_id, owner, attempt):
+    def mark_delivery_started(self, task_id, owner, attempt, provider=None):
         """Persist the external-effect boundary before invoking any transport."""
         with self.connection() as c:
             b=self._owned(c,task_id,owner,attempt)
             if not valid_approval(b):
                 raise Conflict('approval no longer valid before delivery')
+            if provider and b.get('provider') not in (None, provider):
+                raise Conflict('delivery provider cannot change during an attempt')
             if b['delivery_started_at']:
                 if b['destination_key'].startswith('sandbox:telegram:'):
                     from .metrics import prevent_telegram_duplicate
                     prevent_telegram_duplicate()
                 raise Conflict('delivery was already started for this lease')
             r=c.execute('''UPDATE jarvis_return_actions SET delivery_started_at=clock_timestamp(),
-                updated_at=now() WHERE task_id=%s RETURNING *''',(task_id,)).fetchone()
+                provider=coalesce(%s,provider),delivery_status='STARTED',updated_at=now()
+                WHERE task_id=%s RETURNING *''',(provider,task_id)).fetchone()
             record(c,b,r,'delivery_started',owner)
             return r
 
-    def save_delivery_receipt(self, task_id, owner, attempt, receipt_id, message_id=None, chat_id=None, response=None):
+    def save_delivery_receipt(self, task_id, owner, attempt, receipt_id, message_id=None, chat_id=None, response=None, provider=None):
         """Durably bind provider receipt/message identifiers before DONE."""
         if not receipt_id:
             raise ValueError('receipt id required')
         with self.connection() as c:
             b=self._owned(c,task_id,owner,attempt)
+            if provider and b.get('provider') not in (None, provider):
+                raise Conflict('delivery provider cannot change within one task attempt')
             if b['delivery_receipt'] and (b['delivery_receipt']!=str(receipt_id)
                 or b['external_message_id']!=(str(message_id) if message_id is not None else None)):
                 raise Conflict('delivery receipt identifiers cannot be replaced')
             if b['delivery_receipt'] and (chat_id is not None and b.get('chat_id')!=str(chat_id)):
                 raise Conflict('delivery chat id cannot be replaced')
             r=c.execute('''UPDATE jarvis_return_actions SET delivery_receipt=%s,
-                external_message_id=%s,chat_id=coalesce(%s,chat_id),delivery_response=coalesce(%s,delivery_response),
+                provider_receipt=%s,external_message_id=%s,provider_message_id=%s,
+                provider=coalesce(%s,provider),delivery_status='DELIVERED',
+                chat_id=coalesce(%s,chat_id),delivery_response=coalesce(%s,delivery_response),
                 updated_at=now() WHERE task_id=%s RETURNING *''',
-                (str(receipt_id),str(message_id) if message_id is not None else None,
+                (str(receipt_id),str(receipt_id),str(message_id) if message_id is not None else None,
+                 str(message_id) if message_id is not None else None,provider,
                  str(chat_id) if chat_id is not None else None,Jsonb(response) if response is not None else None,task_id)).fetchone()
             record(c,b,r,'delivery_receipt_saved',owner,metadata={'has_message_id':message_id is not None,'has_chat_id':chat_id is not None})
             return r
@@ -271,9 +279,13 @@ class QueueRepository:
                     state='APPROVED' if eligible else 'FAILED'
                     error='lease_expired'
                 r=c.execute('''UPDATE jarvis_return_actions SET state=%s,lease_owner=NULL,lease_until=NULL,
-                    heartbeat_at=NULL,version=version+1,updated_at=now(),last_error=%s,
+                    heartbeat_at=NULL,delivery_status=CASE WHEN %s='RECONCILIATION_REQUIRED' THEN 'UNKNOWN' WHEN %s='DONE' THEN 'DELIVERED' ELSE delivery_status END,
+                    reconciliation_status=CASE WHEN %s='RECONCILIATION_REQUIRED' THEN 'REQUIRED' WHEN %s='DONE' THEN 'DELIVERED_CONFIRMED' ELSE reconciliation_status END,
+                    reconciliation_reason=CASE WHEN %s='RECONCILIATION_REQUIRED' THEN 'delivery_outcome_unknown' ELSE reconciliation_reason END,
+                    reconciliation_at=CASE WHEN %s='RECONCILIATION_REQUIRED' THEN clock_timestamp() ELSE reconciliation_at END,
+                    version=version+1,updated_at=now(),last_error=%s,
                     next_attempt_at=clock_timestamp()+(%s*interval '1 second') WHERE task_id=%s RETURNING *''',
-                    (state,error,min(300,2**min(b['attempt_count'],8)),b['task_id'])).fetchone()
+                    (state,state,state,state,state,state,error,min(300,2**min(b['attempt_count'],8)),b['task_id'])).fetchone()
                 record(c,b,r,'recovery',owner)
                 recovered+=1
         return recovered
