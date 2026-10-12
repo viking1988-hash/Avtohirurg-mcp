@@ -25,3 +25,19 @@ Status: **not executed in Railway**. PostgreSQL 16 disposable CI integration: PA
 
 ## Known limitations
 The SQL scripts are a prototype and do not yet implement an end-to-end outbox worker. Telegram Bot API cannot guarantee exactly-once delivery under ambiguous network failures. Do not merge into a production release or switch the active alerts worker until the full staging gate is verified.
+
+## Additional CI evidence required before Railway testing
+- Validate one-job/two-worker and two-job/two-worker claims using independent connections.
+- Verify PostgreSQL terminates an uncommitted transaction without leaving a lease.
+- Verify a rival worker skips an uncommitted locked row and rollback restores it.
+- Verify a stale lease token cannot acknowledge a newer lease or a quarantined review row.
+- Verify negative attempts, missing receipt timestamp, missing lease token and duplicate keys are rejected.
+- Verify next_attempt_at ordering, future retry exclusion and exhausted-retry ceiling.
+- Reapply migration with a preexisting sent receipt and verify it survives unchanged.
+- Require zero leftover test rows after all CI scenarios.
+
+## Explicit blockers to production readiness
+- No actual outbox worker has been deployed or exercised against Railway staging.
+- No proof of real network timeout, 429 handling or mock-transport crash-after-acknowledgement.
+- Manual review and reconciliation workflow is not implemented.
+- No rollout/rollback evidence for an existing production database.
