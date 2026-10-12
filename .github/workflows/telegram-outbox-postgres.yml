@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Apply schema to disposable CI PostgreSQL
         run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/001_telegram_outbox.sql
+      - name: Reapply schema to verify migration idempotency
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/001_telegram_outbox.sql
       - name: Execute transaction and rollback smoke tests
         run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/004_outbox_postgres_smoke.sql
       - name: Install isolated PostgreSQL test client
