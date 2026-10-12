@@ -71,7 +71,8 @@ def render_metrics(repo):
         s.get('retry_count',0),s.get('recovery',0),s.get('approve',0))
     for name,value in zip(NAMES,values):
         _gauges[name].set(value)
-    totals=_reconciliation_totals(repo)
+    totals=(_reconciliation_totals(repo) if hasattr(repo,'connection') else
+            {name:0 for name in _reconciliation_metrics})
     for name,counter in _reconciliation_metrics.items():
         _sync_counter(counter,name,totals[name])
     return generate_latest(_registry)
