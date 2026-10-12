@@ -43,14 +43,14 @@ async def _call(fn, *args, **kwargs):
 
 @router.get("/{task_id}/events")
 async def get_events(task_id: str, request: Request, actor: str = Depends(read_actor)):
-    result = await _call(service.read_events, request.app.state.repository, task_id, actor)
+    result = await _call(request.app.state.orchestrator.read_events, task_id, actor)
     if result is None:
         raise HTTPException(404, "task not found")
     return result
 
 @router.get("/{task_id}/delivery")
 async def get_delivery(task_id: str, request: Request, actor: str = Depends(read_actor)):
-    result = await _call(service.read_delivery, request.app.state.repository, task_id, actor)
+    result = await _call(request.app.state.orchestrator.read_delivery, task_id, actor)
     if result is None:
         raise HTTPException(404, "task not found")
     return result
@@ -58,7 +58,7 @@ async def get_delivery(task_id: str, request: Request, actor: str = Depends(read
 @router.post("/{task_id}/reconcile")
 async def reconcile(task_id: str, body: Versioned, request: Request,
                     actor: str = Depends(operator)):
-    return await _call(service.mutate, request.app.state.repository, task_id, actor,
+    return await _call(request.app.state.orchestrator.reconcile, task_id, actor,
                        "reconcile", body.expected_version, reason=body.reason,
                        comment=body.comment)
 
