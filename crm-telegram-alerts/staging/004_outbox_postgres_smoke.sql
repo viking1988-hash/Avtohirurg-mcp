@@ -204,4 +204,27 @@ BEGIN
   WHERE lead_id=90000010 AND alert_type='new' AND status='pending' AND attempts=0;
   IF n<>1 THEN RAISE EXCEPTION 'constraint failure altered original row'; END IF;
 END $invariants$;
+-- Claim priority must follow next_attempt_at and skip future retries.
+DO $priority$
+DECLARE chosen bigint; first_id bigint; future_id bigint;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,next_attempt_at)
+  VALUES(90000011,'new',now()-interval '10 minutes') RETURNING id INTO first_id;
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,next_attempt_at)
+  VALUES(90000012,'new',now()+interval '1 hour') RETURNING id INTO future_id;
+  SELECT id INTO chosen FROM crm_telegram_outbox
+  WHERE lead_id IN (90000011,90000012)
+    AND status IN ('pending','retryable_error')
+    AND next_attempt_at<=now() AND attempts<5
+  ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED;
+  IF chosen IS DISTINCT FROM first_id THEN
+    RAISE EXCEPTION 'future retry was selected or ready job skipped';
+  END IF;
+  UPDATE crm_telegram_outbox SET status='leased',attempts=attempts+1,
+    lease_until=now()+interval '2 minutes',lease_token=gen_random_uuid()
+  WHERE id=chosen;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=future_id
+    AND status='pending' AND attempts=0)
+  THEN RAISE EXCEPTION 'future retry modified'; END IF;
+END $priority$;
 ROLLBACK;
