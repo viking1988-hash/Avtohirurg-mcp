@@ -5,6 +5,7 @@ must supply the version they observed; row locks serialize contenders and stale
 versions are rejected.
 """
 from datetime import datetime
+import psycopg
 from psycopg.types.json import Jsonb
 from .queue import Conflict
 
@@ -176,6 +177,10 @@ def mutate(repo, task_id, actor, action, expected_version, *, reason, comment=No
     except Conflict as exc:
         _failed(repo, task_id, actor, action, str(exc), expected_version)
         raise
+    except psycopg.errors.UniqueViolation:
+        reason = 'provider identifier is already bound to another delivery'
+        _failed(repo, task_id, actor, action, reason, expected_version)
+        raise Conflict(reason) from None
 
 
 def log_rejected(repo, task_id, actor, action, reason):
