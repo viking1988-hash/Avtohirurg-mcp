@@ -172,4 +172,36 @@ BEGIN
   IF (SELECT count(*) FROM crm_telegram_outbox WHERE lead_id=90000009)<>2
   THEN RAISE EXCEPTION 'different alert type was blocked'; END IF;
 END $enqueue$;
+-- Additional invariant checks for status transitions and uniqueness.
+DO $invariants$
+DECLARE k bigint; n integer;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts)
+  VALUES(90000010,'new','pending',0) RETURNING id INTO k;
+  BEGIN
+    UPDATE crm_telegram_outbox SET attempts=-1 WHERE id=k;
+    RAISE EXCEPTION 'negative attempts accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE crm_telegram_outbox SET status='sent',sent_at=NULL WHERE id=k;
+    RAISE EXCEPTION 'sent without timestamp accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE crm_telegram_outbox SET status='leased',lease_until=now()+interval '1 minute'
+    WHERE id=k;
+    RAISE EXCEPTION 'lease without token accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO crm_telegram_outbox(lead_id,alert_type)
+    VALUES(90000010,'new');
+    RAISE EXCEPTION 'duplicate key accepted';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM crm_telegram_outbox
+  WHERE lead_id=90000010 AND alert_type='new' AND status='pending' AND attempts=0;
+  IF n<>1 THEN RAISE EXCEPTION 'constraint failure altered original row'; END IF;
+END $invariants$;
 ROLLBACK;
