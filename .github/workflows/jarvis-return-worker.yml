@@ -84,7 +84,36 @@ jobs:
           assert row['state'] == 'DONE'
           assert row['external_message_id'] == 'restart-probe-message'
           assert repo.claim('after-restart') is None
-          print('PostgreSQL restart recovery check: DONE receipt survived; no re-claim')
+
+          from jarvis_return_worker.outbox import OutboxReplay, SubscriberRegistry
+          from psycopg.types.json import Jsonb
+          def project(conn, event):
+              conn.execute("""INSERT INTO jarvis_event_projection
+                  (event_id,subscriber_name,aggregate_id,event_type,event_version,payload)
+                  VALUES (%s,'jarvis.ci.restart-projection',%s,%s,%s,%s)
+                  ON CONFLICT (event_id,subscriber_name) DO NOTHING""",
+                  (event['event_id'],event['aggregate_id'],event['event_type'],
+                   event['event_version'],Jsonb(event['payload'])))
+          registry = SubscriberRegistry()
+          registry.register('jarvis.ci.restart-projection','*',project)
+          replay = OutboxReplay(repo,registry,owner='postgres-restart-ci')
+          replay.register_subscribers()
+          replayed = 0
+          while replay.replay_one():
+              replayed += 1
+          assert replayed > 0
+          assert replay.replay_one() is False
+          with repo.connection() as conn:
+              durable = conn.execute("""SELECT count(*) AS n FROM jarvis_outbox_events
+                  WHERE aggregate_id=%s AND event_type='TaskFinished' AND status='PUBLISHED'""",
+                  (task_id,)).fetchone()['n']
+              projected = conn.execute("""SELECT count(*) AS n FROM jarvis_event_projection p
+                  JOIN jarvis_outbox_events e USING(event_id)
+                  WHERE e.aggregate_id=%s AND e.event_type='TaskFinished'
+                    AND p.subscriber_name='jarvis.ci.restart-projection'""",
+                  (task_id,)).fetchone()['n']
+              assert durable == projected == 1
+          print('PostgreSQL restart recovery check: task receipt and outbox event survived; replay exactly once')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
