@@ -80,7 +80,8 @@ jobs:
           from jarvis_return_worker.queue import QueueRepository
           repo = QueueRepository(SimpleNamespace(database_url=os.environ['JARVIS_WORKER_CI_DATABASE_URL'],
               worker_id='restart-ci', lease_seconds=30, heartbeat_seconds=5, max_attempts=3))
-          row = repo.get('ci-postgres-restart-probe')
+          task_id = 'ci-postgres-restart-probe'
+          row = repo.get(task_id)
           assert row['state'] == 'DONE'
           assert row['external_message_id'] == 'restart-probe-message'
           assert repo.claim('after-restart') is None
