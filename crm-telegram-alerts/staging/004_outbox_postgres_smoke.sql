@@ -92,4 +92,36 @@ BEGIN
   WHERE id=k AND status IN ('pending','retryable_error') AND attempts<5;
   IF FOUND THEN RAISE EXCEPTION 'uncertain delivery was automatically retried'; END IF;
 END $expiry$;
+-- Explicit rejection can be retried; uncertain delivery must be reviewed.
+DO $delivery$
+DECLARE k bigint; t uuid;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,
+      lease_until,lease_token)
+  VALUES(90000006,'new','leased',1,now()+interval '2 minutes',gen_random_uuid())
+  RETURNING id,lease_token INTO k,t;
+  UPDATE crm_telegram_outbox SET status='retryable_error',
+      next_attempt_at=now()+interval '5 minutes',lease_until=NULL,
+      lease_token=NULL,last_error_code='TELEGRAM_REJECTED'
+  WHERE id=k AND status='leased' AND lease_token=t;
+  IF NOT FOUND THEN RAISE EXCEPTION 'explicit rejection not recorded'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k
+      AND status='retryable_error' AND next_attempt_at>now()
+      AND lease_token IS NULL)
+  THEN RAISE EXCEPTION 'retry backoff missing'; END IF;
+  UPDATE crm_telegram_outbox SET status='leased',attempts=attempts+1,
+      lease_until=now()+interval '2 minutes',lease_token=gen_random_uuid()
+  WHERE id=k AND status='retryable_error' AND next_attempt_at<=now();
+  IF FOUND THEN RAISE EXCEPTION 'backoff ignored'; END IF;
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,
+      lease_until,lease_token)
+  VALUES(90000007,'new','leased',1,now()+interval '2 minutes',gen_random_uuid())
+  RETURNING id,lease_token INTO k,t;
+  UPDATE crm_telegram_outbox SET status='review',lease_until=NULL,
+      lease_token=NULL,last_error_code='TELEGRAM_DELIVERY_UNCERTAIN'
+  WHERE id=k AND status='leased' AND lease_token=t;
+  IF NOT FOUND THEN RAISE EXCEPTION 'uncertain delivery review failed'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k AND status='review')
+  THEN RAISE EXCEPTION 'uncertain delivery was lost'; END IF;
+END $delivery$;
 ROLLBACK;
