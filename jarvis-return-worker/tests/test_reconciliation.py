@@ -60,10 +60,13 @@ def test_confirm_delivered_is_atomic_and_blocks_repeat(repo):
                provider_receipt="telegram:test-chat:101")
     assert repo.get(task_id)["version"] == confirmed["version"]
     with repo.connection() as conn:
-        actions = conn.execute("""SELECT action,actor,previous_state,new_state,reason,correlation_id
+        actions = conn.execute("""SELECT action,actor,previous_state,new_state,reason,correlation_id,metadata
             FROM jarvis_return_action_events WHERE task_id=%s ORDER BY event_id""", (task_id,)).fetchall()
     assert any(e["action"] == "confirm-delivered" and e["actor"] == "operator-a" for e in actions)
     assert any(e["action"] == "reconcile_failed" for e in actions)
+    delivered_event=next(e for e in actions if e["action"] == "confirm-delivered")
+    assert delivered_event["metadata"]["snapshot"]["provider_message_id"] == "tg-101"
+    assert delivered_event["metadata"]["snapshot"]["delivery_status"] == "DELIVERED"
 
 def test_confirm_undelivered_requires_new_approval_and_recovery_cannot_resend(repo):
     task_id, row = uncertain(repo)
