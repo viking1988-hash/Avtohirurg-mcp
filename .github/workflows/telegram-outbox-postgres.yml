@@ -63,6 +63,26 @@ jobs:
           OUTBOX_STAGING_MOCK: 'true'
           DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
         run: node crm-telegram-alerts/staging/outbox_mock_worker.mjs
+      - name: Verify mock worker rejects missing safety flag
+        env:
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: |
+          if node crm-telegram-alerts/staging/outbox_mock_worker.mjs; then
+            echo 'FAIL: safety flag was not required'
+            exit 1
+          fi
+          echo 'PASS: missing safety flag rejected'
+      - name: Verify mock worker rejects Telegram credentials
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          TELEGRAM_BOT_TOKEN: fake-ci-token
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: |
+          if node crm-telegram-alerts/staging/outbox_mock_worker.mjs; then
+            echo 'FAIL: Telegram token was accepted'
+            exit 1
+          fi
+          echo 'PASS: Telegram credentials rejected'
       - name: Verify no smoke data persisted
         run: |
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
