@@ -27,22 +27,50 @@ def test_heartbeat_receipt_and_done(repo):
     assert t['task_id']==id
     assert repo.heartbeat(id,'one',t['attempt_count'])['heartbeat_at']
     with pytest.raises(Conflict): repo.finish(id,'one',t['attempt_count'],'invented')
+    repo.mark_delivery_started(id,'one',t['attempt_count'])
     receipt=FakeTransport(repo,'one').deliver(t)
     assert FakeTransport(repo,'one').deliver(t)==receipt
+    repo.save_delivery_receipt(id,'one',t['attempt_count'],receipt,'fake-message-1')
     assert repo.finish(id,'one',t['attempt_count'],receipt)['state']=='DONE'
+    assert repo.get(id)['external_message_id']=='fake-message-1'
 
-def test_recovery_fences_old_attempt_and_deduplicates_receipt(repo):
-    id=make(repo); t=repo.claim('one'); receipt=FakeTransport(repo,'one').deliver(t)
+def test_failure_before_send_recovers_and_fences_old_attempt(repo):
+    id=make(repo); t=repo.claim('one')
     with repo.connection() as c:
         c.execute("UPDATE jarvis_return_actions SET lease_until=now()-interval '1 minute',heartbeat_at=now()-interval '1 minute' WHERE task_id=%s",(id,))
     assert repo.recover('recovery')>=1
-    with pytest.raises(Conflict): repo.finish(id,'one',t['attempt_count'],receipt)
+    with pytest.raises(Conflict): repo.finish(id,'one',t['attempt_count'],'sandbox:receipt:none')
     with repo.connection() as c:
         c.execute('UPDATE jarvis_return_actions SET next_attempt_at=now() WHERE task_id=%s',(id,))
     new=repo.claim('two')
     assert new['attempt_count']==2
-    assert FakeTransport(repo,'two').deliver(new)==receipt
-    assert repo.finish(id,'two',2,receipt)['state']=='DONE'
+    assert new['state']=='PROCESSING'
+
+def test_send_started_without_receipt_requires_reconciliation(repo):
+    id=make(repo); t=repo.claim('one')
+    sends=[]
+    repo.mark_delivery_started(id,'one',t['attempt_count'])
+    sends.append('external-fake-effect')
+    with repo.connection() as c:
+        c.execute("UPDATE jarvis_return_actions SET lease_until=now()-interval '1 minute',heartbeat_at=now()-interval '1 minute' WHERE task_id=%s",(id,))
+    repo.recover('recovery')
+    assert repo.get(id)['state']=='RECONCILIATION_REQUIRED'
+    assert repo.claim('two') is None
+    assert sends==['external-fake-effect']
+    assert repo.reconcile(id,'ci-human','delivered','provider-receipt-1','provider-message-1')['state']=='DONE'
+    assert repo.get(id)['external_message_id']=='provider-message-1'
+
+def test_receipt_saved_before_done_recovers_to_done_without_resend(repo):
+    id=make(repo); t=repo.claim('one')
+    repo.mark_delivery_started(id,'one',t['attempt_count'])
+    receipt=FakeTransport(repo,'one').deliver(t)
+    repo.save_delivery_receipt(id,'one',t['attempt_count'],receipt,'fake-message-2')
+    with repo.connection() as c:
+        c.execute("UPDATE jarvis_return_actions SET lease_until=now()-interval '1 minute',heartbeat_at=now()-interval '1 minute' WHERE task_id=%s",(id,))
+    repo.recover('recovery')
+    assert repo.get(id)['state']=='DONE'
+    assert repo.get(id)['external_message_id']=='fake-message-2'
+    assert repo.claim('two') is None
     with repo.connection() as c:
         assert c.execute('SELECT count(*) AS n FROM jarvis_fake_receipts WHERE task_id=%s',(id,)).fetchone()['n']==1
 

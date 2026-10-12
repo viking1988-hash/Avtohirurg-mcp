@@ -21,6 +21,11 @@ class Enqueue(TaskID):
     payload: str=Field(min_length=1,max_length=16000)
     correlation_id: str=Field(min_length=1,max_length=128,pattern=r'^[A-Za-z0-9:_-]+$')
 
+class Reconciliation(TaskID):
+    outcome: str=Field(pattern=r'^(delivered|not_delivered)$')
+    receipt_id: str|None=Field(default=None,max_length=512)
+    message_id: str|None=Field(default=None,max_length=512)
+
 def auth(role):
     def check(request:Request,authorization:str=Header(default='')):
         c=request.app.state.config
@@ -69,6 +74,10 @@ async def cancel(body:TaskID,request:Request,actor:str=Depends(human)):
 @router.post('/requeue')
 async def requeue(body:TaskID,request:Request,actor:str=Depends(human)):
     return await call(request.app.state.repository.requeue,body.task_id,actor)
+
+@router.post('/reconcile')
+async def reconcile(body:Reconciliation,request:Request,actor:str=Depends(human)):
+    return await call(request.app.state.repository.reconcile,body.task_id,actor,body.outcome,body.receipt_id,body.message_id)
 
 @router.get('/metrics',dependencies=[Depends(read)])
 async def metrics(request:Request):

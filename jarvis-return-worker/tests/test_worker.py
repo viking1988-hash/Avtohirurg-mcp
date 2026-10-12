@@ -42,6 +42,8 @@ class Repo:
     config=SimpleNamespace(worker_id='worker',heartbeat_seconds=1)
     def __init__(self): self.calls=[]
     def heartbeat(self,*args): self.calls.append('heartbeat')
+    def mark_delivery_started(self,*args): self.calls.append('mark_started')
+    def save_delivery_receipt(self,*args): self.calls.append('save_receipt')
     def finish(self,*args): self.calls.append('finish')
     def fail(self,*args): self.calls.append('fail')
 
@@ -52,7 +54,7 @@ class Transport:
 def test_worker_sequence():
     repo=Repo()
     asyncio.run(Worker(repo,Transport(repo),asyncio.Event()).process(task()))
-    assert repo.calls==['heartbeat','transport','finish']
+    assert repo.calls==['heartbeat','mark_started','transport','save_receipt','finish']
 
 def test_worker_rejects_before_transport():
     repo=Repo()
@@ -78,6 +80,15 @@ def test_worker_heartbeat_failure_never_calls_transport():
     repo=Broken()
     asyncio.run(Worker(repo,Transport(repo),asyncio.Event()).process(task()))
     assert repo.calls==['heartbeat_failed','fail']
+
+def test_worker_transport_failure_occurs_after_durable_send_marker():
+    class BrokenTransport(Transport):
+        def deliver(self,task):
+            self.repo.calls.append('transport_failed_after_start')
+            raise TimeoutError('ambiguous external response')
+    repo=Repo()
+    asyncio.run(Worker(repo,BrokenTransport(repo),asyncio.Event()).process(task()))
+    assert repo.calls==['heartbeat','mark_started','transport_failed_after_start','fail']
 
 def test_stop_event_prevents_new_claim():
     class NoClaims(Repo):

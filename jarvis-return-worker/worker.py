@@ -19,7 +19,18 @@ class Worker:
         heartbeat = asyncio.create_task(self.leases.heartbeat(task))
         async def effect():
             await asyncio.to_thread(self.repository.heartbeat,task['task_id'],self.owner,task['attempt_count'])
-            receipt = await asyncio.to_thread(self.transport.deliver,task)
+            await asyncio.to_thread(self.repository.mark_delivery_started,task['task_id'],self.owner,task['attempt_count'])
+            result = await asyncio.to_thread(self.transport.deliver,task)
+            if isinstance(result,dict):
+                receipt=result.get('receipt_id') or result.get('receipt') or result.get('message_id')
+                message_id=result.get('message_id')
+            else:
+                receipt=str(result) if result is not None else None
+                message_id=None
+            if not receipt:
+                raise RuntimeError('transport returned no durable receipt identifier')
+            await asyncio.to_thread(self.repository.save_delivery_receipt,task['task_id'],self.owner,
+                task['attempt_count'],receipt,message_id)
             await asyncio.to_thread(self.repository.finish,task['task_id'],self.owner,task['attempt_count'],receipt)
         delivery = asyncio.create_task(effect())
         try:

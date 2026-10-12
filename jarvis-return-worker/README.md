@@ -17,26 +17,30 @@ without payload/correlation are retained, excluded from claims, never reconstruc
 ## API and approval
 GET /health and /ready expose only status; other endpoints require Bearer authentication.
 JARVIS_READ_TOKEN grants queue/metrics reads and preparation via POST /enqueue.
-JARVIS_APPROVAL_TOKEN is a separate operator credential for /approve, /cancel, /requeue.
+JARVIS_APPROVAL_TOKEN is a separate operator credential for /approve, /cancel, /requeue, /reconcile.
 The worker does not possess a code path that automatically approves tasks.
 Human actor is server-configured JARVIS_OPERATOR_ID, never taken from caller JSON.
 Approval binds SHA256 of canonical task+destination+payload and expires in <=24 hours.
 API JSON: enqueue {task_id,destination,payload,correlation_id};
-approve {task_id,fingerprint,expires_at}; cancel/requeue {task_id}.
+approve {task_id,fingerprint,expires_at}; cancel/requeue {task_id};
+reconcile {task_id,outcome,receipt_id,message_id}.
 Do not automate the human credential in n8n or client integrations.
 Docs and OpenAPI are disabled; access logs disabled to avoid logging tokens/identifiers.
 
 ## Loop and recovery
-FOR UPDATE SKIP LOCKED claim -> approval check -> heartbeat -> Fake delivery -> receipt -> DONE.
+FOR UPDATE SKIP LOCKED claim -> approval check -> heartbeat -> durable send marker -> transport -> durable receipt -> DONE.
 Lease owner and attempt_count form a fencing token. An expired owner cannot heartbeat,
 deliver or finish. Every change and duplicate preparation is audited in the same transaction.
-Fake receipts are PostgreSQL-persisted and deduplicated by task+fingerprint, including
-crash after delivery before DONE. No assertion of exactly-once real provider delivery.
-Recovery runs every 15s, requires expired lease and absent/stale heartbeat. Valid approval
-and attempts <5 -> APPROVED with exponential delay; otherwise FAILED. It never recreates
-approval. Manual requeue requires fresh approval and refuses tasks with saved receipts.
+Fake receipts are PostgreSQL-persisted and deduplicated by task+fingerprint. Provider receipt
+and message IDs are stored on the task before DONE. No assertion of exactly-once real provider delivery.
+Recovery runs every 15s and requires an expired lease and absent/stale heartbeat. Before the
+send marker, a still-valid approval and remaining attempt budget may return the task to APPROVED.
+After the marker, no saved receipt means RECONCILIATION_REQUIRED; a saved receipt means DONE.
+The reconciliation endpoint is operator-only: confirmed delivery records identifiers and closes
+DONE; confirmed non-delivery clears the old approval and returns READY, requiring fresh approval.
+Unknown results remain non-sendable. Recovery never recreates an approval.
 Cancel of PROCESSING is rejected: receipt reconciliation is required before cancellation.
-Failure with an already stored receipt needs reconciliation; no API for bypassing this guard.
+Uncertain delivery is excluded from claims and manual requeue; only explicit operator reconciliation can resolve it.
 
 ## Metrics
 Authenticated /metrics: queue_size, oldest_task (seconds), processing, failed, retry_count,

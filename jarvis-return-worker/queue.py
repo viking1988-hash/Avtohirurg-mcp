@@ -1,206 +1,1 @@
-from time import monotonic
-from contextlib import contextmanager
-from datetime import datetime, timezone
-from pathlib import Path
-import psycopg
-from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
-from .approval import action_fingerprint, valid_approval
-from .audit import record
-
-class Conflict(Exception):
-    pass
-
-class QueueRepository:
-    def __init__(self, config):
-        self.config = config
-
-    @contextmanager
-    def connection(self):
-        with psycopg.connect(self.config.database_url, connect_timeout=5, row_factory=dict_row,
-                            options='-c statement_timeout=5000 -c lock_timeout=3000') as conn:
-            identity = conn.execute('SELECT current_database() AS db,current_user AS role').fetchone()
-            if identity != {'db': 'jarvis_return_queue_test', 'role': 'jarvis_sandbox'}:
-                raise RuntimeError('server sandbox identity mismatch')
-            yield conn
-
-    def migrate(self):
-        with self.connection() as c:
-            c.execute('SELECT pg_advisory_xact_lock(20261010, 1)')
-            c.execute(Path(__file__).with_name('schema.sql').read_text())
-
-    def enqueue(self, task_id, destination, payload, correlation_id, actor='sandbox-preparer'):
-        if not task_id or not correlation_id or not destination.startswith('sandbox:'):
-            raise ValueError('sandbox task and correlation required')
-        fp = action_fingerprint(task_id, destination, payload)
-        with self.connection() as c:
-            r = c.execute('''INSERT INTO jarvis_return_actions
-                (task_id,destination_key,payload,correlation_id,action_fingerprint,state)
-                VALUES (%s,%s,%s,%s,%s,'READY') ON CONFLICT DO NOTHING RETURNING *''',
-                (task_id,destination,Jsonb(payload),correlation_id,fp)).fetchone()
-            if r:
-                # OPEN and READY are recorded in the same transaction: validation prepares the task.
-                record(c,None,{**r,'state':'OPEN'},'enqueue',actor)
-                record(c,{**r,'state':'OPEN'},r,'prepare',actor)
-                return r
-            r = c.execute('SELECT * FROM jarvis_return_actions WHERE task_id=%s',(task_id,)).fetchone()
-            if r['action_fingerprint'] != fp or r['correlation_id'] != correlation_id:
-                raise Conflict('task id already bound to another action')
-            record(c,r,r,'enqueue_duplicate',actor)
-            return r
-
-    def get(self, task_id):
-        with self.connection() as c:
-            return c.execute('SELECT * FROM jarvis_return_actions WHERE task_id=%s',(task_id,)).fetchone()
-
-    def list(self, limit=100):
-        with self.connection() as c:
-            return c.execute('SELECT * FROM jarvis_return_actions ORDER BY created_at,task_id LIMIT %s',(limit,)).fetchall()
-
-    def approve(self, task_id, fingerprint, expires_at, human):
-        if not human or expires_at.tzinfo is None:
-            raise Conflict('authenticated human and timezone required')
-        with self.connection() as c:
-            b = c.execute('SELECT * FROM jarvis_return_actions WHERE task_id=%s FOR UPDATE',(task_id,)).fetchone()
-            now = c.execute('SELECT clock_timestamp() AS now').fetchone()['now']
-            if (not b or b['state'] != 'READY' or b['payload'] is None
-                or not now < expires_at <= now + __import__('datetime').timedelta(hours=24)
-                or fingerprint != b['action_fingerprint']
-                or fingerprint != action_fingerprint(task_id,b['destination_key'],b['payload'])):
-                raise Conflict('approval must bind an eligible unchanged task for <=24 hours')
-            r = c.execute('''UPDATE jarvis_return_actions SET state='APPROVED',approved_by=%s,
-                approved_at=clock_timestamp(),approval_expires_at=%s,approved_fingerprint=%s,
-                version=version+1,updated_at=now() WHERE task_id=%s RETURNING *''',
-                (human,expires_at,fingerprint,task_id)).fetchone()
-            record(c,b,r,'approve',human)
-            return r
-
-    def claim(self, owner):
-        if not owner:
-            raise ValueError('lease owner required')
-        with self.connection() as c:
-            b = c.execute('''SELECT * FROM jarvis_return_actions WHERE state='APPROVED'
-                AND payload IS NOT NULL AND correlation_id IS NOT NULL
-                AND destination_key LIKE 'sandbox:%%' AND approval_expires_at>clock_timestamp()
-                AND approved_fingerprint=action_fingerprint AND next_attempt_at<=clock_timestamp()
-                AND attempt_count<%s ORDER BY created_at,task_id FOR UPDATE SKIP LOCKED LIMIT 1''',
-                (self.config.max_attempts,)).fetchone()
-            if not b:
-                return None
-            if not valid_approval(b):
-                r = c.execute("UPDATE jarvis_return_actions SET state='FAILED',last_error='approval_integrity',version=version+1 WHERE task_id=%s RETURNING *",(b['task_id'],)).fetchone()
-                record(c,b,r,'claim_rejected',owner)
-                return None
-            r = c.execute('''UPDATE jarvis_return_actions SET state='PROCESSING',lease_owner=%s,
-                lease_until=clock_timestamp()+(%s*interval '1 second'),heartbeat_at=clock_timestamp(),
-                processing_started_at=clock_timestamp(),attempt_count=attempt_count+1,
-                version=version+1,updated_at=now() WHERE task_id=%s RETURNING *''',
-                (owner,self.config.lease_seconds,b['task_id'])).fetchone()
-            record(c,b,r,'claim',owner)
-            return r
-
-    def _owned(self,c,task_id,owner,attempt):
-        b = c.execute('SELECT * FROM jarvis_return_actions WHERE task_id=%s FOR UPDATE',(task_id,)).fetchone()
-        now = c.execute('SELECT clock_timestamp() AS now').fetchone()['now']
-        if not b or b['state']!='PROCESSING' or b['lease_owner']!=owner or b['attempt_count']!=attempt or b['lease_until']<=now:
-            raise Conflict('stale lease or fencing token')
-        return b
-
-    def heartbeat(self, task_id, owner, attempt):
-        with self.connection() as c:
-            b=self._owned(c,task_id,owner,attempt)
-            if not valid_approval(b):
-                raise Conflict('approval no longer valid')
-            r=c.execute('''UPDATE jarvis_return_actions SET heartbeat_at=clock_timestamp(),
-                lease_until=clock_timestamp()+(%s*interval '1 second'),updated_at=now()
-                WHERE task_id=%s RETURNING *''',(self.config.lease_seconds,task_id)).fetchone()
-            record(c,b,r,'heartbeat',owner)
-            return r
-
-    def fake_delivery(self, task_id, owner, attempt):
-        # Lock + verify immediately before Fake effect; durable deduplication and audit are atomic.
-        with self.connection() as c:
-            b=self._owned(c,task_id,owner,attempt)
-            if not valid_approval(b):
-                raise Conflict('approval invalid before transport')
-            key=task_id+':'+b['action_fingerprint']
-            receipt='sandbox:receipt:'+key
-            c.execute('''INSERT INTO jarvis_fake_receipts(idempotency_key,task_id,fingerprint,receipt)
-                VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING''',(key,task_id,b['action_fingerprint'],receipt))
-            r=c.execute('SELECT receipt FROM jarvis_fake_receipts WHERE idempotency_key=%s',(key,)).fetchone()
-            if r['receipt']!=receipt:
-                raise Conflict('receipt integrity failure')
-            record(c,b,b,'fake_receipt',owner)
-            return receipt
-
-    def finish(self, task_id, owner, attempt, receipt):
-        with self.connection() as c:
-            b=self._owned(c,task_id,owner,attempt)
-            key=task_id+':'+b['action_fingerprint']
-            actual=c.execute('SELECT receipt FROM jarvis_fake_receipts WHERE idempotency_key=%s AND task_id=%s AND fingerprint=%s',
-                (key,task_id,b['action_fingerprint'])).fetchone()
-            if not actual or receipt!=actual['receipt'] or receipt!='sandbox:receipt:'+key:
-                raise Conflict('durable Fake receipt required')
-            r=c.execute('''UPDATE jarvis_return_actions SET state='DONE',delivery_receipt=%s,
-                lease_owner=NULL,lease_until=NULL,version=version+1,updated_at=now()
-                WHERE task_id=%s RETURNING *''',(receipt,task_id)).fetchone()
-            record(c,b,r,'finish',owner, metadata={'duration': max(0,(datetime.now(timezone.utc)-b['processing_started_at']).total_seconds())})
-            return r
-
-    def cancel(self,task_id,actor):
-        with self.connection() as c:
-            b=c.execute('SELECT * FROM jarvis_return_actions WHERE task_id=%s FOR UPDATE',(task_id,)).fetchone()
-            if not b or b['state'] not in ('OPEN','READY','APPROVED','RETRY','FAILED'):
-                raise Conflict('cannot cancel terminal or in-flight task; reconcile first')
-            r=c.execute("UPDATE jarvis_return_actions SET state='CANCELLED',lease_owner=NULL,lease_until=NULL,version=version+1,updated_at=now() WHERE task_id=%s RETURNING *",(task_id,)).fetchone()
-            record(c,b,r,'cancel',actor)
-            return r
-
-    def requeue(self,task_id,actor):
-        with self.connection() as c:
-            b=c.execute('SELECT * FROM jarvis_return_actions WHERE task_id=%s FOR UPDATE',(task_id,)).fetchone()
-            if not b or b['state'] not in ('FAILED','RETRY') or b['payload'] is None or b['attempt_count']>=self.config.max_attempts:
-                raise Conflict('task not eligible for requeue')
-            if c.execute('SELECT 1 FROM jarvis_fake_receipts WHERE task_id=%s',(task_id,)).fetchone():
-                raise Conflict('delivery already recorded; reconcile instead')
-            r=c.execute('''UPDATE jarvis_return_actions SET state='READY',approved_by=NULL,approved_at=NULL,
-                approval_expires_at=NULL,approved_fingerprint=NULL,lease_owner=NULL,lease_until=NULL,
-                heartbeat_at=NULL,next_attempt_at=now(),version=version+1,updated_at=now()
-                WHERE task_id=%s RETURNING *''',(task_id,)).fetchone()
-            record(c,b,r,'requeue_requires_fresh_approval',actor)
-            return r
-
-    def fail(self, task_id,owner,attempt):
-        with self.connection() as c:
-            b=self._owned(c,task_id,owner,attempt)
-            r=c.execute("UPDATE jarvis_return_actions SET state='FAILED',last_error='worker_failure',lease_owner=NULL,lease_until=NULL,version=version+1,updated_at=now() WHERE task_id=%s RETURNING *",(task_id,)).fetchone()
-            record(c,b,r,'fail',owner)
-            return r
-
-    def recover(self,owner):
-        recovered=0
-        with self.connection() as c:
-            rows=c.execute('''SELECT * FROM jarvis_return_actions WHERE state='PROCESSING'
-                AND payload IS NOT NULL AND correlation_id IS NOT NULL
-                AND lease_until<clock_timestamp()
-                AND (heartbeat_at IS NULL OR heartbeat_at<clock_timestamp()-(%s*interval '1 second'))
-                ORDER BY lease_until FOR UPDATE SKIP LOCKED LIMIT 100''',(self.config.heartbeat_seconds*2,)).fetchall()
-            for b in rows:
-                valid=valid_approval(b)
-                eligible=valid and b['attempt_count']<self.config.max_attempts
-                state='APPROVED' if eligible else 'FAILED'
-                r=c.execute('''UPDATE jarvis_return_actions SET state=%s,lease_owner=NULL,lease_until=NULL,
-                    heartbeat_at=NULL,version=version+1,updated_at=now(),last_error='lease_expired',
-                    next_attempt_at=clock_timestamp()+(%s*interval '1 second') WHERE task_id=%s RETURNING *''',
-                    (state,min(300,2**min(b['attempt_count'],8)),b['task_id'])).fetchone()
-                record(c,b,r,'recovery',owner)
-                recovered+=1
-        return recovered
-
-    def stats(self):
-        with self.connection() as c:
-            rows=c.execute('SELECT state,count(*) AS count FROM jarvis_return_actions GROUP BY state').fetchall()
-            oldest=c.execute("SELECT coalesce(extract(epoch FROM clock_timestamp()-min(created_at)),0)::float AS age FROM jarvis_return_actions WHERE state IN ('READY','APPROVED','RETRY')").fetchone()['age']
-            counts=c.execute("SELECT coalesce(sum(attempt_count-1) FILTER(WHERE attempt_count>1),0) AS retry_count FROM jarvis_return_actions").fetchone()
-            events=c.execute("SELECT metadata->>'action' AS action,count(*) AS count FROM jarvis_return_action_events WHERE metadata->>'action' IN ('approve','recovery') GROUP BY 1").fetchall()
-            return {**{r['state']:r['count'] for r in rows},'oldest_task':max(0,oldest),**counts,**{r['action']:r['count'] for r in events}}
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíç½¸N‹Z–‹­¦ëeŠw¬Õ™É½´Ñ¥µ”¥µÁ½ÉĞµ½¹½Ñ½¹¥Œ)™É½´½¹Ñ•áÑ±¥ˆ¥µÁ½ÉĞ½¹Ñ•áÑµ…¹…•È)™É½´‘…Ñ•Ñ¥µ”¥µÁ½ÉĞ‘…Ñ•Ñ¥µ”°Ñ¥µ•é½¹”)™É½´Á…Ñ¡±¥ˆ¥µÁ½ÉĞA…Ñ )¥µÁ½ÉĞÁÍå½Áœ)™É½´ÁÍå½Áœ¹É½İÌ¥µÁ½ÉĞ‘¥Ñ}É½Ü)™É½´ÁÍå½Áœ¹ÑåÁ•Ì¹©Í½¸¥µÁ½ÉĞ)Í½¹ˆ)™É½´€¹…ÁÁÉ½Ù…°¥µÁ½ÉĞ…Ñ¥½¹}™¥¹•ÉÁÉ¥¹Ğ°Ù…±¥‘}…ÁÁÉ½Ù…°)™É½´€¹…Õ‘¥Ğ¥µÁ½ÉĞÉ•½É()±…ÍÌ½¹™±¥Ğ¡á•ÁÑ¥½¸¤è(€€€Á…ÍÌ()±…ÍÌEÕ•Õ•I•Á½Í¥Ñ½Éäè(€€€‘•˜}}¥¹¥Ñ}|¡Í•±˜°½¹™¥œ¤è(€€€€€€€Í•±˜¹½¹™¥œ€ô½¹™¥œ((€€€½¹Ñ•áÑµ…¹…•È(€€€‘•˜½¹¹•Ñ¥½¸¡Í•±˜¤è(€€€€€€€İ¥Ñ ÁÍå½Áœ¹½¹¹•Ğ¡Í•±˜¹½¹™¥œ¹‘…Ñ…‰…Í•}ÕÉ°°½¹¹•Ñ}Ñ¥µ•½ÕĞôÔ°É½İ}™…Ñ½Éäõ‘¥Ñ}É½Ü°(€€€€€€€€€€€€€€€€€€€€€€€€€€€½ÁÑ¥½¹ÌôœµŒÍÑ…Ñ•µ•¹Ñ}Ñ¥µ•½ÕĞôÔÀÀÀ€µŒ±½­}Ñ¥µ•½ÕĞôÌÀÀÀœ¤…Ì½¹¸è(€€€€€€€€€€€¥‘•¹Ñ¥Ñä€ô½¹¸¹•á•ÕÑ” M1PÕÉÉ•¹Ñ}‘…Ñ…‰…Í” ¤L‘ˆ±ÕÉÉ•¹Ñ}ÕÍ•ÈLÉ½±”œ¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€¥˜¥‘•¹Ñ¥Ñä€„ôì‘ˆœè€©…ÉÙ¥Í}É•ÑÕÉ¹}ÅÕ•Õ•}Ñ•ÍĞœ°€É½±”œè€©…ÉÙ¥Í}Í…¹‘‰½àôè(€€€€€€€€€€€€€€€É…¥Í”IÕ¹Ñ¥µ•ÉÉ½È Í•ÉÙ•ÈÍ…¹‘‰½à¥‘•¹Ñ¥Ñäµ¥Íµ…Ñ œ¤(€€€€€€€€€€€å¥•±½¹¸((€€€‘•˜µ¥É…Ñ”¡Í•±˜¤è(€€€€€€€İ¥Ñ Í•±˜¹½¹¹•Ñ¥½¸ ¤…ÌŒè(€€€€€€€€€€€Œ¹•á•ÕÑ” M1PÁ}…‘Ù¥Í½Éå}á…Ñ}±½¬ ÈÀÈØÄÀÄÀ°€Ä¤œ¤(€€€€€€€€€€€Œ¹•á•ÕÑ”¡A…Ñ ¡}}™¥±•}|¤¹İ¥Ñ¡}¹…µ” Í¡•µ„¹ÍÅ°œ¤¹É•…‘}Ñ•áĞ ¤¤((€€€‘•˜•¹ÅÕ•Õ”¡Í•±˜°Ñ…Í­}¥°‘•ÍÑ¥¹…Ñ¥½¸°Á…å±½…°½ÉÉ•±…Ñ¥½¹}¥°…Ñ½ÈôÍ…¹‘‰½àµÁÉ•Á…É•Èœ¤è(€€€€€€€¥˜¹½ĞÑ…Í­}¥½È¹½Ğ½ÉÉ•±…Ñ¥½¹}¥½È¹½Ğ‘•ÍÑ¥¹…Ñ¥½¸¹ÍÑ…ÉÑÍİ¥Ñ  Í…¹‘‰½àèœ¤è(€€€€€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È Í…¹‘‰½àÑ…Í¬…¹½ÉÉ•±…Ñ¥½¸É•ÅÕ¥É•œ¤(€€€€€€€™À€ô…Ñ¥½¹}™¥¹•ÉÁÉ¥¹Ğ¡Ñ…Í­}¥°‘•ÍÑ¥¹…Ñ¥½¸°Á…å±½…¤(€€€€€€€İ¥Ñ Í•±˜¹½¹¹•Ñ¥½¸ ¤…ÌŒè(€€€€€€€€€€€È€ôŒ¹•á•ÕÑ” œœ%9MIP%9Q<©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹Ì(€€€€€€€€€€€€€€€€¡Ñ…Í­}¥±‘•ÍÑ¥¹…Ñ¥½¹}­•ä±Á…å±½…±½ÉÉ•±…Ñ¥½¹}¥±…Ñ¥½¹}™¥¹•ÉÁÉ¥¹Ğ±ÍÑ…Ñ”¤(€€€€€€€€€€€€€€€Y1UL€ •Ì°•Ì°•Ì°•Ì°•Ì°Idœ¤=8=91%P<9=Q!%9IQUI9%9€¨œœœ°(€€€€€€€€€€€€€€€€¡Ñ…Í­}¥±‘•ÍÑ¥¹…Ñ¥½¸±)Í½¹ˆ¡Á…å±½…¤±½ÉÉ•±…Ñ¥½¹}¥±™À¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€¥˜Èè(€€€€€€€€€€€€€€€€Œ=A8…¹Id…É”É•½É‘•¥¸Ñ¡”Í…µ”ÑÉ…¹Í…Ñ¥½¸èÙ…±¥‘…Ñ¥½¸ÁÉ•Á…É•ÌÑ¡”Ñ…Í¬¸(€€€€€€€€€€€€€€€É•½É¡Œ±9½¹”±ì¨©È°ÍÑ…Ñ”œè=A8ô°•¹ÅÕ•Õ”œ±…Ñ½È¤(€€€€€€€€€€€€€€€É•½É¡Œ±ì¨©È°ÍÑ…Ñ”œè=A8ô±È°ÁÉ•Á…É”œ±…Ñ½È¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸È(€€€€€€€€€€€È€ôŒ¹•á•ÕÑ” M1P€¨I=4©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹Ì]!IÑ…Í­}¥ô•Ìœ°¡Ñ…Í­}¥°¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€¥˜Él…Ñ¥½¹}™¥¹•ÉÁÉ¥¹Ğt€„ô™À½ÈÉl½ÉÉ•±…Ñ¥½¹}¥t€„ô½ÉÉ•±…Ñ¥½¹}¥è(€€€€€€€€€€€€€€€É…¥Í”½¹™±¥Ğ Ñ…Í¬¥…±É•…‘ä‰½Õ¹Ñ¼…¹½Ñ¡•È…Ñ¥½¸œ¤(€€€€€€€€€€€É•½É¡Œ±È±È°•¹ÅÕ•Õ•}‘ÕÁ±¥…Ñ”œ±…Ñ½È¤(€€€€€€€€€€€É•ÑÕÉ¸È((€€€‘•˜•Ğ¡Í•±˜°Ñ…Í­}¥¤è(€€€€€€€İ¥Ñ Í•±˜¹½¹¹•Ñ¥½¸ ¤…ÌŒè(€€€€€€€€€€€É•ÑÕÉ¸Œ¹•á•ÕÑ” M1P€¨I=4©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹Ì]!IÑ…Í­}¥ô•Ìœ°¡Ñ…Í­}¥°¤¤¹™•Ñ¡½¹” ¤((€€€‘•˜±¥ÍĞ¡Í•±˜°±¥µ¥ĞôÄÀÀ¤è(€€€€€€€İ¥Ñ Í•±˜¹½¹¹•Ñ¥½¸ ¤…ÌŒè(€€€€€€€€€€€É•ÑÕÉ¸Œ¹•á•ÕÑ” M1P€¨I=4©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹Ì=IH	dÉ•…Ñ•‘}…Ğ±Ñ…Í­}¥1%5%P€•Ìœ°¡±¥µ¥Ğ°¤¤¹™•Ñ¡…±° ¤((€€€‘•˜…ÁÁÉ½Ù”¡Í•±˜°Ñ…Í­}¥°™¥¹•ÉÁÉ¥¹Ğ°•áÁ¥É•Í}…Ğ°¡Õµ…¸¤è(€€€€€€€¥˜¹½Ğ¡Õµ…¸½È•áÁ¥É•Í}…Ğ¹Ñé¥¹™¼¥Ì9½¹”è(€€€€€€€€€€€É…¥Í”½¹™±¥Ğ …ÕÑ¡•¹Ñ¥…Ñ•¡Õµ…¸…¹Ñ¥µ•é½¹”É•ÅÕ¥É•œ¤(€€€€€€€İ¥Ñ Í•±˜¹½¹¹•Ñ¥½¸ ¤…ÌŒè(€€€€€€€€€€€ˆ€ôŒ¹•á•ÕÑ” M1P€¨I=4©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹Ì]!IÑ…Í­}¥ô•Ì=HUAQœ°¡Ñ…Í­}¥°¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€¹½Ü€ôŒ¹•á•ÕÑ” M1P±½­}Ñ¥µ•ÍÑ…µÀ ¤L¹½Üœ¤¹™•Ñ¡½¹” ¥l¹½Üt(€€€€€€€€€€€¥˜€¡¹½Ğˆ½È‰lÍÑ…Ñ”t€„ô€Idœ½È‰lÁ…å±½…t¥Ì9½¹”(€€€€€€€€€€€€€€€½È¹½Ğ¹½Ü€ğ•áÁ¥É•Í}…Ğ€ğô¹½Ü€¬}}¥µÁ½ÉÑ}| ‘…Ñ•Ñ¥µ”œ¤¹Ñ¥µ•‘•±Ñ„¡¡½ÕÉÌôÈĞ¤(€€€€€€€€€€€€€€€½È™¥¹•ÉÁÉ¥¹Ğ€„ô‰l…Ñ¥½¹}™¥¹•ÉÁÉ¥¹Ğt(€€€€€€€€€€€€€€€½È™¥¹•ÉÁÉ¥¹Ğ€„ô…Ñ¥½¹}™¥¹•ÉÁÉ¥¹Ğ¡Ñ…Í­}¥±‰l‘•ÍÑ¥¹…Ñ¥½¹}­•ät±‰lÁ…å±½…t¤¤è(€€€€€€€€€€€€€€€É…¥Í”½¹™±¥Ğ …ÁÁÉ½Ù…°µÕÍĞ‰¥¹…¸•±¥¥‰±”Õ¹¡…¹•Ñ…Í¬™½È€ğôÈĞ¡½ÕÉÌœ¤(€€€€€€€€€€€È€ôŒ¹•á•ÕÑ” œœUAQ©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹ÌMPÍÑ…Ñ”ôAAI=Yœ±…ÁÁÉ½Ù•‘}‰äô•Ì°(€€€€€€€€€€€€€€€…ÁÁÉ½Ù•‘}…Ğõ±½­}Ñ¥µ•ÍÑ…µÀ ¤±…ÁÁÉ½Ù…±}•áÁ¥É•Í}…Ğô•Ì±…ÁÁÉ½Ù•‘}™¥¹•ÉÁÉ¥¹Ğô•Ì°(€€€€€€€€€€€€€€€Ù•ÉÍ¥½¸õÙ•ÉÍ¥½¸¬Ä±ÕÁ‘…Ñ•‘}…Ğõ¹½Ü ¤]!IÑ…Í­}¥ô•ÌIQUI9%9€¨œœœ°(€€€€€€€€€€€€€€€€¡¡Õµ…¸±•áÁ¥É•Í}…Ğ±™¥¹•ÉÁÉ¥¹Ğ±Ñ…Í­}¥¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€É•½É¡Œ±ˆ±È°…ÁÁÉ½Ù”œ±¡Õµ…¸¤(€€€€€€€€€€€É•ÑÕÉ¸È((€€€‘•˜±…¥´¡Í•±˜°½İ¹•È¤è(€€€€€€€¥˜¹½Ğ½İ¹•Èè(€€€€€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ±•…Í”½İ¹•ÈÉ•ÅÕ¥É•œ¤(€€€€€€€İ¥Ñ Í•±˜¹½¹¹•Ñ¥½¸ ¤…ÌŒè(€€€€€€€€€€€ˆ€ôŒ¹•á•ÕÑ” œœM1P€¨I=4©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹Ì]!IÍÑ…Ñ”ôAAI=Yœ(€€€€€€€€€€€€€€€9Á…å±½…%L9=P9U109½ÉÉ•±…Ñ¥½¹}¥%L9=P9U10(€€€€€€€€€€€€€€€9‘•ÍÑ¥¹…Ñ¥½¹}­•ä1%-€Í…¹‘‰½àè””œ9…ÁÁÉ½Ù…±}•áÁ¥É•Í}…Ğù±½­}Ñ¥µ•ÍÑ…µÀ ¤(€€€€€€€€€€€€€€€9…ÁÁÉ½Ù•‘}™¥¹•ÉÁÉ¥¹Ğõ…Ñ¥½¹}™¥¹•ÉÁÉ¥¹Ğ9¹•áÑ}…ÑÑ•µÁÑ}…Ğğõ±½­}Ñ¥µ•ÍÑ…µÀ ¤(€€€€€€€€€€€€€€€9…ÑÑ•µÁÑ}½Õ¹Ğğ•Ì=IH	dÉ•…Ñ•‘}…Ğ±Ñ…Í­}¥=HUAQM-%@1=-1%5%P€Äœœœ°(€€€€€€€€€€€€€€€€¡Í•±˜¹½¹™¥œ¹µ…á}…ÑÑ•µÁÑÌ°¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€¥˜¹½Ğˆè(€€€€€€€€€€€€€€€É•ÑÕÉ¸9½¹”(€€€€€€€€€€€¥˜¹½ĞÙ…±¥‘}…ÁÁÉ½Ù…°¡ˆ¤è(€€€€€€€€€€€€€€€È€ôŒ¹•á•ÕÑ” ‰UAQ©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹ÌMPÍÑ…Ñ”ô%1œ±±…ÍÑ}•ÉÉ½Èô…ÁÁÉ½Ù…±}¥¹Ñ•É¥Ñäœ±Ù•ÉÍ¥½¸õÙ•ÉÍ¥½¸¬Ä]!IÑ…Í­}¥ô•ÌIQUI9%9€¨ˆ°¡‰lÑ…Í­}¥t°¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€€€€€É•½É¡Œ±ˆ±È°±…¥µ}É•©•Ñ•œ±½İ¹•È¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸9½¹”(€€€€€€€€€€€È€ôŒ¹•á•ÕÑ” œœUAQ©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹ÌMPÍÑ…Ñ”ôAI=MM%9œ±±•…Í•}½İ¹•Èô•Ì°(€€€€€€€€€€€€€€€±•…Í•}Õ¹Ñ¥°õ±½­}Ñ¥µ•ÍÑ…µÀ ¤¬ •Ì©¥¹Ñ•ÉÙ…°€œÄÍ•½¹œ¤±¡•…ÉÑ‰•…Ñ}…Ğõ±½­}Ñ¥µ•ÍÑ…µÀ ¤°(€€€€€€€€€€€€€€€ÁÉ½•ÍÍ¥¹}ÍÑ…ÉÑ•‘}…Ğõ±½­}Ñ¥µ•ÍÑ…µÀ ¤±…ÑÑ•µÁÑ}½Õ¹Ğõ…ÑÑ•µÁÑ}½Õ¹Ğ¬Ä°(€€€€€€€€€€€€€€€Ù•ÉÍ¥½¸õÙ•ÉÍ¥½¸¬Ä±ÕÁ‘…Ñ•‘}…Ğõ¹½Ü ¤]!IÑ…Í­}¥ô•ÌIQUI9%9€¨œœœ°(€€€€€€€€€€€€€€€€¡½İ¹•È±Í•±˜¹½¹™¥œ¹±•…Í•}Í•½¹‘Ì±‰lÑ…Í­}¥t¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€É•½É¡Œ±ˆ±È°±…¥´œ±½İ¹•È¤(€€€€€€€€€€€É•ÑÕÉ¸È((€€€‘•˜}½İ¹•¡Í•±˜±Œ±Ñ…Í­}¥±½İ¹•È±…ÑÑ•µÁĞ¤è(€€€€€€€ˆ€ôŒ¹•á•ÕÑ” M1P€¨I=4©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹Ì]!IÑ…Í­}¥ô•Ì=HUAQœ°¡Ñ…Í­}¥°¤¤¹™•Ñ¡½¹” ¤(€€€€€€€¹½Ü€ôŒ¹•á•ÕÑ” M1P±½­}Ñ¥µ•ÍÑ…µÀ ¤L¹½Üœ¤¹™•Ñ¡½¹” ¥l¹½Üt(€€€€€€€¥˜¹½Ğˆ½È‰lÍÑ…Ñ”t„ôAI=MM%9œ½È‰l±•…Í•}½İ¹•Èt„õ½İ¹•È½È‰l…ÑÑ•µÁÑ}½Õ¹Ğt„õ…ÑÑ•µÁĞ½È‰l±•…Í•}Õ¹Ñ¥°tğõ¹½Üè(€€€€€€€€€€€É…¥Í”½¹™±¥Ğ ÍÑ…±”±•…Í”½È™•¹¥¹œÑ½­•¸œ¤(€€€€€€€É•ÑÕÉ¸ˆ((€€€‘•˜¡•…ÉÑ‰•…Ğ¡Í•±˜°Ñ…Í­}¥°½İ¹•È°…ÑÑ•µÁĞ¤è(€€€€€€€İ¥Ñ Í•±˜¹½¹¹•Ñ¥½¸ ¤…ÌŒè(€€€€€€€€€€€ˆõÍ•±˜¹}½İ¹•¡Œ±Ñ…Í­}¥±½İ¹•È±…ÑÑ•µÁĞ¤(€€€€€€€€€€€¥˜¹½ĞÙ…±¥‘}…ÁÁÉ½Ù…°¡ˆ¤è(€€€€€€€€€€€€€€€É…¥Í”½¹™±¥Ğ …ÁÁÉ½Ù…°¹¼±½¹•ÈÙ…±¥œ¤(€€€€€€€€€€€ÈõŒ¹•á•ÕÑ” œœUAQ©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹ÌMP¡•…ÉÑ‰•…Ñ}…Ğõ±½­}Ñ¥µ•ÍÑ…µÀ ¤°(€€€€€€€€€€€€€€€±•…Í•}Õ¹Ñ¥°õ±½­}Ñ¥µ•ÍÑ…µÀ ¤¬ •Ì©¥¹Ñ•ÉÙ…°€œÄÍ•½¹œ¤±ÕÁ‘…Ñ•‘}…Ğõ¹½Ü ¤(€€€€€€€€€€€€€€€]!IÑ…Í­}¥ô•ÌIQUI9%9€¨œœœ°¡Í•±˜¹½¹™¥œ¹±•…Í•}Í•½¹‘Ì±Ñ…Í­}¥¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€É•½É¡Œ±ˆ±È°¡•…ÉÑ‰•…Ğœ±½İ¹•È¤(€€€€€€€€€€€É•ÑÕÉ¸È((€€€‘•˜µ…É­}‘•±¥Ù•Éå}ÍÑ…ÉÑ•¡Í•±˜°Ñ…Í­}¥°½İ¹•È°…ÑÑ•µÁĞ¤è(€€€€€€€€ˆˆ‰A•ÉÍ¥ÍĞÑ¡”•áÑ•É¹…°µ•™™•Ğ‰½Õ¹‘…Éä‰•™½É”¥¹Ù½­¥¹œ…¹äÑÉ…¹ÍÁ½ÉĞ¸ˆˆˆ(€€€€€€€İ¥Ñ Í•±˜¹½¹¹•Ñ¥½¸ ¤…ÌŒè(€€€€€€€€€€€ˆõÍ•±˜¹}½İ¹•¡Œ±Ñ…Í­}¥±½İ¹•È±…ÑÑ•µÁĞ¤(€€€€€€€€€€€¥˜¹½ĞÙ…±¥‘}…ÁÁÉ½Ù…°¡ˆ¤è(€€€€€€€€€€€€€€€É…¥Í”½¹™±¥Ğ …ÁÁÉ½Ù…°¹¼±½¹•ÈÙ…±¥‰•™½É”‘•±¥Ù•Éäœ¤(€€€€€€€€€€€¥˜‰l‘•±¥Ù•Éå}ÍÑ…ÉÑ•‘}…Ğtè(€€€€€€€€€€€€€€€É…¥Í”½¹™±¥Ğ ‘•±¥Ù•Éäİ…Ì…±É•…‘äÍÑ…ÉÑ•™½ÈÑ¡¥Ì±•…Í”œ¤(€€€€€€€€€€€ÈõŒ¹•á•ÕÑ” œœUAQ©…ÉÙ¥Í}É•ÑÕÉ¹}…Ñ¥½¹ÌMP‘•±¥Ù•Éå}ÍÑ…ÉÑ•‘}…Ğõ±½­}Ñ¥µ•ÍÑ…µÀ ¤°(€€€€€€€€€€€€€€€ÕÁ‘…Ñ•‘}…Ğõ¹½Ü ¤]!IÑ…Í­}¥ô•ÌIQUI9%9€¨œœœ°¡Ñ…Í­}¥°¤¤¹™•Ñ¡½¹” ¤(€€€€€€€€€€€É•½É¡Œ±ˆ±È°‘•±¥Ù•Éå}ÍÑ…ÉÑ•œ±½İ¹•È¤(€€€€€€€€€€€É•ÑÕÉ¸È((€€€‘•˜Í…Ù•}‘•±¥Ù•Éå}É••¥ÁĞ¡Í•±˜°Ñ…Í­}¥°½İ¹•È°…ÑÑ•µÁĞ°É••¥ÁÑ}¥°µ•ÍÍ…•}¥õ9½¹”¤è(€€€€€€€€ˆˆ‰ÕÉ…‰±ä‰¥¹ÁÉ½Ù¥‘•ÈÉ••¥ÁĞ½µ•ÍÍ…”¥‘•¹Ñ¥™¥•ÉÌ‰•™½É”=9¸ˆˆˆ(€€€€€€€¥˜¹½ĞÉ••¥ÁÑ}¥è(€€€ƒ½¸¶‰ËkºwµçGVÂæB&V6V—CÓÖ7GVÅ²w&V6V—BuÒæB&V6V—CÓÒw6æF&÷ƒ§&V6V—C¢r¶¶W¢–bæ÷Bf¶U÷&V6V—BæB†æ÷B%²vFVÆ—fW'•÷&V6V—BuÒ÷"&V6V—BÖ%²vFVÆ—fW'•÷&V6V—BuÒ“ ¢&—6R6öæfÆ–7B‚vGW&&ÆRFVÆ—fW'’&V6V—B&WV—&VBr¢#Ö2æW†V7WFR‚rruUDDR¦'f—5÷&WGW&åö7F–öç24UB7FFSÒtDôäRrÆFVÆ—fW'•÷&V6V—CÒW2À¢ÆV6Uö÷væW#ÔåTÄÂÆÆV6U÷VçF–ÃÔåTÄÂÇfW'6–öã×fW'6–öâ³ÇWFFVEöCÖæ÷r‚¢t„U$RF6µö–CÒW2$UEU$ä”är¢rrrÂ‡&V6V—BÇF6µö–B’’æfWF6†öæR‚¢&V6÷&B†2Æ"Ç"Âvf–æ—6‚rÆ÷væW"ÂÖWFFF×²vGW&F–öâs¢Ö‚ƒÂ†FFWF–ÖRææ÷r‡F–ÖW¦öæRçWF2’Ö%²w&ö6W76–æu÷7F'FVEöBuÒ’çF÷FÅ÷6V6öæG2‚’—Ò¢&WGW&â  ¢FVb6æ6VÂ‡6VÆbÇF6µö–BÆ7F÷"“ ¢v—F‚6VÆbæ6öææV7F–öâ‚’23 ¢#Ö2æW†V7WFR‚u4TÄT5B¢e$ôÒ¦'f—5÷&WGW&åö7F–öç2t„U$RF6µö–CÒW2dõ"UDDRrÂ‡F6µö–BÂ’’æfWF6†öæR‚¢–bæ÷B"÷"%²w7FFRuÒæ÷B–â‚tõTârÂu$TE’rÂt$õdTBrÂu$UE%’rÂtd”ÄTBr“ ¢&—6R6öæfÆ–7B‚v6ææ÷B6æ6VÂFW&Ö–æÂ÷"–âÖfÆ–v‡BF6³²&V6öæ6–ÆRf—'7Br¢#Ö2æW†V7WFR‚%UDDR¦'f—5÷&WGW&åö7F–öç24UB7FFSÒt4ä4TÄÄTBrÆÆV6Uö÷væW#ÔåTÄÂÆÆV6U÷VçF–ÃÔåTÄÂÇfW'6–öã×fW'6–öâ³ÇWFFVEöCÖæ÷r‚’t„U$RF6µö–CÒW2$UEU$ä”är¢"Â‡F6µö–BÂ’’æfWF6†öæR‚¢&V6÷&B†2Æ"Ç"Âv6æ6VÂrÆ7F÷"¢&WGW&â  ¢FVb&WVWVR‡6VÆbÇF6µö–BÆ7F÷"“ ¢v—F‚6VÆbæ6öææV7F–öâ‚’23 ¢#Ö2æW†V7WFR‚u4TÄT5B¢e$ôÒ¦'f—5÷&WGW&åö7F–öç2t„U$RF6µö–CÒW2dõ"UDDRrÂ‡F6µö–BÂ’’æfWF6†öæR‚¢–bæ÷B"÷"%²w7FFRuÒæ÷B–â‚td”ÄTBrÂu$UE%’r’÷"%²w–ÆöBuÒ—2æöæR÷"%²vGFV×Eö6÷VçBuÓã×6VÆbæ6öæf–ræÖ…öGFV×G3 ¢&—6R6öæfÆ–7B‚wF6²æ÷BVÆ–v–&ÆRf÷"&WVWVRr¢–b2æW†V7WFR‚u4TÄT5Be$ôÒ¦'f—5öf¶U÷&V6V—G2t„U$RF6µö–CÒW2rÂ‡F6µö–BÂ’’æfWF6†öæR‚“ ¢&—6R6öæfÆ–7B‚vFVÆ—fW'’Ç&VG’&V6÷&FVC²&V6öæ6–ÆR–ç7FVBr¢#Ö2æW†V7WFR‚rruUDDR¦'f—5÷&WGW&åö7F–öç24UB7FFSÒu$TE’rÆ&÷fVEö'“ÔåTÄÂÆ&÷fVEöCÔåTÄÂÀ¢&÷fÅöW‡—&W5öCÔåTÄÂÆ&÷fVEöf–ævW'&–çCÔåTÄÂÆÆV6Uö÷væW#ÔåTÄÂÆÆV6U÷VçF–ÃÔåTÄÂÀ¢†V'F&VEöCÔåTÄÂÆFVÆ—fW'•÷7F'FVEöCÔåTÄÂÆFVÆ—fW'•÷&V6V—CÔåTÄÂÆW‡FW&æÅöÖW76vUö–CÔåTÄÂÀ¢æW‡EöGFV×EöCÖæ÷r‚’ÇfW'6–öã×fW'6–öâ³ÇWFFVEöCÖæ÷r‚¢t„U$RF6µö–CÒW2$UEU$ä”är¢rrrÂ‡F6µö–BÂ’’æfWF6†öæR‚¢&V6÷&B†2Æ"Ç"Âw&WVWVU÷&WV—&W5ög&W6…ö&÷fÂrÆ7F÷"¢&WGW&â  ¢FVbf–Â‡6VÆbÂF6µö–BÆ÷væW"ÆGFV×B“ ¢v—F‚6VÆbæ6öææV7F–öâ‚’23 ¢#×6VÆbåö÷væVB†2ÇF6µö–BÆ÷væW"ÆGFV×B¢Væ6W'F–ãÖ&ööÂ†%²vFVÆ—fW'•÷7F'FVEöBuÒæBæ÷B%²vFVÆ—fW'•÷&V6V—BuÒ¢6ö×ÆWFVCÖ&ööÂ†%²vFVÆ—fW'•÷&V6V—BuÒ¢7FFSÒtDôäRr–b6ö×ÆWFVBVÇ6Ru$T4ôä4”Ä”D”ôåõ$UT•$TBr–bVæ6W'F–âVÇ6Rtd”ÄTBp¢W'&÷#ÔæöæR–b6ö×ÆWFVBVÇ6RvFVÆ—fW'•ö÷WF6öÖU÷Væ¶æ÷vâr–bVæ6W'F–âVÇ6Rwv÷&¶W%öf–ÇW&Rp¢#Ö2æW†V7WFR‚%UDDR¦'f—5÷&WGW&åö7F–öç24UB7FFSÒW2ÆÆ7EöW'&÷#ÒW2ÆÆV6Uö÷væW#ÔåTÄÂÆÆV6U÷VçF–ÃÔåTÄÂÇfW'6–öã×fW'6–öâ³ÇWFFVEöCÖæ÷r‚’t„U$RF6µö–CÒW2$UEU$ä”är¢"Â‡7FFRÆW'&÷"ÇF6µö–B’’æfWF6†öæR‚¢&V6÷&B†2Æ"Ç"Âw&V6V—E÷&V6÷fW&VBr–b6ö×ÆWFVBVÇ6RvFVÆ—fW'•÷Væ6W'F–âr–bVæ6W'F–âVÇ6Rvf–ÂrÆ÷væW"¢&WGW&â  ¢FVb&V6÷fW"‡6VÆbÆ÷væW"“ ¢&V6÷fW&VCÓ ¢v—F‚6VÆbæ6öææV7F–öâ‚’23 ¢&÷w3Ö2æW†V7WFR‚rru4TÄT5B¢e$ôÒ¦'f—5÷&WGW&åö7F–öç2t„U$R7FFSÒu$ô4U54”ärp¢äB–ÆöB•2äõBåTÄÂäB6÷'&VÆF–öåö–B•2äõBåTÄÀ¢äBÆV6U÷VçF–ÃÆ6Æö6µ÷F–ÖW7F×‚¢äB††V'F&VEöB•2åTÄÂõ"†V'F&VEöCÆ6Æö6µ÷F–ÖW7F×‚’Ò‚W2¦–çFW'fÂs6V6öæBr’¢õ$DU"%’ÆV6U÷VçF–Âdõ"UDDR4´•Äô4´TBÄ”Ô•BrrrÂ‡6VÆbæ6öæf–ræ†V'F&VE÷6V6öæG2£"Â’’æfWF6†ÆÂ‚¢f÷""–â&÷w3 ¢–b%²vFVÆ—fW'•÷&V6V—BuÓ ¢7FFSÒtDôäRp¢W'&÷#ÔæöæP¢VÆ–b%²vFVÆ—fW'•÷7F'FVEöBuÓ ¢7FFSÒu$T4ôä4”Ä”D”ôåõ$UT•$TBp¢W'&÷#ÒvFVÆ—fW'•ö÷WF6öÖU÷Væ¶æ÷vâp¢VÇ6S ¢fÆ–C×fÆ–Eö&÷fÂ†"¢VÆ–v–&ÆS×fÆ–BæB%²vGFV×Eö6÷VçBuÓÇ6VÆbæ6öæf–ræÖ…öGFV×G0¢7FFSÒt$õdTBr–bVÆ–v–&ÆRVÇ6Rtd”ÄTBp¢W'&÷#ÒvÆV6UöW‡—&VBp¢#Ö2æW†V7WFR‚rruUDDR¦'f—5÷&WGW&åö7F–öç24UB7FFSÒW2ÆÆV6Uö÷væW#ÔåTÄÂÆÆV6U÷VçF–ÃÔåTÄÂÀ¢†V'F&VEöCÔåTÄÂÇfW'6–öã×fW'6–öâ³ÇWFFVEöCÖæ÷r‚’ÆÆ7EöW'&÷#ÒW2À¢æW‡EöGFV×EöCÖ6Æö6µ÷F–ÖW7F×‚’²‚W2¦–çFW'fÂs6V6öæBr’t„U$RF6µö–CÒW2$UEU$ä”är¢rrrÀ¢‡7FFRÆW'&÷"ÆÖ–âƒ3Ã"¢¦Ö–â†%²vGFV×Eö6÷VçBuÒÃ‚’’Æ%²wF6µö–BuÒ’’æfWF6†öæR‚¢&V6÷&B†2Æ"Ç"Âw&V6÷fW'’rÆ÷væW"¢&V6÷fW&VB³Ó¢&WGW&â&V6÷fW&V@ ¢FVb&V6öæ6–ÆR‡6VÆbÇF6µö–BÆ7F÷"Æ÷WF6öÖRÇ&V6V—Eö–CÔæöæRÆÖW76vUö–CÔæöæR“ ¢""$‡VÖâÖöæÇ’&W6öÇWF–öã²Væ6W'F–âFVÆ—fW'’—2æWfW"&WG&–VBWFöÖF–6ÆÇ’â"" ¢–bæ÷B7F÷"÷"÷WF6öÖRæ÷B–â‚vFVÆ—fW&VBrÂvæ÷EöFVÆ—fW&VBr“ ¢&—6R6öæfÆ–7B‚v‡VÖâ7F÷"æBW‡Æ–6—BFVÆ—fW'’÷WF6öÖR&WV—&VBr¢–b÷WF6öÖSÓÒvFVÆ—fW&VBræBæ÷B&V6V—Eö–C ¢&—6R6öæfÆ–7B‚w&V6V—B–B&WV—&VBFò6öæf—&ÒFVÆ—fW'’r¢v—F‚6VÆbæ6öææV7F–öâ‚’23 ¢#Ö2æW†V7WFR‚u4TÄT5B¢e$ôÒ¦'f—5÷&WGW&åö7F–öç2t„U$RF6µö–CÒW2dõ"UDDRrÂ‡F6µö–BÂ’’æfWF6†öæR‚¢–bæ÷B"÷"%²w7FFRuÒÒu$T4ôä4”Ä”D”ôåõ$UT•$TBs ¢&—6R6öæfÆ–7B‚wF6²—2æ÷Bv—F–ær&V6öæ6–Æ–F–öâr¢–b÷WF6öÖSÓÒvFVÆ—fW&VBs ¢#Ö2æW†V7WFR‚""%UDDR¦'f—5÷&WGW&åö7F–öç24UB7FFSÒtDôäRrÆFVÆ—fW'•÷&V6V—CÒW2À¢W‡FW&æÅöÖW76vUö–CÒW2ÆÆV6Uö÷væW#ÔåTÄÂÆÆV6U÷VçF–ÃÔåTÄÂÆÆ7EöW'&÷#ÔåTÄÂÀ¢fW'6–öã×fW'6–öâ³ÇWFFVEöCÖæ÷r‚’t„U$RF6µö–CÒW2$UEU$ä”är¢"""À¢‡7G"‡&V6V—Eö–B’Ç7G"†ÖW76vUö–B’–bÖW76vUö–B—2æ÷BæöæRVÇ6RæöæRÇF6µö–B’’æfWF6†öæR‚¢VÇ6S ¢#Ö2æW†V7WFR‚""%UDDR¦'f—5÷&WGW&åö7F–öç24UB7FFSÒu$TE’rÆ&÷fVEö'“ÔåTÄÂÀ¢&÷fVEöCÔåTÄÂÆ&÷fÅöW‡—&W5öCÔåTÄÂÆ&÷fVEöf–ævW'&–çCÔåTÄÂÀ¢FVÆ—fW'•÷7F'FVEöCÔåTÄÂÆFVÆ—fW'•÷&V6V—CÔåTÄÂÆW‡FW&æÅöÖW76vUö–CÔåTÄÂÀ¢ÆV6Uö÷væW#ÔåTÄÂÆÆV6U÷VçF–ÃÔåTÄÂÆ†V'F&VEöCÔåTÄÂÆæW‡EöGFV×EöCÖæ÷r‚’À¢Æ7EöW'&÷#Òv÷W&F÷%ö6öæf—&ÖVEöæ÷EöFVÆ—fW&VBrÇfW'6–öã×fW'6–öâ³ÇWFFVEöCÖæ÷r‚¢t„U$RF6µö–CÒW2$UEU$ä”är¢"""Â‡F6µö–BÂ’’æfWF6†öæR‚¢&V6÷&B†2Æ"Ç"Âw&V6öæ6–ÆUòr¶÷WF6öÖRÆ7F÷"ÆÖWFFF×²v†5öÖW76vUö–Bs¦ÖW76vUö–B—2æ÷BæöæWÒ¢&WGW&â  ¢FVb7FG2‡6VÆb“ ¢v—F‚6VÆbæ6öææV7F–öâ‚’23 ¢&÷w3Ö2æW†V7WFR‚u4TÄT5B7FFRÆ6÷VçB‚¢’26÷VçBe$ôÒ¦'f—5÷&WGW&åö7F–öç2u$õU%’7FFRr’æfWF6†ÆÂ‚¢öÆFW7CÖ2æW†V7WFR‚%4TÄT5B6öÆW66R†W‡G&7B†Wö6‚e$ôÒ6Æö6µ÷F–ÖW7F×‚’ÖÖ–â†7&VFVEöB’’Ã“£¦fÆöB2vRe$ôÒ¦'f—5÷&WGW&åö7F–öç2t„U$R7FFR”â‚u$TE’rÂt$õdTBrÂu$UE%’r’"’æfWF6†öæR‚•²vvRuĞ¢6÷VçG3Ö2æW†V7WFR‚%4TÄT5B6öÆW66R‡7VÒ†GFV×Eö6÷VçBÓ’d”ÅDU"…t„U$RGFV×Eö6÷VçCã’Ã’2&WG'•ö6÷VçBe$ôÒ¦'f—5÷&WGW&åö7F–öç2"’æfWF6†öæR‚¢WfVçG3Ö2æW†V7WFR‚%4TÄT5BÖWFFFÓãâv7F–öâr27F–öâÆ6÷VçB‚¢’26÷VçBe$ôÒ¦'f—5÷&WGW&åö7F–öåöWfVçG2t„U$RÖWFFFÓãâv7F–öâr”â‚v&÷fRrÂw&V6÷fW'’r’u$õU%’"’æfWF6†ÆÂ‚¢&WGW&â²¢§·%²w7FFRuÓ§%²v6÷VçBuÒf÷""–â&÷w7ÒÂvöÆFW7E÷F6²s¦Ö‚ƒÆöÆFW7B’Â¢¦6÷VçG2Â¢§·%²v7F–öâuÓ§%²v6÷VçBuÒf÷""–âWfVçG7×Ğ

@@ -2,12 +2,13 @@
 CREATE TABLE IF NOT EXISTS jarvis_return_actions (
  task_id text PRIMARY KEY, action_fingerprint char(64) NOT NULL,
  destination_key text NOT NULL, state text NOT NULL CHECK(state IN
- ('OPEN','READY','APPROVED','PROCESSING','RETRY','FAILED','DONE','CANCELLED')),
+ ('OPEN','READY','APPROVED','PROCESSING','RETRY','FAILED','DONE','CANCELLED','RECONCILIATION_REQUIRED')),
  version bigint NOT NULL DEFAULT 0, approved_by text, approved_at timestamptz,
  approval_expires_at timestamptz, approved_fingerprint char(64),
  lease_owner text, lease_until timestamptz,
  attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
- delivery_receipt text, updated_at timestamptz NOT NULL DEFAULT now(),
+ delivery_receipt text, external_message_id text, delivery_started_at timestamptz,
+ updated_at timestamptz NOT NULL DEFAULT now(),
  CHECK(state NOT IN ('APPROVED','PROCESSING','DONE') OR
  (approved_by IS NOT NULL AND approved_at IS NOT NULL AND approved_fingerprint=action_fingerprint)),
  CHECK(state<>'DONE' OR delivery_receipt IS NOT NULL)
@@ -25,6 +26,13 @@ ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS heartbeat_at timestam
 ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS processing_started_at timestamptz;
 ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS last_error text;
+ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS external_message_id text;
+ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS delivery_started_at timestamptz;
+-- Replace the original unnamed state check additively so existing rows remain intact.
+ALTER TABLE jarvis_return_actions DROP CONSTRAINT IF EXISTS jarvis_return_actions_state_check;
+ALTER TABLE jarvis_return_actions DROP CONSTRAINT IF EXISTS jarvis_return_actions_state_allowed;
+ALTER TABLE jarvis_return_actions ADD CONSTRAINT jarvis_return_actions_state_allowed CHECK(state IN
+ ('OPEN','READY','APPROVED','PROCESSING','RETRY','FAILED','DONE','CANCELLED','RECONCILIATION_REQUIRED'));
 CREATE INDEX IF NOT EXISTS jarvis_worker_claim_idx ON jarvis_return_actions(state,next_attempt_at,created_at);
 CREATE INDEX IF NOT EXISTS jarvis_return_action_events_task_time_idx ON jarvis_return_action_events(task_id,event_time DESC);
 CREATE TABLE IF NOT EXISTS jarvis_fake_receipts (
