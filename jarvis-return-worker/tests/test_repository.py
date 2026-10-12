@@ -1,6 +1,7 @@
 """New service integration scenarios; ephemeral CI DB, not the old acceptance suite."""
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime,timedelta,timezone
 from types import SimpleNamespace
 import pytest
@@ -14,6 +15,11 @@ def repo():
     r=QueueRepository(SimpleNamespace(database_url=url,worker_id='ci',lease_seconds=30,
         heartbeat_seconds=5,max_attempts=3))
     r.migrate()
+    # Each integration scenario gets an isolated fixture inside the disposable CI database.
+    with r.connection() as c:
+        c.execute('DELETE FROM jarvis_return_action_events')
+        c.execute('DELETE FROM jarvis_fake_receipts')
+        c.execute('DELETE FROM jarvis_return_actions')
     return r
 
 def make(repo):
@@ -95,3 +101,46 @@ def test_live_lease_not_recovered_and_audit_fields(repo):
     with repo.connection() as c:
         rows=c.execute('SELECT * FROM jarvis_return_action_events WHERE task_id=%s',(id,)).fetchall()
         assert all(r['correlation_id']==id and {'worker_id','lease_owner','duration'}<=r['metadata'].keys() for r in rows)
+
+def test_duplicate_request_and_duplicate_finish_are_idempotent(repo):
+    id=make(repo)
+    first=repo.get(id)
+    duplicate=repo.enqueue(id,first['destination_key'],'new-worker-test',id)
+    assert duplicate['action_fingerprint']==first['action_fingerprint']
+    t=repo.claim('one');repo.mark_delivery_started(id,'one',t['attempt_count'])
+    receipt=FakeTransport(repo,'one').deliver(t)
+    repo.save_delivery_receipt(id,'one',t['attempt_count'],receipt,'dedup-message')
+    assert repo.finish(id,'one',t['attempt_count'],receipt)['state']=='DONE'
+    with pytest.raises(Conflict): repo.finish(id,'one',t['attempt_count'],receipt)
+    assert repo.claim('two') is None
+    with repo.connection() as c:
+        assert c.execute('SELECT count(*) AS n FROM jarvis_fake_receipts WHERE task_id=%s',(id,)).fetchone()['n']==1
+
+def test_two_workers_cannot_claim_same_task(repo):
+    id=make(repo)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims=list(pool.map(repo.claim,['worker-a','worker-b']))
+    matched=[c for c in claims if c and c['task_id']==id]
+    assert len(matched)==1
+    assert repo.get(id)['state']=='PROCESSING'
+
+def test_crash_after_provider_message_id_before_receipt_requires_reconciliation(repo):
+    id=make(repo);task=repo.claim('worker-a')
+    repo.mark_delivery_started(id,'worker-a',task['attempt_count'])
+    # Provider answered with a message id but the process died before durable receipt save.
+    external_sends=['message-71']
+    with repo.connection() as c:
+        c.execute("UPDATE jarvis_return_actions SET lease_until=now()-interval '1 minute',heartbeat_at=now()-interval '1 minute' WHERE task_id=%s",(id,))
+    assert repo.recover('recovery-worker')==1
+    assert repo.get(id)['state']=='RECONCILIATION_REQUIRED'
+    assert repo.claim('restart-worker') is None
+    assert external_sends==['message-71']
+
+def test_restart_repository_never_resends_completed_action(repo):
+    id=make(repo);t=repo.claim('worker-a');repo.mark_delivery_started(id,'worker-a',t['attempt_count'])
+    receipt=FakeTransport(repo,'worker-a').deliver(t)
+    repo.save_delivery_receipt(id,'worker-a',t['attempt_count'],receipt,'restart-safe')
+    repo.finish(id,'worker-a',t['attempt_count'],receipt)
+    restarted=QueueRepository(repo.config)
+    assert restarted.get(id)['state']=='DONE'
+    assert restarted.claim('worker-after-restart') is None

@@ -35,9 +35,10 @@ class QueueRepository:
         fp = action_fingerprint(task_id, destination, payload)
         with self.connection() as c:
             r = c.execute('''INSERT INTO jarvis_return_actions
-                (task_id,destination_key,payload,correlation_id,action_fingerprint,state)
-                VALUES (%s,%s,%s,%s,%s,'READY') ON CONFLICT DO NOTHING RETURNING *''',
-                (task_id,destination,Jsonb(payload),correlation_id,fp)).fetchone()
+                (task_id,destination_key,payload,correlation_id,action_fingerprint,state,chat_id)
+                VALUES (%s,%s,%s,%s,%s,'READY',%s) ON CONFLICT DO NOTHING RETURNING *''',
+                (task_id,destination,Jsonb(payload),correlation_id,fp,
+                 destination.removeprefix('sandbox:telegram:') if destination.startswith('sandbox:telegram:') else None)).fetchone()
             if r:
                 # OPEN and READY are recorded in the same transaction: validation prepares the task.
                 record(c,None,{**r,'state':'OPEN'},'enqueue',actor)
@@ -46,6 +47,9 @@ class QueueRepository:
             r = c.execute('SELECT * FROM jarvis_return_actions WHERE task_id=%s',(task_id,)).fetchone()
             if r['action_fingerprint'] != fp or r['correlation_id'] != correlation_id:
                 raise Conflict('task id already bound to another action')
+            if destination.startswith('sandbox:telegram:'):
+                from .metrics import prevent_telegram_duplicate
+                prevent_telegram_duplicate()
             record(c,r,r,'enqueue_duplicate',actor)
             return r
 
@@ -124,13 +128,16 @@ class QueueRepository:
             if not valid_approval(b):
                 raise Conflict('approval no longer valid before delivery')
             if b['delivery_started_at']:
+                if b['destination_key'].startswith('sandbox:telegram:'):
+                    from .metrics import prevent_telegram_duplicate
+                    prevent_telegram_duplicate()
                 raise Conflict('delivery was already started for this lease')
             r=c.execute('''UPDATE jarvis_return_actions SET delivery_started_at=clock_timestamp(),
                 updated_at=now() WHERE task_id=%s RETURNING *''',(task_id,)).fetchone()
             record(c,b,r,'delivery_started',owner)
             return r
 
-    def save_delivery_receipt(self, task_id, owner, attempt, receipt_id, message_id=None):
+    def save_delivery_receipt(self, task_id, owner, attempt, receipt_id, message_id=None, chat_id=None, response=None):
         """Durably bind provider receipt/message identifiers before DONE."""
         if not receipt_id:
             raise ValueError('receipt id required')
@@ -139,10 +146,14 @@ class QueueRepository:
             if b['delivery_receipt'] and (b['delivery_receipt']!=str(receipt_id)
                 or b['external_message_id']!=(str(message_id) if message_id is not None else None)):
                 raise Conflict('delivery receipt identifiers cannot be replaced')
+            if b['delivery_receipt'] and (chat_id is not None and b.get('chat_id')!=str(chat_id)):
+                raise Conflict('delivery chat id cannot be replaced')
             r=c.execute('''UPDATE jarvis_return_actions SET delivery_receipt=%s,
-                external_message_id=%s,updated_at=now() WHERE task_id=%s RETURNING *''',
-                (str(receipt_id),str(message_id) if message_id is not None else None,task_id)).fetchone()
-            record(c,b,r,'delivery_receipt_saved',owner,metadata={'has_message_id':message_id is not None})
+                external_message_id=%s,chat_id=coalesce(%s,chat_id),delivery_response=coalesce(%s,delivery_response),
+                updated_at=now() WHERE task_id=%s RETURNING *''',
+                (str(receipt_id),str(message_id) if message_id is not None else None,
+                 str(chat_id) if chat_id is not None else None,Jsonb(response) if response is not None else None,task_id)).fetchone()
+            record(c,b,r,'delivery_receipt_saved',owner,metadata={'has_message_id':message_id is not None,'has_chat_id':chat_id is not None})
             return r
 
     def fake_delivery(self, task_id, owner, attempt):
@@ -209,6 +220,34 @@ class QueueRepository:
             error=None if completed else 'delivery_outcome_unknown' if uncertain else 'worker_failure'
             r=c.execute("UPDATE jarvis_return_actions SET state=%s,last_error=%s,lease_owner=NULL,lease_until=NULL,version=version+1,updated_at=now() WHERE task_id=%s RETURNING *",(state,error,task_id)).fetchone()
             record(c,b,r,'receipt_recovered' if completed else 'delivery_uncertain' if uncertain else 'fail',owner)
+            return r
+
+    def retry_confirmed_rejection(self, task_id, owner, attempt, retry_after=1):
+        """Retry only after Telegram explicitly rejects the request (e.g. HTTP 429)."""
+        delay=max(1,min(int(retry_after or 1),3600))
+        with self.connection() as c:
+            b=self._owned(c,task_id,owner,attempt)
+            if b['delivery_receipt']:
+                raise Conflict('receipt exists; refusing retry')
+            state='APPROVED' if b['attempt_count']<self.config.max_attempts else 'FAILED'
+            r=c.execute('''UPDATE jarvis_return_actions SET state=%s,delivery_started_at=NULL,
+                lease_owner=NULL,lease_until=NULL,heartbeat_at=NULL,last_error='telegram_rate_limited',
+                next_attempt_at=clock_timestamp()+(%s*interval '1 second'),version=version+1,updated_at=now()
+                WHERE task_id=%s RETURNING *''',(state,delay,task_id)).fetchone()
+            record(c,b,r,'telegram_retry_after_rejection',owner,metadata={'retry_after_seconds':delay})
+            return r
+
+    def fail_permanent_rejection(self, task_id, owner, attempt, code):
+        """A definitive provider rejection proves that no delivery occurred."""
+        with self.connection() as c:
+            b=self._owned(c,task_id,owner,attempt)
+            if b['delivery_receipt']:
+                raise Conflict('receipt exists; refusing failure transition')
+            r=c.execute('''UPDATE jarvis_return_actions SET state='FAILED',delivery_started_at=NULL,
+                lease_owner=NULL,lease_until=NULL,heartbeat_at=NULL,last_error=%s,
+                version=version+1,updated_at=now() WHERE task_id=%s RETURNING *''',
+                (str(code)[:100],task_id)).fetchone()
+            record(c,b,r,'telegram_permanent_rejection',owner)
             return r
 
     def recover(self,owner):

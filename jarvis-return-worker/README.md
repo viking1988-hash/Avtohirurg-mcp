@@ -1,65 +1,62 @@
-# Jarvis Return Worker — Sandbox only
+# Jarvis Return Worker — Railway Sandbox only
 
-Continues accepted queue contract at a2f0f3c96eb65a81c521c57e799eb0d96523a3f9.
-Does not import server.py, touch CRM, production or n8n. Only Fake Transport is implemented.
-Real transport interface slots raise on construction; no message SDK is installed.
+This service is a separate worker and does not import or call `server.py`, change CRM Booking, or enable Production delivery. Railway startup validates the exact Sandbox project/environment and the private Sandbox PostgreSQL identity. Deploy only the worker service in the `staging` environment of `Avtohirurg-Jarvis-Sandbox`.
 
-## Runtime
-Railway project Avtohirurg-Jarvis-Sandbox, environment staging. Exact project/environment
-IDs are configured privately via JARVIS_SANDBOX_PROJECT_ID and JARVIS_SANDBOX_ENVIRONMENT_ID.
-Identity is checked at startup.
-Private DB jarvis-sandbox-postgres.railway.internal / jarvis_return_queue_test / jarvis_sandbox.
-Both DSN and server identity must match. No DSN query/fragment overrides accepted.
-PORT=8080. Root directory /jarvis-return-worker. Dockerfile in this directory.
-The additive migration runs at startup under advisory lock; existing prototype rows
-without payload/correlation are retained, excluded from claims, never reconstructed.
+## Telegram Transport
 
-## API and approval
-GET /health and /ready expose only status; other endpoints require Bearer authentication.
-JARVIS_READ_TOKEN grants queue/metrics reads and preparation via POST /enqueue.
-JARVIS_APPROVAL_TOKEN is a separate operator credential for /approve, /cancel, /requeue, /reconcile.
-The worker does not possess a code path that automatically approves tasks.
-Human actor is server-configured JARVIS_OPERATOR_ID, never taken from caller JSON.
-Approval binds SHA256 of canonical task+destination+payload and expires in <=24 hours.
-API JSON: enqueue {task_id,destination,payload,correlation_id};
-approve {task_id,fingerprint,expires_at}; cancel/requeue {task_id};
-reconcile {task_id,outcome,receipt_id,message_id}.
-Do not automate the human credential in n8n or client integrations.
-Docs and OpenAPI are disabled; access logs disabled to avoid logging tokens/identifiers.
+`JARVIS_TRANSPORT=telegram` enables Telegram Bot API `sendMessage`. It requires the Sandbox-only secret `JARVIS_TELEGRAM_BOT_TOKEN` and a single allowlisted `JARVIS_TELEGRAM_TEST_CHAT_ID`. A task destination must be `sandbox:telegram:<chat_id>` and must match that allowlist; other chats fail before any network request. Payload is plain text, up to 4096 characters. The transport uses a bounded timeout and does not retry HTTP calls automatically. Never copy Production bot credentials into Sandbox.
 
-## Loop and recovery
-FOR UPDATE SKIP LOCKED claim -> approval check -> heartbeat -> durable send marker -> transport -> durable receipt -> DONE.
-Lease owner and attempt_count form a fencing token. An expired owner cannot heartbeat,
-deliver or finish. Every change and duplicate preparation is audited in the same transaction.
-Fake receipts are PostgreSQL-persisted and deduplicated by task+fingerprint. Provider receipt
-and message IDs are stored on the task before DONE. No assertion of exactly-once real provider delivery.
-Recovery runs every 15s and requires an expired lease and absent/stale heartbeat. Before the
-send marker, a still-valid approval and remaining attempt budget may return the task to APPROVED.
-After the marker, no saved receipt means RECONCILIATION_REQUIRED; a saved receipt means DONE.
-The reconciliation endpoint is operator-only: confirmed delivery records identifiers and closes
-DONE; confirmed non-delivery clears the old approval and returns READY, requiring fresh approval.
-Unknown results remain non-sendable. Recovery never recreates an approval.
-Cancel of PROCESSING is rejected: receipt reconciliation is required before cancellation.
-Uncertain delivery is excluded from claims and manual requeue; only explicit operator reconciliation can resolve it.
+On success, the worker stores Telegram `message_id` as `external_message_id`, the chat identifier as `chat_id`, a stable `delivery_receipt`, and a minimized `delivery_response` containing only `{ok, message_id, chat_id}`. Telegram message text, user profile and sender data are discarded. Tokens, request URLs, response bodies and message content are excluded from logs.
+
+Telegram's `sendMessage` has no idempotency-key parameter. The worker therefore guarantees at most one automatic request per approved action: it commits a send marker before the call, disables automatic network retries, and never repeats an `UNKNOWN` attempt. A timeout or HTTP 5xx can mean Telegram accepted the message; the task moves to `RECONCILIATION_REQUIRED` for an operator to check the test chat. This design cannot claim provider-level exactly-once delivery. An explicit HTTP 429 rejection is safe to retry after Telegram's `retry_after`; invalid token/chat and other definite 4xx responses fail permanently.
+
+## State and delivery boundary
+
+```mermaid
+stateDiagram-v2
+    [*] --> READY
+    READY --> APPROVED: human approval
+    APPROVED --> PROCESSING: atomic claim
+    PROCESSING --> APPROVED: confirmed 429 rejection
+    PROCESSING --> FAILED: permanent rejection
+    PROCESSING --> RECONCILIATION_REQUIRED: unknown delivery outcome
+    PROCESSING --> DONE: receipt saved then finish
+    PROCESSING --> APPROVED: lease expired before send marker
+    PROCESSING --> RECONCILIATION_REQUIRED: lease expired after marker, no receipt
+    PROCESSING --> DONE: lease expired after durable receipt
+    RECONCILIATION_REQUIRED --> DONE: operator confirms delivered
+    RECONCILIATION_REQUIRED --> READY: operator confirms not delivered
+```
+
+`FOR UPDATE SKIP LOCKED`, the lease owner and attempt counter fence concurrent/stale workers. Only an approved action can be claimed. Approval expires within 24 hours and the worker rechecks it before the send marker. Duplicate enqueue is idempotent by task ID, destination, payload fingerprint and correlation ID. Duplicate claims and finish operations cannot create another external request.
+
+## Recovery after a crash
+
+1. Before the durable send marker, lease recovery may return an action to `APPROVED` only while its approval remains valid and its attempt budget remains.
+2. After the marker but before a receipt exists, recovery sets `RECONCILIATION_REQUIRED`. Do not requeue it until a human has checked the allowlisted test chat and explicitly resolves the outcome.
+3. After receipt persistence, recovery sets `DONE` without contacting Telegram again.
+4. For a confirmed delivery, call the approval-protected `/reconcile` with `outcome=delivered`, the receipt ID and message ID. For a confirmed non-delivery, call `/reconcile` with `outcome=not_delivered`; this clears the old approval and marker, and a human must approve again.
+5. Never manually clear `delivery_started_at`, edit receipt identifiers, or infer non-delivery from a timeout/5xx.
+
+## API, secrets and logs
+
+`GET /health`, `/ready`, and authenticated `/metrics` are available. Other API reads require `JARVIS_READ_TOKEN`; state-changing approval, cancellation, requeue and reconciliation require the separate `JARVIS_APPROVAL_TOKEN`. Credentials are provided by Railway variables and must not appear in source, commit messages, logs, or reports. Access logs and OpenAPI are disabled.
+
+Each completed attempt emits one JSON log with `task_id`, `correlation_id`, `attempt`, `lease_owner`, `provider`, `provider_message_id`, `state`, and `duration_ms`; it excludes bot token, chat message text, HTTP URL and response body.
 
 ## Metrics
-Authenticated /metrics: queue_size, oldest_task (seconds), processing, failed, retry_count,
-recovery_count, approval_count. Values derive from PostgreSQL and survive process restarts.
-Prometheus gauges are used for persisted snapshot totals. No client payload metric labels.
 
-## Shutdown and rollback
-SIGTERM stops claims/recovery and waits up to JARVIS_SHUTDOWN_SECONDS (20 default).
-Railway drainingSeconds=40. An interrupted attempt stays fenced until recovery.
-Rollback: stop/redeploy only worker to prior commit. Preserve database/volume and audit.
-Migration is additive; do not run DROP. Old prototype APIs are not changed.
+`/metrics` exposes persisted queue gauges plus:
 
-## New verification
-pytest jarvis-return-worker/tests. PostgreSQL integration requires an ephemeral CI database
-via JARVIS_WORKER_CI_DATABASE_URL. This suite verifies new runtime behavior and does not
-rerun the previous 29 acceptance tests. No real customer destination is permitted.
+- `telegram_send_total`: Telegram requests attempted.
+- `telegram_send_success_total`: accepted send responses.
+- `telegram_send_failure_total`: confirmed retryable or permanent rejections.
+- `telegram_send_unknown_total`: requests whose result needs reconciliation.
+- `telegram_duplicate_prevented_total`: duplicate enqueue/started-send attempts blocked.
+- `telegram_api_latency_seconds`: Telegram request latency histogram.
 
-## Sandbox interruption verification
-JARVIS_FAKE_DELAY_SECONDS (0 default, maximum 180) delays only Fake delivery.
-Use temporarily for an operator-controlled worker interruption while PROCESSING;
-restore to 0 after verification. Repository checks ownership again after delay.
-No forced-exit API or real transport is exposed.
+## Verification and rollback
+
+Run `pytest jarvis-return-worker/tests`. PostgreSQL integration tests use only the ephemeral CI database in `JARVIS_WORKER_CI_DATABASE_URL`. Test Telegram traffic only in a dedicated test chat with a test bot. A restart test must confirm the same action remains `DONE` or `RECONCILIATION_REQUIRED` and no second network request is made.
+
+Rollback only the Sandbox worker to a previously successful Sandbox deployment. Keep the additive database migration and audit history intact; do not revert/drop receipt columns or markers. No Production or CRM Booking resource is part of this service's deployment path.

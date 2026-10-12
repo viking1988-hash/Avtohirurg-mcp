@@ -1,4 +1,5 @@
 import asyncio
+import os
 from fastapi import HTTPException
 
 async def ready(request):
@@ -8,4 +9,4 @@ async def ready(request):
         await asyncio.to_thread(request.app.state.repository.stats)
     except Exception:
         raise HTTPException(503,'sandbox database unavailable') from None
-    return {'status':'ready','transport':'fake'}
+    return {'status':'ready','transport':os.environ.get('JARVIS_TRANSPORT','fake')}
