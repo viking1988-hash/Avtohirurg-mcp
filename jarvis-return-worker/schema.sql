@@ -35,7 +35,7 @@ ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS delivery_response jso
 ALTER TABLE jarvis_return_actions DROP CONSTRAINT IF EXISTS jarvis_return_actions_state_check;
 ALTER TABLE jarvis_return_actions DROP CONSTRAINT IF EXISTS jarvis_return_actions_state_allowed;
 ALTER TABLE jarvis_return_actions ADD CONSTRAINT jarvis_return_actions_state_allowed CHECK(state IN
- ('OPEN','READY','APPROVED','PROCESSING','RETRY','FAILED','DONE','CANCELLED','RECONCILIATION_REQUIRED'));
+ ('OPEN','READY','APPROVED','PROCESSING','RETRY','RECONCILIATION_REQUIRED','DELIVERED_CONFIRMED','UNDELIVERED_CONFIRMED','FAILED','DONE','CANCELLED'));
 CREATE INDEX IF NOT EXISTS jarvis_worker_claim_idx ON jarvis_return_actions(state,next_attempt_at,created_at);
 CREATE INDEX IF NOT EXISTS jarvis_return_action_events_task_time_idx ON jarvis_return_action_events(task_id,event_time DESC);
 CREATE TABLE IF NOT EXISTS jarvis_fake_receipts (
