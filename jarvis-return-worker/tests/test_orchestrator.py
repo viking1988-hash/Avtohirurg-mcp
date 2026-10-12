@@ -155,3 +155,21 @@ def test_orchestrator_owns_queue_and_cancellation_facades():
     assert core.cancel("task-1","operator")["state"]=="CANCELLED"
     assert core.requeue("task-1","operator")["state"]=="READY"
     assert repo.calls==["claim","cancel","requeue"]
+
+
+def test_orchestrator_metrics_are_exported():
+    from jarvis_return_worker import metrics
+    class Stats:
+        def stats(self): return {}
+    metrics.observe_orchestrator("test",0.01,"fake")
+    metrics.transport_dispatch("fake")
+    metrics.policy_retry()
+    metrics.policy_reconcile()
+    metrics.event_published("TaskFinished")
+    metrics.dispatcher_failure("provider_disabled")
+    metrics.provider_call("fake","send")
+    output=metrics.render_metrics(Stats()).decode()
+    for name in ("orchestrator_tasks_total","orchestrator_pipeline_seconds",
+        "transport_dispatch_total","policy_retry_total","policy_reconcile_total",
+        "event_bus_events_total","dispatcher_failures_total","provider_calls_total"):
+        assert name in output
