@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import time
-from .dispatcher import DispatcherError
 from .events import EventBus, OrchestratorEvent
 from .policy import PolicyEngine
 from .queue import Conflict
@@ -16,20 +15,41 @@ class Orchestrator:
         self.policy=policy or PolicyEngine()
         self.event_bus=event_bus or EventBus()
 
-    def claim(self, owner):
-        return self.repository.claim(owner)
+    def claim(self, owner): return self.repository.claim(owner)
+    def recover(self, owner): return self.repository.recover(owner)
+    def cancel(self, task_id, actor): return self.repository.cancel(task_id, actor)
 
-    def recover(self, owner):
-        return self.repository.recover(owner)
+    def approve(self, task_id, fingerprint, expires_at, actor):
+        result=self.repository.approve(task_id,fingerprint,expires_at,actor)
+        self._publish(OrchestratorEvent("TaskApproved",task_id,result.get("correlation_id"),None,"READY","APPROVED",actor))
+        return result
 
-    def cancel(self, task_id, actor):
-        return self.repository.cancel(task_id, actor)
+    def read_task(self, task_id, actor):
+        from .reconciliation import read_task
+        return read_task(self.repository,task_id,actor)
+
+    def read_events(self, task_id, actor):
+        from .reconciliation import read_events
+        return read_events(self.repository,task_id,actor)
+
+    def read_delivery(self, task_id, actor):
+        from .reconciliation import read_delivery
+        return read_delivery(self.repository,task_id,actor)
+
+    def reconcile(self, task_id, actor, action, expected_version, **kwargs):
+        from .reconciliation import mutate
+        result=mutate(self.repository,task_id,actor,action,expected_version,**kwargs)
+        self._publish(OrchestratorEvent("ReconciliationCompleted",task_id,result.get("correlation_id"),
+            result.get("provider"),"RECONCILIATION_REQUIRED",result.get("state"),kwargs.get("reason")))
+        if result.get("state") in ("DONE","DELIVERED_CONFIRMED"):
+            self._publish(OrchestratorEvent("TaskFinished",task_id,result.get("correlation_id"),
+                result.get("provider"),"RECONCILIATION_REQUIRED",result.get("state")))
+        return result
 
     def _publish(self, event):
         try:
             self.event_bus.publish(event)
         except Exception:
-            # Durable queue audit is authoritative; observer faults never replay a send.
             logging.getLogger(__name__).exception("orchestrator event observer failed")
 
     async def process(self, task, owner):
@@ -38,10 +58,10 @@ class Orchestrator:
         if self.policy.approval(task).action != "send":
             await asyncio.to_thread(self.repository.fail,task["task_id"],owner,task["attempt_count"])
             return
-        heartbeat=asyncio.create_task(asyncio.sleep(0))
         try:
             await asyncio.to_thread(self.repository.heartbeat,task["task_id"],owner,task["attempt_count"])
             await asyncio.to_thread(self.repository.mark_delivery_started,task["task_id"],owner,task["attempt_count"],provider_name)
+            task["delivery_started_at"]=True
             self._publish(OrchestratorEvent("DeliveryStarted",task["task_id"],task.get("correlation_id"),provider_name,"PROCESSING","PROCESSING"))
             provider=self.dispatcher.dispatch(provider_name)
             from .metrics import observe_orchestrator
@@ -53,6 +73,7 @@ class Orchestrator:
             await asyncio.to_thread(self.repository.save_delivery_receipt,task["task_id"],owner,
                 task["attempt_count"],receipt,message_id,result.get("chat_id"),result.get("response"),provider_name)
             task["delivery_receipt"]=receipt
+            task["provider_message_id"]=message_id
             await asyncio.to_thread(self.repository.finish,task["task_id"],owner,task["attempt_count"],receipt)
             self._publish(OrchestratorEvent("DeliverySucceeded",task["task_id"],task.get("correlation_id"),provider_name,"PROCESSING","DONE"))
             self._publish(OrchestratorEvent("TaskFinished",task["task_id"],task.get("correlation_id"),provider_name,"PROCESSING","DONE"))
@@ -63,8 +84,7 @@ class Orchestrator:
             decision=self.policy.delivery_failure(exc,task)
             try:
                 if decision.action=="retry" and self.policy.may_resend(task,Classification.RETRYABLE):
-                    retry_after=getattr(exc,"retry_after",None)
-                    await asyncio.to_thread(self.repository.retry_confirmed_rejection,task["task_id"],owner,task["attempt_count"],retry_after)
+                    await asyncio.to_thread(self.repository.retry_confirmed_rejection,task["task_id"],owner,task["attempt_count"],getattr(exc,"retry_after",None))
                     from .metrics import policy_retry
                     policy_retry()
                 elif decision.action=="fail":
@@ -72,6 +92,7 @@ class Orchestrator:
                         await asyncio.to_thread(self.repository.fail_permanent_rejection,task["task_id"],owner,task["attempt_count"],exc.code)
                     else:
                         await asyncio.to_thread(self.repository.fail,task["task_id"],owner,task["attempt_count"])
+                    self._publish(OrchestratorEvent("DeliveryFailed",task["task_id"],task.get("correlation_id"),provider_name,"PROCESSING","FAILED",decision.reason))
                 elif decision.action=="complete":
                     pass
                 else:
@@ -83,20 +104,22 @@ class Orchestrator:
                 observe_orchestrator("failure",time.monotonic()-started,provider_name)
             except Conflict:
                 logging.getLogger(__name__).warning("orchestrator state transition fenced")
-        finally:
-            heartbeat.cancel()
         return
 
     def _provider_for(self, task):
-        destination=task.get("destination_key","")
-        if destination.startswith("sandbox:telegram:"):
+        if task.get("destination_key","").startswith("sandbox:telegram:"):
             return "telegram"
-        configured=getattr(self.repository.config,"transport",None)
-        return configured or "fake"
+        return "fake"
 
     def _send(self, provider, task):
-        from .metrics import provider_call,transport_dispatch
-        provider_call(getattr(provider,"provider","unknown"),"send")
-        transport_dispatch(getattr(provider,"provider","unknown"))
-        key=f"{task['task_id']}:{task.get('action_fingerprint','')}"
-        return provider.send(task,key)
+        from .metrics import provider_call,transport_dispatch,dispatcher_failure
+        name=getattr(provider,"provider","unknown")
+        try:
+            transport_dispatch(name)
+            provider_call(name,"send")
+            key=f"{task['task_id']}:{task.get('action_fingerprint','')}"
+            return provider.send(task,key)
+        except Exception as exc:
+            if exc.__class__.__name__=="DispatcherError":
+                dispatcher_failure(str(exc))
+            raise
