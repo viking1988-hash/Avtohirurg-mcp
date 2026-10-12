@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, ConfigDict
 from ..metrics import render_metrics
 from ..queue import Conflict
-from ..reconciliation import read_task
+from ..reconciliation import read_task, log_rejected
 
 router=APIRouter()
 
@@ -78,7 +78,9 @@ async def requeue(body:TaskID,request:Request,actor:str=Depends(human)):
 
 @router.post('/reconcile')
 async def reconcile(body:Reconciliation,request:Request,actor:str=Depends(human)):
-    return await call(request.app.state.repository.reconcile,body.task_id,actor,body.outcome,body.receipt_id,body.message_id)
+    await call(log_rejected,request.app.state.repository,body.task_id,actor,'legacy_reconcile',
+               'use the versioned /queue/{task_id}/ reconciliation API')
+    raise HTTPException(410,'use the versioned /queue/{task_id}/ reconciliation API')
 
 @router.get('/metrics',dependencies=[Depends(read)])
 async def metrics(request:Request):
