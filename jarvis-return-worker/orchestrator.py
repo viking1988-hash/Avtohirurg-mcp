@@ -18,6 +18,31 @@ class Orchestrator:
     def claim(self, owner): return self.repository.claim(owner)
     def recover(self, owner): return self.repository.recover(owner)
     def cancel(self, task_id, actor): return self.repository.cancel(task_id, actor)
+    def requeue(self, task_id, actor): return self.repository.requeue(task_id, actor)
+
+    def provider_receipt(self, name, message_id):
+        from .metrics import provider_call
+        provider=self.dispatcher.dispatch(name)
+        provider_call(name,"get_receipt")
+        return provider.get_receipt(message_id)
+
+    def provider_status(self, name, message_id):
+        from .metrics import provider_call
+        provider=self.dispatcher.dispatch(name)
+        provider_call(name,"check_status")
+        return provider.check_status(message_id)
+
+    def provider_reconcile(self, name, task):
+        from .metrics import provider_call
+        provider=self.dispatcher.dispatch(name)
+        provider_call(name,"reconcile")
+        return provider.reconcile(task)
+
+    def provider_cancel(self, name, message_id):
+        from .metrics import provider_call
+        provider=self.dispatcher.dispatch(name)
+        provider_call(name,"cancel")
+        return provider.cancel(message_id)
 
     def approve(self, task_id, fingerprint, expires_at, actor):
         result=self.repository.approve(task_id,fingerprint,expires_at,actor)
@@ -63,7 +88,12 @@ class Orchestrator:
             await asyncio.to_thread(self.repository.mark_delivery_started,task["task_id"],owner,task["attempt_count"],provider_name)
             task["delivery_started_at"]=True
             self._publish(OrchestratorEvent("DeliveryStarted",task["task_id"],task.get("correlation_id"),provider_name,"PROCESSING","PROCESSING"))
-            provider=self.dispatcher.dispatch(provider_name)
+            try:
+                provider=self.dispatcher.dispatch(provider_name)
+            except Exception as exc:
+                from .metrics import dispatcher_failure
+                dispatcher_failure(str(exc))
+                raise
             from .metrics import observe_orchestrator
             result=await asyncio.to_thread(self._send,provider,task)
             receipt=result.get("receipt_id") or result.get("receipt") or result.get("message_id")
