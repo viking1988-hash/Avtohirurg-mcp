@@ -10,6 +10,10 @@ if (process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_CHAT_ID) {
 }
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL is required');
+if (process.env.OUTBOX_STAGING_READONLY_AUDIT === 'true') {
+  await import('./outbox_readonly_audit.mjs');
+  process.exit(0);
+}
 const sql = postgres(url, { max: 1, connect_timeout: 5 });
 const fakeLead = 99010001;
 try {
