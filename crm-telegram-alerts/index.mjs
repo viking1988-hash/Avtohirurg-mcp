@@ -2,7 +2,7 @@ import postgres from "postgres";
 const token=process.env.TELEGRAM_BOT_TOKEN;
 const chat=process.env.TELEGRAM_CHAT_ID;
 const database=process.env.DATABASE_URL;
-if(!token||!chat||!database){console.log(JSON.stringify({ok:false,reason:"missing_configuration"}));process.exit(0)}
+if(!token||!chat||!database){console.log(JSON.stringify({ok:false,reason:"missing_configuration"}));process.exit(1)}
 const sql=postgres(database,{max:1,connect_timeout:10,onnotice:()=>{}});
 const runStarted=Date.now();
 console.log(JSON.stringify({event:"alert_run_started",at:new Date().toISOString()}));
@@ -17,7 +17,7 @@ try {
    if(!claimed.length){alreadyClaimed++;continue;}claimedCount++;
    try{
     const text="Автохирург CRM: "+(kind==="new"?"🔔 Новая заявка":"⏰ Заявка без обработки более 30 минут")+" №"+lead.id;
-    const response=await fetch("https://api.telegram.org/bot"+token+"/sendMessage",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chat,text})});
+    const response=await fetch("https://api.telegram.org/bot"+token+"/sendMessage",{method:"POST",signal:AbortSignal.timeout(10000),headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chat,text})});
     if(!response.ok)throw Error("Telegram HTTP "+response.status);
     const body=await response.json();
     if(!body.ok)throw Error("Telegram API rejected message");
