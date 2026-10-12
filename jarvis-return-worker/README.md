@@ -1,62 +1,60 @@
 # Jarvis Return Worker — Railway Sandbox only
 
-This service is a separate worker and does not import or call `server.py`, change CRM Booking, or enable Production delivery. Railway startup validates the exact Sandbox project/environment and the private Sandbox PostgreSQL identity. Deploy only the worker service in the `staging` environment of `Avtohirurg-Jarvis-Sandbox`.
+This worker is isolated to the Railway Sandbox project and staging environment. Startup checks the exact Railway project/environment and private PostgreSQL database identity. It does not deploy to Production or CRM Booking.
 
 ## Telegram Transport
 
-`JARVIS_TRANSPORT=telegram` enables Telegram Bot API `sendMessage`. It requires the Sandbox-only secret `JARVIS_TELEGRAM_BOT_TOKEN` and a single allowlisted `JARVIS_TELEGRAM_TEST_CHAT_ID`. A task destination must be `sandbox:telegram:<chat_id>` and must match that allowlist; other chats fail before any network request. Payload is plain text, up to 4096 characters. The transport uses a bounded timeout and does not retry HTTP calls automatically. Never copy Production bot credentials into Sandbox.
+JARVIS_TRANSPORT=telegram enables Bot API sendMessage and requires a Sandbox-only bot token plus one allowlisted test chat. Destinations must match that test chat. Never copy Production credentials into Sandbox. Telegram has no idempotency key: the worker commits a send marker before one bounded request and never automatically retries an ambiguous result. A timeout, HTTP 5xx, or missing receipt enters RECONCILIATION_REQUIRED. A definitive provider rejection may follow an explicit provider retry policy.
 
-On success, the worker stores Telegram `message_id` as `external_message_id`, the chat identifier as `chat_id`, a stable `delivery_receipt`, and a minimized `delivery_response` containing only `{ok, message_id, chat_id}`. Telegram message text, user profile and sender data are discarded. Tokens, request URLs, response bodies and message content are excluded from logs.
+On success, the provider name, message ID, receipt, chat ID and minimized response are durably stored before completion. Message text, user profile and sender data are discarded; secrets and request URLs are excluded from logs.
 
-Telegram's `sendMessage` has no idempotency-key parameter. The worker therefore guarantees at most one automatic request per approved action: it commits a send marker before the call, disables automatic network retries, and never repeats an `UNKNOWN` attempt. A timeout or HTTP 5xx can mean Telegram accepted the message; the task moves to `RECONCILIATION_REQUIRED` for an operator to check the test chat. This design cannot claim provider-level exactly-once delivery. An explicit HTTP 429 rejection is safe to retry after Telegram's `retry_after`; invalid token/chat and other definite 4xx responses fail permanently.
+## Delivery and reconciliation states
 
-## State and delivery boundary
-
-```mermaid
+~~~mermaid
 stateDiagram-v2
     [*] --> READY
-    READY --> APPROVED: human approval
-    APPROVED --> PROCESSING: atomic claim
-    PROCESSING --> APPROVED: confirmed 429 rejection
-    PROCESSING --> FAILED: permanent rejection
-    PROCESSING --> RECONCILIATION_REQUIRED: unknown delivery outcome
-    PROCESSING --> DONE: receipt saved then finish
-    PROCESSING --> APPROVED: lease expired before send marker
-    PROCESSING --> RECONCILIATION_REQUIRED: lease expired after marker, no receipt
-    PROCESSING --> DONE: lease expired after durable receipt
-    RECONCILIATION_REQUIRED --> DONE: operator confirms delivered
-    RECONCILIATION_REQUIRED --> READY: operator confirms not delivered
-```
+    READY --> APPROVED: fresh human approval
+    APPROVED --> PROCESSING: fenced claim
+    PROCESSING --> DONE: receipt saved
+    PROCESSING --> FAILED: definitive permanent rejection
+    PROCESSING --> APPROVED: definitive retryable rejection
+    PROCESSING --> RECONCILIATION_REQUIRED: ambiguous outcome
+    PROCESSING --> APPROVED: lease expires before send marker
+    PROCESSING --> RECONCILIATION_REQUIRED: lease expires after marker
+    RECONCILIATION_REQUIRED --> DELIVERED_CONFIRMED: operator confirms delivery
+    RECONCILIATION_REQUIRED --> UNDELIVERED_CONFIRMED: operator confirms non-delivery
+    UNDELIVERED_CONFIRMED --> READY: request fresh approval
+    READY --> CANCELLED: operator cancellation
+~~~
 
-`FOR UPDATE SKIP LOCKED`, the lease owner and attempt counter fence concurrent/stale workers. Only an approved action can be claimed. Approval expires within 24 hours and the worker rechecks it before the send marker. Duplicate enqueue is idempotent by task ID, destination, payload fingerprint and correlation ID. Duplicate claims and finish operations cannot create another external request.
+DONE represents a receipt-backed worker completion. Operator-confirmed outcomes are separately represented by DELIVERED_CONFIRMED and UNDELIVERED_CONFIRMED. All three states are excluded from claims. See the complete [State Machine](docs/state-machine.md).
 
-## Recovery after a crash
+## Reconciliation API
 
-1. Before the durable send marker, lease recovery may return an action to `APPROVED` only while its approval remains valid and its attempt budget remains.
-2. After the marker but before a receipt exists, recovery sets `RECONCILIATION_REQUIRED`. Do not requeue it until a human has checked the allowlisted test chat and explicitly resolves the outcome.
-3. After receipt persistence, recovery sets `DONE` without contacting Telegram again.
-4. For a confirmed delivery, call the approval-protected `/reconcile` with `outcome=delivered`, the receipt ID and message ID. For a confirmed non-delivery, call `/reconcile` with `outcome=not_delivered`; this clears the old approval and marker, and a human must approve again.
-5. Never manually clear `delivery_started_at`, edit receipt identifiers, or infer non-delivery from a timeout/5xx.
+Read-only operations use JARVIS_READ_TOKEN. Operator decisions use the separate JARVIS_APPROVAL_TOKEN; actor identity comes from JARVIS_OPERATOR_ID, never from caller JSON. Each write requires the observed expected_version, reason and optional comment. The row lock plus optimistic version check prevents stale writes, double confirmation and concurrent operator races. The legacy unversioned POST /reconcile returns 410 and is audited.
 
-## API, secrets and logs
+- GET /queue/{task_id}
+- GET /queue/{task_id}/events
+- GET /queue/{task_id}/delivery
+- POST /queue/{task_id}/reconcile
+- POST /queue/{task_id}/confirm-delivered
+- POST /queue/{task_id}/confirm-undelivered
+- POST /queue/{task_id}/request-new-approval
 
-`GET /health`, `/ready`, and authenticated `/metrics` are available. Other API reads require `JARVIS_READ_TOKEN`; state-changing approval, cancellation, requeue and reconciliation require the separate `JARVIS_APPROVAL_TOKEN`. Credentials are provided by Railway variables and must not appear in source, commit messages, logs, or reports. Access logs and OpenAPI are disabled.
+Every accepted and rejected valid action is persisted in the same transaction as its audit event; rejected optimistic-lock attempts are then written in a separate audit transaction. Provider IDs and receipts have database uniqueness constraints. See the [API Reference](docs/api-reference.md) and [Manual Reconciliation Guide](docs/reconciliation-guide.md).
 
-Each completed attempt emits one JSON log with `task_id`, `correlation_id`, `attempt`, `lease_owner`, `provider`, `provider_message_id`, `state`, and `duration_ms`; it excludes bot token, chat message text, HTTP URL and response body.
+## Recovery
 
-## Metrics
+The send marker is committed before a transport call; provider receipt and IDs are committed before DONE. Recovery sends no second request after an ambiguous outcome. After confirmed non-delivery, a separate request clears the old approval and marker, records prior provider evidence in the audit history, and returns the task to READY. A fresh human approval is then required. See the [Recovery Guide](docs/recovery-guide.md).
 
-`/metrics` exposes persisted queue gauges plus:
+## Audit and metrics
 
-- `telegram_send_total`: Telegram requests attempted.
-- `telegram_send_success_total`: accepted send responses.
-- `telegram_send_failure_total`: confirmed retryable or permanent rejections.
-- `telegram_send_unknown_total`: requests whose result needs reconciliation.
-- `telegram_duplicate_prevented_total`: duplicate enqueue/started-send attempts blocked.
-- `telegram_api_latency_seconds`: Telegram request latency histogram.
+The append-only event journal includes task ID, actor, provider, action, previous and new state, reason, event time, correlation ID, and action metadata. It supports a replay of state changes and operator decisions.
 
-## Verification and rollback
+Authenticated /metrics includes queue gauges, the existing Telegram-specific counters/histogram, and durable provider-neutral counters: reconciliation_total, reconciliation_success_total, reconciliation_failed_total, delivery_confirmed_total, delivery_rejected_total, reconciliation_required_total, manual_review_total, provider_unknown_total. Values are reloaded from the event journal after process restart. See the metrics definitions in [API Reference](docs/api-reference.md).
 
-Run `pytest jarvis-return-worker/tests`. PostgreSQL integration tests use only the ephemeral CI database in `JARVIS_WORKER_CI_DATABASE_URL`. Test Telegram traffic only in a dedicated test chat with a test bot. A restart test must confirm the same action remains `DONE` or `RECONCILIATION_REQUIRED` and no second network request is made.
+## Testing and rollback
 
-Rollback only the Sandbox worker to a previously successful Sandbox deployment. Keep the additive database migration and audit history intact; do not revert/drop receipt columns or markers. No Production or CRM Booking resource is part of this service's deployment path.
+PostgreSQL integration tests use only the disposable CI database configured via JARVIS_WORKER_CI_DATABASE_URL. They cover delivered and undelivered confirmation, stale versions, concurrent operators, restart during review, missing provider identifiers/receipt and post-reconciliation recovery. Telegram integration may use only a dedicated test bot and test chat.
+
+Rollback only the Sandbox worker. Keep the additive schema and audit history; never delete delivery evidence or restore an older database snapshot.
