@@ -33,4 +33,4 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Run unit and real PostgreSQL concurrency tests
         working-directory: crm-telegram-alerts
-        run: node --test reliability-policy.test.mjs reliability-policy.integration.test.mjs postgres-concurrency.test.mjs
+        run: node --test reliability-policy.test.mjs reliability-policy.integration.test.mjs postgres-concurrency.test.mjs postgres-migration.test.mjs
