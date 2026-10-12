@@ -17,6 +17,41 @@ def _json_value(value):
         return [_json_value(item) for item in value]
     return value
 
+EVENT_TYPES = {
+    "enqueue": "TaskCreated", "prepare": "TaskReady", "approve": "TaskApproved",
+    "delivery_started": "DeliveryStarted", "delivery_receipt_saved": "DeliverySucceeded",
+    "finish": "TaskFinished", "delivery_uncertain": "DeliveryUnknown",
+    "fail": "DeliveryFailed", "telegram_permanent_rejection": "DeliveryFailed",
+    "telegram_retry_after_rejection": "DeliveryRetryScheduled",
+    "cancel": "TaskCancelled", "requeue_requires_fresh_approval": "TaskReady",
+    "recovery": "TaskRecovered", "receipt_recovered": "TaskFinished",
+    "reconcile_delivered": "ReconciliationCompleted",
+    "reconcile_not_delivered": "ReconciliationCompleted",
+    "reconcile_started": "ReconciliationStarted",
+    "confirm-delivered": "ReconciliationCompleted",
+    "confirm-undelivered": "ReconciliationCompleted",
+    "request-new-approval": "ApprovalRequested",
+}
+
+
+def append_audit_outbox(conn, audit_event_id, before, after, action, provider=None, reason=None):
+    event_type = EVENT_TYPES.get(action)
+    if not event_type:
+        return None
+    from .outbox import append_event
+    payload = {
+        "action": action,
+        "previous_state": before.get("state") if before else None,
+        "new_state": after.get("state"),
+        "aggregate_version": after.get("version"),
+        "provider": provider or after.get("provider"),
+        "reason": reason,
+    }
+    return append_event(conn, aggregate_id=after["task_id"], aggregate_type="queue_task",
+        event_type=event_type, event_version=1, payload=payload,
+        correlation_id=after.get("correlation_id"), causation_id=str(audit_event_id))
+
+
 def record(conn, before, after, action, worker_id, started=None, metadata=None):
     details={
         "action":action,
@@ -27,10 +62,13 @@ def record(conn, before, after, action, worker_id, started=None, metadata=None):
         **(metadata or {}),
     }
     reason=details.get("reason")
-    conn.execute("""INSERT INTO jarvis_return_action_events
+    audit_row = conn.execute("""INSERT INTO jarvis_return_action_events
         (task_id,from_state,to_state,actor,correlation_id,metadata,
          action,provider,reason,previous_state,new_state)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        RETURNING event_id""",
         (after["task_id"],before["state"] if before else None,after["state"],worker_id,
          after["correlation_id"],Jsonb(_json_value(details)),action,after.get("provider"),reason,
-         before["state"] if before else None,after["state"]))
+         before["state"] if before else None,after["state"])).fetchone()
+    append_audit_outbox(conn, audit_row["event_id"], before, after, action,
+                        provider=after.get("provider"), reason=reason)

@@ -74,10 +74,9 @@ class Orchestrator:
         return result
 
     def _publish(self, event):
-        try:
-            self.event_bus.publish(event)
-        except Exception:
-            logging.getLogger(__name__).exception("orchestrator event observer failed")
+        # State-transition audit writes append the corresponding outbox event in
+        # the same database transaction. Never publish a second, volatile copy.
+        return None
 
     async def process(self, task, owner):
         started=time.monotonic()

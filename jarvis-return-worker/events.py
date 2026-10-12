@@ -1,7 +1,12 @@
-"""Extensible process-local event notifications over the durable audit journal."""
+"""Subscriber registry for the PostgreSQL outbox replay engine.
+
+Events are emitted only from the transaction that changes queue state. The old
+process-local publish/deduplicate API is intentionally not offered.
+"""
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+
+from .outbox import SubscriberRegistry
 
 
 @dataclass(frozen=True)
@@ -17,40 +22,11 @@ class OrchestratorEvent:
     attributes: dict = field(default_factory=dict)
 
 
-class EventBus:
-    """Subscribers are notifications; the PostgreSQL action journal remains authoritative."""
-    BUILTIN_EVENTS=frozenset({"TaskApproved","DeliveryStarted","DeliverySucceeded","DeliveryUnknown",
-        "DeliveryFailed","ReconciliationRequired","ReconciliationCompleted","TaskFinished"})
-    def __init__(self, observers=()):
-        self._observers = list(observers)
-        self._lock = RLock()
-        self._seen = set()
-        self._events_total = 0
+class EventBus(SubscriberRegistry):
+    """Compatibility name for the durable subscriber registry.
 
-    def subscribe(self, observer):
-        with self._lock:
-            self._observers.append(observer)
+    Calling publish directly would bypass the business transaction and is rejected.
+    """
 
     def publish(self, event):
-        key=(event.task_id,event.name,event.new_state,event.reason)
-        with self._lock:
-            if key in self._seen:
-                return False
-            self._seen.add(key)
-            self._events_total += 1
-            from .metrics import event_published
-            event_published(event.name)
-            observers=tuple(self._observers)
-        errors=[]
-        for observer in observers:
-            try:
-                observer(event)
-            except Exception as exc:
-                errors.append(exc)
-        if errors:
-            raise RuntimeError("event_observer_failed") from errors[0]
-        return True
-
-    @property
-    def events_total(self):
-        return self._events_total
+        raise RuntimeError("events must be appended through a business transaction")

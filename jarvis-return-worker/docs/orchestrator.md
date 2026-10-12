@@ -65,7 +65,12 @@ PolicyEngine is the only place that selects fail, retry, reconciliation, or safe
 
 ## Event Bus
 
-Events are immutable and extensible. Built-in names are TaskApproved, DeliveryStarted, DeliverySucceeded, DeliveryUnknown, DeliveryFailed, ReconciliationRequired, ReconciliationCompleted, and TaskFinished. Subscribers are notification hooks; delivery state and audit transitions are persisted in PostgreSQL before notifications. An observer exception is isolated so it cannot cause a resend. On restart, consumers should recover from the durable task event journal.
+Lifecycle events are appended to PostgreSQL's transactional outbox in the same
+transaction as the queue/reconciliation state and audit journal. The process-local
+publish/deduplication path has been removed. Event names and payloads are versioned;
+replay workers use per-subscriber delivery rows, PostgreSQL row locks, and a unique
+processed-event marker. See the [Transactional Outbox guide](transactional-outbox.md)
+for crash recovery and the exact-once transaction boundary.
 
 ## Metrics
 
@@ -83,3 +88,6 @@ The authenticated /metrics endpoint exports:
 | provider_calls_total | Counter by provider and method | Calls through provider abstraction |
 
 Provider-neutral reconciliation counters from PR #35 remain available alongside these metrics.
+
+
+The durable outbox metrics are documented in the [API Reference](api-reference.md).

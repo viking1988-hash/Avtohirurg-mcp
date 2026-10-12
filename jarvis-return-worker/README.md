@@ -1,6 +1,6 @@
 # Jarvis Return Worker — Railway Sandbox only
 
-The Orchestrator is the single application boundary for queue lifecycle and providers. See the [Orchestrator architecture, pipeline, policy, events, metrics, and provider guide](docs/orchestrator.md).
+The Orchestrator is the single application boundary for queue lifecycle and providers. Lifecycle events use a PostgreSQL transactional outbox and multi-instance replay worker; see the [outbox and recovery guide](docs/transactional-outbox.md) and [Orchestrator architecture](docs/orchestrator.md).
 
 This worker is isolated to the Railway Sandbox project and staging environment. Startup checks the exact Railway project/environment and private PostgreSQL database identity. It does not deploy to Production or CRM Booking.
 
@@ -48,6 +48,12 @@ Every accepted and rejected valid action is persisted in the same transaction as
 ## Recovery
 
 The send marker is committed before a transport call; provider receipt and IDs are committed before DONE. Recovery sends no second request after an ambiguous outcome. After confirmed non-delivery, a separate request clears the old approval and marker, records prior provider evidence in the audit history, and returns the task to READY. A fresh human approval is then required. See the [Recovery Guide](docs/recovery-guide.md).
+
+## Durable events, audit and metrics
+
+Queue and reconciliation transitions insert their outbox event atomically with the business row and audit journal. Replay workers use PostgreSQL row locks and a processed-event primary key. Subscriber database effects and processed markers commit together; external side effects still require provider idempotency. See the [Transactional Outbox guide](docs/transactional-outbox.md).
+
+Authenticated /metrics includes outbox_events_total, outbox_pending_total, outbox_replayed_total, outbox_failed_total, subscriber_errors_total, replay_latency_seconds and replay_queue_size. Durable totals are reconstructed from PostgreSQL after restart.
 
 ## Audit and metrics
 
