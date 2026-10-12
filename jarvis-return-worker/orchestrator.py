@@ -52,7 +52,7 @@ class Orchestrator:
     def read_crm_operation(self,event_id):
         return self.repository.get_crm_operation(event_id)
 
-    def reconcile_crm_operation(self,event_id,actor):
+    def reconcile_crm_operation(self,event_id,actor,expected_version):
         operation=self.repository.get_crm_operation(event_id)
         decision=self.policy.crm_reconciliation(operation or {})
         if decision.action!='reconcile':
@@ -67,7 +67,8 @@ class Orchestrator:
             evidence={}
         else:
             reason='provider_did_not_prove_outcome'
-        return self.repository.resolve_crm_reconciliation(event_id,actor,evidence,reason)
+        return self.repository.resolve_crm_reconciliation(
+            event_id,actor,evidence,reason,expected_version)
 
     async def process_crm_operation(self, operation, owner):
         """Deliver one replay-created CRM intent behind policy and lease fencing."""

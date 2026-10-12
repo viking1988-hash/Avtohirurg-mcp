@@ -41,7 +41,8 @@ outbox event idempotency key. An expired PROCESSING lease is moved to
 
 Read an operation with authenticated `GET /crm/operations/{event_id}`. An
 authorized operator can request a read-only provider lookup with
-`POST /crm/operations/{event_id}/reconcile`. The operation becomes DONE only when
+`POST /crm/operations/{event_id}/reconcile`, passing the observed `expected_version`.
+The row lock and optimistic version check reject stale operator submissions. The operation becomes DONE only when
 the provider returns status, external booking ID, and receipt; inconclusive lookup
 keeps it in `RECONCILIATION_REQUIRED` with a reason. No CRM credentials or endpoint
 are enabled by this code change. Do not mark the transport live until verified
@@ -71,3 +72,9 @@ operation through the authenticated endpoint and use its `booking_id` or
 key or receipt to force a resend. Only an explicit provider 429 rejection can
 return to PENDING, and it keeps the same stable operation key. Production and the
 independent CRM Booking environment are outside this runbook.
+
+The current Railway Sandbox has no dedicated CRM Sandbox endpoint or credentials.
+The CRM worker therefore remains disabled there. PostgreSQL adapter/replay tests
+exercise durable intent creation and failure/reconciliation transitions; mocked
+provider contract tests do not prove external CRM delivery and must not be reported
+as a live integration check.

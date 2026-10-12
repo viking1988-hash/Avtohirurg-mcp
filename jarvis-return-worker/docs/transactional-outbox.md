@@ -29,6 +29,14 @@ guaranteed for arbitrary email/HTTP/other external side effects; such integratio
 must use their provider's idempotency key and an explicit delivery/reconciliation
 contract.
 
+`CRMAdapter` only inserts the idempotent operation intent in this same replay
+transaction. CRM HTTP requests happen later through Orchestrator, Policy Engine,
+and Dispatcher. Repeated publication with the same causation ID returns the
+existing event ID. After a worker or PostgreSQL restart, committed CRM intents and
+processed markers remain durable; replaying a processed event does not rerun the
+adapter. These guarantees cover internal database effects, not an unavailable live
+CRM API.
+
 Temporary exceptions are audited and retried with capped exponential backoff.
 Raise `PermanentSubscriberError` for an unsupported or permanently invalid event;
 the delivery is retained as FAILED and is not retried automatically. A paused or

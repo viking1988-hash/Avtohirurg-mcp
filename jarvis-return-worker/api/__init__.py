@@ -27,6 +27,10 @@ class Reconciliation(TaskID):
     receipt_id: str|None=Field(default=None,max_length=512)
     message_id: str|None=Field(default=None,max_length=512)
 
+class CRMReconciliation(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+
 def auth(role):
     def check(request:Request,authorization:str=Header(default='')):
         c=request.app.state.config
@@ -96,10 +100,11 @@ async def crm_operation(event_id:str,request:Request,actor:str=Depends(read)):
     return result
 
 @router.post('/crm/operations/{event_id}/reconcile')
-async def reconcile_crm_operation(event_id:str,request:Request,actor:str=Depends(human)):
+async def reconcile_crm_operation(event_id:str,body:CRMReconciliation,request:Request,actor:str=Depends(human)):
     if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
         raise HTTPException(422,'invalid CRM event ID')
-    return await call(request.app.state.orchestrator.reconcile_crm_operation,event_id,actor)
+    return await call(request.app.state.orchestrator.reconcile_crm_operation,
+                      event_id,actor,body.expected_version)
 
 from .reconciliation import router as reconciliation_router
 router.include_router(reconciliation_router,prefix='/queue')

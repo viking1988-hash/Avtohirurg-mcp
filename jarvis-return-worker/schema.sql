@@ -218,6 +218,7 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_operations (
  correlation_id text,
  state text NOT NULL DEFAULT 'PENDING'
    CHECK(state IN ('PENDING','PROCESSING','DONE','FAILED','RECONCILIATION_REQUIRED')),
+ version bigint NOT NULL DEFAULT 0 CHECK(version>=0),
  attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
  next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  lease_owner text,
@@ -226,6 +227,7 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_operations (
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL)
 );
+ALTER TABLE jarvis_crm_operations ADD COLUMN IF NOT EXISTS version bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS jarvis_crm_pending_idx
  ON jarvis_crm_operations(state,next_attempt_at,created_at,event_id);
 

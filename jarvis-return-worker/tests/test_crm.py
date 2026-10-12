@@ -206,6 +206,171 @@ def test_outbox_replay_creates_one_crm_operation_and_survives_replay(repository)
     assert rows[0]["provider_receipt"] is None
 
 
+def test_republishing_same_booking_created_event_keeps_one_crm_intent(repository):
+    from jarvis_return_worker.events import EventBus
+    from jarvis_return_worker.outbox import OutboxReplay, append_event
+    suffix=str(uuid.uuid4()); booking="booking-"+suffix; cause="create-"+suffix
+    with repository.connection() as conn:
+        first=append_event(conn,aggregate_id=booking,aggregate_type="booking",
+            event_type="BookingCreated",event_version=1,
+            payload={"booking_id":booking,"synthetic":True},causation_id=cause)
+        second=append_event(conn,aggregate_id=booking,aggregate_type="booking",
+            event_type="BookingCreated",event_version=1,
+            payload={"booking_id":booking,"synthetic":True},causation_id=cause)
+    assert second==first
+    registry=EventBus(); CRMAdapter().register(registry)
+    replay=OutboxReplay(repository,registry,owner="crm-republish-test")
+    replay.register_subscribers()
+    for _ in range(25):
+        if repository.get_crm_operation(first): break
+        assert replay.replay_one()
+    assert not replay.replay_one()
+    with repository.connection() as conn:
+        assert conn.execute("SELECT count(*) AS n FROM jarvis_crm_operations WHERE booking_id=%s",(booking,)).fetchone()["n"]==1
+        assert conn.execute("SELECT count(*) AS n FROM jarvis_processed_events WHERE event_id=%s AND subscriber_name='jarvis.crm-adapter'",(first,)).fetchone()["n"]==1
+
+
+def test_replaying_booking_updated_does_not_diverge_or_duplicate(repository):
+    from jarvis_return_worker.events import EventBus
+    from jarvis_return_worker.outbox import OutboxReplay, append_event
+    suffix=str(uuid.uuid4()); booking="booking-"+suffix
+    with repository.connection() as conn:
+        event_id=append_event(conn,aggregate_id=booking,aggregate_type="booking",
+            event_type="BookingUpdated",event_version=1,
+            payload={"booking_id":booking,"service":"brakes","synthetic":True},
+            causation_id="update-"+suffix)
+    registry=EventBus(); CRMAdapter().register(registry)
+    replay=OutboxReplay(repository,registry,owner="crm-update-replay")
+    replay.register_subscribers()
+    for _ in range(25):
+        if repository.get_crm_operation(event_id): break
+        assert replay.replay_one()
+    first=repository.get_crm_operation(event_id)
+    assert first["operation"]=="update" and first["payload"]["status"]=="updated"
+    replay_after_restart=OutboxReplay(repository,registry,owner="crm-update-restart")
+    replay_after_restart.register_subscribers()
+    assert replay_after_restart.replay_one() is False
+    second=repository.get_crm_operation(event_id)
+    assert second["payload"]==first["payload"] and second["state"]==first["state"]
+
+
+def test_booking_cancelled_is_replayed_once_after_replay_worker_restart(repository):
+    from jarvis_return_worker.events import EventBus
+    from jarvis_return_worker.outbox import OutboxReplay, append_event
+    suffix=str(uuid.uuid4()); booking="booking-"+suffix
+    with repository.connection() as conn:
+        event_id=append_event(conn,aggregate_id=booking,aggregate_type="booking",
+            event_type="BookingCancelled",event_version=1,
+            payload={"booking_id":booking,"synthetic":True},causation_id="cancel-"+suffix)
+    registry=EventBus(); CRMAdapter().register(registry)
+    first=OutboxReplay(repository,registry,owner="crm-cancel-before-restart")
+    first.register_subscribers()
+    for _ in range(25):
+        if repository.get_crm_operation(event_id): break
+        assert first.replay_one()
+    restarted=OutboxReplay(repository,registry,owner="crm-cancel-after-restart")
+    restarted.register_subscribers()
+    assert restarted.replay_one() is False
+    row=repository.get_crm_operation(event_id)
+    assert row["operation"]=="cancel" and row["crm_status"]=="cancelled"
+    assert row["state"]=="PENDING" and row["provider_receipt"] is None
+
+
+def test_two_replay_workers_materialize_one_crm_adapter_effect(repository):
+    from concurrent.futures import ThreadPoolExecutor
+    from jarvis_return_worker.events import EventBus
+    from jarvis_return_worker.outbox import OutboxReplay, append_event
+    suffix=str(uuid.uuid4()); booking="booking-"+suffix
+    with repository.connection() as conn:
+        event_id=append_event(conn,aggregate_id=booking,aggregate_type="booking",
+            event_type="BookingCreated",event_version=1,
+            payload={"booking_id":booking,"synthetic":True},causation_id="parallel-"+suffix)
+    registry=EventBus(); CRMAdapter().register(registry)
+    workers=[OutboxReplay(repository,registry,owner="crm-replay-"+str(i)) for i in range(2)]
+    for worker in workers: worker.register_subscribers()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda worker: worker.replay_one(),workers))
+    with repository.connection() as conn:
+        count=conn.execute("SELECT count(*) AS n FROM jarvis_crm_operations WHERE event_id=%s",(event_id,)).fetchone()["n"]
+        processed=conn.execute("SELECT count(*) AS n FROM jarvis_processed_events WHERE event_id=%s AND subscriber_name='jarvis.crm-adapter'",(event_id,)).fetchone()["n"]
+    assert count==processed==1
+
+
+def test_crm_worker_restart_after_crash_does_not_resend_uncertain_operation(repository):
+    event_id=materialize_crm_operation(repository)
+    old=repository.claim_crm_operation("crm-worker-before-crash")
+    assert old and old["event_id"]==event_id
+    with repository.connection() as conn:
+        conn.execute("UPDATE jarvis_crm_operations SET lease_until=clock_timestamp()-interval '1 second' WHERE event_id=%s",(event_id,))
+    recovered=repository.claim_crm_operation("crm-worker-after-restart")
+    assert recovered is None
+    row=repository.get_crm_operation(event_id)
+    assert row["state"]=="RECONCILIATION_REQUIRED"
+    assert row["attempt_count"]==1 and row["provider_receipt"] is None
+
+
+def test_unknown_crm_response_stays_reconciliation_required_and_uses_optimistic_lock(repository):
+    from jarvis_return_worker.queue import Conflict
+    from jarvis_return_worker.transport import Classification
+    event_id=materialize_crm_operation(repository)
+    claim=repository.claim_crm_operation("crm-lost-response")
+    row=repository.fail_crm_operation(event_id,"crm-lost-response",claim["attempt_count"],
+        Classification.UNKNOWN,"crm_response_lost_after_send")
+    version=row["version"]
+    unresolved=repository.resolve_crm_reconciliation(event_id,"operator-test",{},
+        "test endpoint unavailable; no evidence",version)
+    assert unresolved["state"]=="RECONCILIATION_REQUIRED"
+    assert unresolved["version"]==version+1
+    with pytest.raises(Conflict,match="stale CRM operation version"):
+        repository.resolve_crm_reconciliation(event_id,"stale-operator",{},"stale",version)
+    assert repository.claim_crm_operation("crm-no-blind-retry") is None
+
+
+def test_policy_engine_gates_crm_retry_reconciliation_and_dispatch():
+    from jarvis_return_worker.policy import PolicyEngine
+    policy=PolicyEngine()
+    operation={"event_id":"event-policy","idempotency_key":"jarvis-crm:event-policy",
+        "booking_id":"booking-policy","operation":"send","state":"PROCESSING"}
+    assert policy.crm_operation(operation).action=="dispatch"
+    assert policy.crm_operation({**operation,"state":"DONE"}).action=="reconcile"
+    assert policy.crm_delivery_failure(DeliveryError(Classification.RETRYABLE,"429"),operation).action=="retry"
+    assert policy.crm_delivery_failure(DeliveryError(Classification.UNKNOWN,"timeout"),operation).action=="reconcile"
+    assert policy.crm_reconciliation({**operation,"state":"RECONCILIATION_REQUIRED"}).action=="reconcile"
+    assert policy.crm_reconciliation(operation).action=="reject"
+
+
+def test_complete_booking_lifecycle_is_retained_without_external_delivery(repository):
+    from jarvis_return_worker.events import EventBus
+    from jarvis_return_worker.outbox import OutboxReplay, append_event
+    suffix=str(uuid.uuid4()); booking="booking-"+suffix
+    event_ids=[]
+    with repository.connection() as conn:
+        for kind,causation in (("BookingCreated","create"),("BookingConfirmed","confirm"),("BookingCompleted","complete")):
+            event_ids.append(append_event(conn,aggregate_id=booking,aggregate_type="booking",
+                event_type=kind,event_version=1,payload={"booking_id":booking,"synthetic":True},
+                causation_id=causation+"-"+suffix))
+    registry=EventBus(); CRMAdapter().register(registry)
+    replay=OutboxReplay(repository,registry,owner="crm-lifecycle-replay")
+    replay.register_subscribers()
+    for _ in range(100):
+        with repository.connection() as conn:
+            count=conn.execute("SELECT count(*) AS n FROM jarvis_processed_events WHERE event_id=ANY(%s) AND subscriber_name='jarvis.crm-adapter'",(event_ids,)).fetchone()["n"]
+        if count==3: break
+        assert replay.replay_one()
+    assert count==3
+    with repository.connection() as conn:
+        rows=conn.execute("SELECT event_id,crm_status,state,provider_receipt FROM jarvis_crm_operations WHERE event_id=ANY(%s)",(event_ids,)).fetchall()
+    assert {row["crm_status"] for row in rows}=={"created","confirmed","completed"}
+    assert len(rows)==3 and all(row["state"]=="PENDING" and row["provider_receipt"] is None for row in rows)
+
+
+def test_crm_adapter_is_transactional_and_does_not_call_queue_or_provider():
+    import inspect
+    source=inspect.getsource(CRMAdapter.handle)
+    assert "conn.execute" in source and "provider" not in source.lower()
+    assert "queue" not in source.lower()
+
+
 def materialize_crm_operation(repository):
     from jarvis_return_worker.events import EventBus
     from jarvis_return_worker.outbox import OutboxReplay, append_event

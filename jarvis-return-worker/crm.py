@@ -5,6 +5,7 @@ PostgreSQL transaction. It never calls a provider. Network calls belong to the
 Orchestrator/provider worker path.
 """
 import json
+import hashlib
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
@@ -20,6 +21,12 @@ EVENT_OPERATIONS = {
     "BookingConfirmed": "update",
     "BookingCompleted": "update",
 }
+
+
+def crm_operation_fingerprint(event_id, booking_id, operation, payload):
+    stable=json.dumps({"event_id":str(event_id),"booking_id":str(booking_id),
+        "operation":operation,"payload":payload},sort_keys=True,separators=(",",":"),ensure_ascii=False)
+    return hashlib.sha256(stable.encode("utf-8")).hexdigest()
 
 
 class CRMProvider:
@@ -150,7 +157,7 @@ class CRMAdapter:
             "BookingCancelled": "cancelled", "BookingConfirmed": "confirmed",
             "BookingCompleted": "completed",
         }[event_type]
-        return {
+        command = {
             "event_id": event["event_id"],
             "idempotency_key": "jarvis-crm:" + str(event["event_id"]),
             "booking_id": str(booking_id),
@@ -159,6 +166,10 @@ class CRMAdapter:
             "payload": {**payload, "booking_id": str(booking_id), "status": status},
             "correlation_id": event.get("correlation_id"),
         }
+        command["action_fingerprint"] = crm_operation_fingerprint(
+            command["event_id"], command["booking_id"],
+            command["operation"], command["payload"])
+        return command
 
     def handle(self, conn, event):
         command = self.adapt(event)

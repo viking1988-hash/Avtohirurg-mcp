@@ -409,7 +409,7 @@ class QueueRepository:
         with self.connection() as c:
             return c.execute("SELECT * FROM jarvis_crm_operations WHERE event_id=%s",(event_id,)).fetchone()
 
-    def resolve_crm_reconciliation(self,event_id,actor,result,reason):
+    def resolve_crm_reconciliation(self,event_id,actor,result,reason,expected_version):
         if not actor:
             raise Conflict('authenticated operator required')
         external=result.get('external_booking_id')
@@ -420,11 +420,13 @@ class QueueRepository:
             row=c.execute("SELECT * FROM jarvis_crm_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
             if not row or row['state']!='RECONCILIATION_REQUIRED':
                 raise Conflict('CRM operation is not awaiting reconciliation')
+            if row['version'] != expected_version:
+                raise Conflict('stale CRM operation version')
             state='DONE' if proven else 'RECONCILIATION_REQUIRED'
             updated=c.execute("""UPDATE jarvis_crm_operations SET state=%s,
                 crm_status=coalesce(%s,crm_status),external_booking_id=coalesce(%s,external_booking_id),
                 provider_receipt=coalesce(%s,provider_receipt),
-                reconciliation_reason=%s,updated_at=clock_timestamp()
+                reconciliation_reason=%s,version=version+1,updated_at=clock_timestamp()
                 WHERE event_id=%s RETURNING *""",
                 (state,str(status)[:80] if status else None,
                  str(external)[:256] if external else None,str(receipt)[:512] if receipt else None,
