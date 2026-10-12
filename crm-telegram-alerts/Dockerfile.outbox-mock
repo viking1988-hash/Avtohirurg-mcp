@@ -4,4 +4,5 @@ COPY package*.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 COPY staging/outbox_mock_worker.mjs ./staging/outbox_mock_worker.mjs
 COPY staging/001_telegram_outbox.sql ./staging/001_telegram_outbox.sql
+COPY staging/outbox_readonly_audit.mjs ./staging/outbox_readonly_audit.mjs
 CMD ["node", "staging/outbox_mock_worker.mjs"]
