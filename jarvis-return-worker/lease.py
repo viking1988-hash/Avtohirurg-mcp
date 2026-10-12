@@ -10,13 +10,14 @@ class LeaseManager:
             await asyncio.to_thread(self.repository.heartbeat,task['task_id'],self.worker_id,task['attempt_count'])
 
 class RecoveryWorker:
-    def __init__(self, repository, stop):
-        self.repository, self.stop = repository, stop
+    def __init__(self, orchestrator, stop):
+        self.orchestrator, self.stop = orchestrator, stop
+        self.repository = orchestrator.repository
 
     async def run(self):
         while not self.stop.is_set():
             try:
-                await asyncio.to_thread(self.repository.recover,self.repository.config.worker_id)
+                await asyncio.to_thread(self.orchestrator.recover,self.repository.config.worker_id)
             except Exception:
                 # No exception text/DSN/payload in logs.
                 __import__('logging').getLogger(__name__).warning('recovery unavailable')
