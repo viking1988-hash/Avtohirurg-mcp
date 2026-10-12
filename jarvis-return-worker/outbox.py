@@ -151,9 +151,8 @@ class OutboxReplay:
                 conn.execute(
                     """UPDATE jarvis_event_subscribers SET last_success_at=clock_timestamp(),
                        updated_at=clock_timestamp() WHERE subscriber_name=%s
-                       AND event_version=%s AND event_type IN (
-                         SELECT event_type FROM jarvis_outbox_events WHERE event_id=%s)""",
-                    (row["subscriber_name"], row["event_version"], row["event_id"]),
+                       AND event_version=%s AND (event_type=%s OR event_type='*')""",
+                    (row["subscriber_name"], row["event_version"], row["event_type"]),
                 )
                 conn.execute(
                     """INSERT INTO jarvis_outbox_audit
