@@ -35,6 +35,10 @@ ALTER TABLE jarvis_return_actions ADD CONSTRAINT jarvis_return_actions_state_all
  ('OPEN','READY','APPROVED','PROCESSING','RETRY','FAILED','DONE','CANCELLED','RECONCILIATION_REQUIRED'));
 CREATE INDEX IF NOT EXISTS jarvis_worker_claim_idx ON jarvis_return_actions(state,next_attempt_at,created_at);
 CREATE INDEX IF NOT EXISTS jarvis_return_action_events_task_time_idx ON jarvis_return_action_events(task_id,event_time DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS jarvis_return_delivery_receipt_unique_idx
+ ON jarvis_return_actions(delivery_receipt) WHERE delivery_receipt IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS jarvis_return_external_message_unique_idx
+ ON jarvis_return_actions(destination_key,external_message_id) WHERE external_message_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS jarvis_fake_receipts (
  idempotency_key text PRIMARY KEY, task_id text NOT NULL REFERENCES jarvis_return_actions(task_id),
  fingerprint char(64) NOT NULL, receipt text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
