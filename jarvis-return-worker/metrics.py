@@ -1,6 +1,6 @@
 from prometheus_client import CollectorRegistry, Counter, Gauge, generate_latest
 
-GAUGES=('queue_size','oldest_task','processing','failed','reconciliation_required','retry_count','recovery_count','approval_count')
+GAUGES=('queue_size','oldest_task','processing','failed','reconciliation_required_queue','retry_count','recovery_count','approval_count')
 PERSISTED_COUNTERS=(
     'reconciliation_required_total',
     'delivery_receipt_saved_total',
