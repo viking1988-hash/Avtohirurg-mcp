@@ -150,7 +150,21 @@ def repository():
     repo=QueueRepository(SimpleNamespace(database_url=url,worker_id='email-tests',
         lease_seconds=30,heartbeat_seconds=5,max_attempts=3))
     repo.migrate()
-    return repo
+    yield repo
+    # The CI database is shared by integration test modules; remove only this
+    # module's synthetic Email events so later isolated subscribers cannot see
+    # an event for which they intentionally have no handler.
+    with repo.connection() as conn:
+        conn.execute("""DELETE FROM jarvis_outbox_audit WHERE event_id IN
+            (SELECT event_id FROM jarvis_outbox_events WHERE aggregate_type='email')""")
+        conn.execute("""DELETE FROM jarvis_processed_events WHERE event_id IN
+            (SELECT event_id FROM jarvis_outbox_events WHERE aggregate_type='email')""")
+        conn.execute("""DELETE FROM jarvis_outbox_deliveries WHERE event_id IN
+            (SELECT event_id FROM jarvis_outbox_events WHERE aggregate_type='email')""")
+        conn.execute("DELETE FROM jarvis_email_operation_events")
+        conn.execute("DELETE FROM jarvis_email_operations")
+        conn.execute("DELETE FROM jarvis_outbox_events WHERE aggregate_type='email'")
+        conn.execute("DELETE FROM jarvis_event_subscribers WHERE subscriber_name='jarvis.email-adapter'")
 
 
 def materialize_email_operation(repository):

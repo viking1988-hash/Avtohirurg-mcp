@@ -553,17 +553,20 @@ class QueueRepository:
             raise Conflict('delivery evidence required')
         with self.connection() as c:
             row=c.execute("SELECT * FROM jarvis_email_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
-            if not row or row['state']!='RECONCILIATION_REQUIRED':
+            if not row:
                 raise Conflict('Email operation is not awaiting reconciliation')
             if row['version']!=expected_version:
                 raise Conflict('stale Email operation version')
+            if row['state']!='RECONCILIATION_REQUIRED':
+                raise Conflict('Email operation is not awaiting reconciliation')
             new_state='SENT' if outcome=='delivered' else 'FAILED'
             status='delivered_confirmed' if outcome=='delivered' else 'undelivered_confirmed'
             saved=c.execute("""UPDATE jarvis_email_operations SET state=%s,provider_status=%s,
                 provider_message_id=coalesce(%s,provider_message_id),receipt=coalesce(%s,receipt),
+                delivery_time=CASE WHEN %s='SENT' THEN coalesce(delivery_time,clock_timestamp()) ELSE delivery_time END,
                 reconciliation_reason=NULL,version=version+1,updated_at=clock_timestamp()
                 WHERE event_id=%s RETURNING *""",
-                (new_state,status,evidence.get('provider_message_id'),evidence.get('receipt'),event_id)).fetchone()
+                (new_state,status,evidence.get('provider_message_id'),evidence.get('receipt'),new_state,event_id)).fetchone()
             c.execute("""INSERT INTO jarvis_email_operation_events(event_id,action,actor,reason)
                 VALUES (%s,%s,%s,%s)""",(event_id,'reconciled_'+outcome,actor,str(evidence.get('reason',''))[:200]))
             self._append_email_lifecycle(c,saved,'EmailSent' if outcome=='delivered' else 'EmailFailed',status)
