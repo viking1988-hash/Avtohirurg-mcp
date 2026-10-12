@@ -60,7 +60,7 @@ class Worker:
             if heartbeat in done:
                 await heartbeat
                 raise Conflict('heartbeat stopped')
-            message_id=await delivery
+            await delivery
         except asyncio.CancelledError:
             raise
         except DeliveryError as exc:

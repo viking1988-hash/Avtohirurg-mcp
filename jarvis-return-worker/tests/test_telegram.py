@@ -88,7 +88,8 @@ class Repo:
     def retry_confirmed_rejection(self,*args): self.calls.append(('retry',args[-1]))
     def fail_permanent_rejection(self,*args): self.calls.append(('permanent',args[-1]))
 
-def test_worker_receipt_durable_before_done():
+def test_worker_receipt_durable_before_done_and_structured_log(caplog):
+    caplog.set_level('INFO',logger='jarvis_return_worker.worker')
     repo=Repo()
     class Transport:
         provider='telegram'
@@ -96,6 +97,9 @@ def test_worker_receipt_durable_before_done():
     asyncio.run(Worker(repo,Transport(),asyncio.Event()).process(task()))
     assert repo.calls[0:2]==['heartbeat','mark']
     assert repo.calls[2][0]=='receipt' and repo.calls[3]=='done'
+    record=json.loads(next(r.message for r in caplog.records if r.name=='jarvis_return_worker.worker'))
+    assert record=={'task_id':'test','correlation_id':'corr-test','attempt':1,'lease_owner':'worker',
+                    'provider':'telegram','provider_message_id':'7','state':'DONE','duration_ms':record['duration_ms']}
 
 def test_worker_unknown_does_not_auto_retry():
     repo=Repo()
