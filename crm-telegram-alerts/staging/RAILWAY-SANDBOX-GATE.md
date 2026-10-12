@@ -68,3 +68,8 @@ The SQL scripts are a prototype and do not yet implement an end-to-end outbox wo
 - Verified deploy log: `READ_ONLY_OUTBOX_EVIDENCE {"db":"outbox_sandbox","total":0,"expired_leases":0,"reserved_test_rows":0,"states":[]}` and `PASS: independent Railway read-only test-row check`.
 - Audit uses SELECT only and rejects Telegram credentials; no messages sent. Earlier image missing audit module was fixed by Dockerfile COPY.
 - Outstanding: deployed production-grade delivery worker, controlled process-kill tests and human reconciliation UI. No production approval or rollout.
+
+## Committed-lease backend termination (CI PASS, 2026-10-12)
+- `outbox_committed_crash.py` terminates an actual disposable PostgreSQL backend **after committing the lease**, before any external send, then verifies persisted lease, expiry-to-`review`, no automatic reclaim, stale-token acknowledgement refusal, and cleanup.
+- All three workflows passed at `9bf50328789ff4dbbe96ec9099c9ea2e3604ef55`.
+- Scope limitation: backend termination simulates loss of worker DB connection, not OS process kill after a Telegram HTTP send; exactly-once external delivery is not proven. Human review of uncertain outcomes remains mandatory.
