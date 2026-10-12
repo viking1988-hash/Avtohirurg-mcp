@@ -225,6 +225,7 @@ class QueueRepository:
                 AND (heartbeat_at IS NULL OR heartbeat_at<clock_timestamp()-(%s*interval '1 second'))
                 ORDER BY lease_until FOR UPDATE SKIP LOCKED LIMIT 100''',(self.config.heartbeat_seconds*2,)).fetchall()
             for b in rows:
+                approval_expired=False
                 if b['delivery_receipt']:
                     state='DONE'
                     error=None
