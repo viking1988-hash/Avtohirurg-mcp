@@ -41,13 +41,6 @@ async def _call(fn, *args, **kwargs):
     except Exception:
         raise HTTPException(503, "sandbox repository unavailable") from None
 
-@router.get("/{task_id}")
-async def get_task(task_id: str, request: Request, actor: str = Depends(read_actor)):
-    result = await _call(service.read_task, request.app.state.repository, task_id, actor)
-    if result is None:
-        raise HTTPException(404, "task not found")
-    return result
-
 @router.get("/{task_id}/events")
 async def get_events(task_id: str, request: Request, actor: str = Depends(read_actor)):
     result = await _call(service.read_events, request.app.state.repository, task_id, actor)
