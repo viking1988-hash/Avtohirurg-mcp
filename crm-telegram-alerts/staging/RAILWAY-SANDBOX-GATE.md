@@ -62,3 +62,9 @@ The SQL scripts are a prototype and do not yet implement an end-to-end outbox wo
 - Every case deliberately throws an expected rollback and asserts no fake lead rows persist.
 - All three workflows passed on commit `413cc32095d8a8cb421466c699ad2aeadfb302a2`.
 - This is CI database-backed simulation, **not** a deployed delivery worker, real Telegram HTTP call, or proof of Railway row counts.
+
+## Independent Railway staging database audit (PASS, 2026-10-12)
+- Isolated `telegram-outbox-mock-runner` deployment `65cd0761-3d3c-479c-9694-a33682293b9c` succeeded on corrected image commit `f78f2270820a530b8add941d875dfd1525190f5a`.
+- Verified deploy log: `READ_ONLY_OUTBOX_EVIDENCE {"db":"outbox_sandbox","total":0,"expired_leases":0,"reserved_test_rows":0,"states":[]}` and `PASS: independent Railway read-only test-row check`.
+- Audit uses SELECT only and rejects Telegram credentials; no messages sent. Earlier image missing audit module was fixed by Dockerfile COPY.
+- Outstanding: deployed production-grade delivery worker, controlled process-kill tests and human reconciliation UI. No production approval or rollout.
