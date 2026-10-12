@@ -36,4 +36,37 @@ BEGIN
   WHERE id=job_id AND status='leased' AND lease_token=token;
   IF FOUND THEN RAISE EXCEPTION 'stale lease token was accepted'; END IF;
 END $$;
+-- Verify retry policy, state constraints and success acknowledgement.
+DO $
+DECLARE k bigint; t uuid; n integer;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,next_attempt_at)
+  VALUES (90000002,'overdue','retryable_error',4,now()-interval '1 minute')
+  RETURNING id INTO k;
+  UPDATE crm_telegram_outbox SET status='leased',attempts=attempts+1,
+    lease_until=now()+interval '2 minutes',lease_token=gen_random_uuid()
+  WHERE id=k AND status='retryable_error' AND attempts<5
+  RETURNING lease_token,attempts INTO t,n;
+  IF t IS NULL OR n<>5 THEN RAISE EXCEPTION 'final retry claim failed'; END IF;
+  UPDATE crm_telegram_outbox SET status='sent',sent_at=now(),
+    telegram_message_id=987654321,lease_until=NULL,lease_token=NULL
+  WHERE id=k AND status='leased' AND lease_token=t;
+  IF NOT FOUND THEN RAISE EXCEPTION 'acknowledgement failed'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k AND
+    status='sent' AND telegram_message_id=987654321 AND sent_at IS NOT NULL)
+  THEN RAISE EXCEPTION 'sent receipt missing'; END IF;
+  BEGIN
+    INSERT INTO crm_telegram_outbox(lead_id,alert_type,status)
+    VALUES(90000003,'new','leased');
+    RAISE EXCEPTION 'invalid lease state was accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,next_attempt_at)
+  VALUES(90000004,'new','retryable_error',5,now()-interval '1 minute')
+  RETURNING id INTO k;
+  UPDATE crm_telegram_outbox SET status='leased',lease_until=now()+interval '2 minutes',
+    lease_token=gen_random_uuid(),attempts=attempts+1
+  WHERE id=k AND status='retryable_error' AND attempts<5;
+  IF FOUND THEN RAISE EXCEPTION 'exhausted retry was claimed'; END IF;
+END $;
 ROLLBACK;
