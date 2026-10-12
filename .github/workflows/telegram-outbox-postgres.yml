@@ -51,4 +51,4 @@ jobs:
       - name: Verify no smoke data persisted
         run: |
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
-          echo "PASS: schema, uniqueness, lease, review, stale token, rollback"
+          echo "PASS: schema, uniqueness, lease, review, stale token, rollback, concurrency and cleanup"
