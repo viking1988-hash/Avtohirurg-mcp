@@ -39,7 +39,8 @@ class FakeTransport:
     def __init__(self, delay_seconds=0, *legacy):
         # Keep the former constructor shape accepted for callers, while never receiving a Queue.
         if not isinstance(delay_seconds, (int, float)):
-            delay_seconds = legacy[-1] if legacy else 0
+            # Legacy shape was (repository, worker_id[, delay]); retain only delay.
+            delay_seconds = legacy[1] if len(legacy) > 1 else 0
         if not 0 <= float(delay_seconds) <= 180:
             raise ValueError('bounded Fake delay required')
         self.delay_seconds = float(delay_seconds)
