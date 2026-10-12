@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, ConfigDict
 from ..metrics import render_metrics
 from ..queue import Conflict
+from ..reconciliation import read_task
 
 router=APIRouter()
 
@@ -52,9 +53,9 @@ async def listing(request:Request,limit:int=100):
         raise HTTPException(422,'limit must be 1..500')
     return await call(request.app.state.repository.list,limit)
 
-@router.get('/queue/{task_id}',dependencies=[Depends(read)])
-async def task(task_id:str,request:Request):
-    result=await call(request.app.state.repository.get,task_id)
+@router.get('/queue/{task_id}')
+async def task(task_id:str,request:Request,actor:str=Depends(read)):
+    result=await call(read_task,request.app.state.repository,task_id,actor)
     if not result:
         raise HTTPException(404,'task not found')
     return result
@@ -82,3 +83,6 @@ async def reconcile(body:Reconciliation,request:Request,actor:str=Depends(human)
 @router.get('/metrics',dependencies=[Depends(read)])
 async def metrics(request:Request):
     return Response(await call(render_metrics,request.app.state.repository),media_type='text/plain; version=0.0.4')
+
+from .reconciliation import router as reconciliation_router
+router.include_router(reconciliation_router,prefix='/queue')
