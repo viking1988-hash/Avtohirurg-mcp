@@ -31,6 +31,48 @@ jobs:
           env['JARVIS_WORKER_CI_DATABASE_URL'] = urlunsplit(('postgresql', 'jarvis_sandbox@localhost:5432', '/jarvis_return_queue_test', '', ''))
           subprocess.run(['pytest', '-q', 'jarvis-return-worker/tests', '--junitxml=worker-test-results.xml'], env=env, check=True)
           CODE
+      - name: Verify receipt survives PostgreSQL restart
+        run: |
+          export JARVIS_WORKER_CI_DATABASE_URL='postgresql://jarvis_sandbox@localhost:5432/jarvis_return_queue_test'
+          export PYTHONPATH='jarvis-return-worker'
+          python - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          from types import SimpleNamespace
+          from jarvis_return_worker.queue import QueueRepository
+          from jarvis_return_worker.transport import FakeTransport
+          url = __import__('os').environ['JARVIS_WORKER_CI_DATABASE_URL']
+          repo = QueueRepository(SimpleNamespace(database_url=url, worker_id='restart-ci', lease_seconds=30,
+              heartbeat_seconds=5, max_attempts=3))
+          repo.migrate()
+          task_id = 'ci-postgres-restart-probe'
+          row = repo.enqueue(task_id, 'sandbox:restart-probe', 'restart-check', task_id)
+          repo.approve(task_id, row['action_fingerprint'], datetime.now(timezone.utc)+timedelta(minutes=5), 'ci-human')
+          task = repo.claim('restart-ci')
+          repo.mark_delivery_started(task_id, 'restart-ci', task['attempt_count'])
+          receipt = FakeTransport(repo, 'restart-ci').deliver(task)
+          repo.save_delivery_receipt(task_id, 'restart-ci', task['attempt_count'], receipt, 'restart-probe-message')
+          repo.finish(task_id, 'restart-ci', task['attempt_count'], receipt)
+          PY
+          container_id="$(docker ps -q --filter ancestor=postgres:18 | head -n1)"
+          test -n "$container_id"
+          docker restart "$container_id"
+          for attempt in $(seq 1 20); do
+            docker exec "$container_id" pg_isready -U jarvis_sandbox -d jarvis_return_queue_test && break
+            sleep 1
+          done
+          docker exec "$container_id" pg_isready -U jarvis_sandbox -d jarvis_return_queue_test
+          python - <<'PY'
+          import os
+          from types import SimpleNamespace
+          from jarvis_return_worker.queue import QueueRepository
+          repo = QueueRepository(SimpleNamespace(database_url=os.environ['JARVIS_WORKER_CI_DATABASE_URL'],
+              worker_id='restart-ci', lease_seconds=30, heartbeat_seconds=5, max_attempts=3))
+          row = repo.get('ci-postgres-restart-probe')
+          assert row['state'] == 'DONE'
+          assert row['external_message_id'] == 'restart-probe-message'
+          assert repo.claim('after-restart') is None
+          print('PostgreSQL restart recovery check: DONE receipt survived; no re-claim')
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
