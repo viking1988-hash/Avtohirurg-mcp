@@ -121,21 +121,21 @@ def test_dispatcher_failure_after_send_marker_requires_reconciliation():
     assert repo.calls==["heartbeat","mark","fail"]
 
 
-def test_event_observer_failure_does_not_repeat_provider_send():
+def test_outbox_registry_does_not_publish_volatile_copy_during_delivery():
     repo=Repo()
     provider=Provider("alpha")
-    bus=EventBus([lambda event: (_ for _ in ()).throw(RuntimeError("observer failed"))])
+    bus=EventBus()
     core=Orchestrator(repo,dispatcher(("alpha",provider,True)),event_bus=bus)
     run(core)
     assert len(provider.calls)==1
     assert repo.calls[-2:]==["receipt","finish"]
 
 
-def test_event_bus_deduplicates_repeated_notification_key():
+def test_event_bus_rejects_nontransactional_publish():
     bus=EventBus()
     event=OrchestratorEvent("TaskApproved","task-1","corr-1",None,"READY","APPROVED")
-    assert bus.publish(event) is True
-    assert bus.publish(event) is False
+    with pytest.raises(RuntimeError,match="business transaction"):
+        bus.publish(event)
 
 
 def test_fake_provider_has_no_queue_dependency_and_is_repeatable():
