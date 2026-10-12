@@ -127,3 +127,40 @@ with psycopg.connect(dsn) as recovered:
         cur.execute("DELETE FROM crm_telegram_outbox WHERE lead_id=90000104")
     recovered.commit()
 print("PASS: terminated DB connection rolled back uncommitted lease and job recovered")
+
+# Uncommitted lease must remain invisible to a second transaction.
+with psycopg.connect(dsn) as setup:
+    with setup.cursor() as cur:
+        cur.execute("INSERT INTO crm_telegram_outbox(lead_id,alert_type) VALUES (90000105,'new')")
+    setup.commit()
+owner = psycopg.connect(dsn)
+owner.autocommit = False
+with owner.cursor() as cur:
+    cur.execute("""
+      WITH candidate AS (
+        SELECT id FROM crm_telegram_outbox
+        WHERE lead_id=90000105 AND status='pending'
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE crm_telegram_outbox o SET status='leased',attempts=attempts+1,
+        lease_until=now()+interval '2 minutes',lease_token=gen_random_uuid()
+      FROM candidate WHERE o.id=candidate.id RETURNING o.id
+    """)
+    assert cur.fetchone() is not None
+with psycopg.connect(dsn) as rival:
+    with rival.cursor() as cur:
+        cur.execute("""
+          SELECT id FROM crm_telegram_outbox
+          WHERE lead_id=90000105 AND status='pending'
+          FOR UPDATE SKIP LOCKED
+        """)
+        assert cur.fetchone() is None, "locked job was visible to rival"
+owner.rollback()
+owner.close()
+with psycopg.connect(dsn) as cleanup:
+    with cleanup.cursor() as cur:
+        cur.execute("SELECT status,attempts FROM crm_telegram_outbox WHERE lead_id=90000105")
+        assert cur.fetchone()==('pending',0)
+        cur.execute("DELETE FROM crm_telegram_outbox WHERE lead_id=90000105")
+    cleanup.commit()
+print("PASS: uncommitted lease invisible to rival, rollback restores job")
