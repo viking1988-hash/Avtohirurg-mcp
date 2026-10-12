@@ -159,6 +159,31 @@ def test_permanent_subscriber_error_is_audited_and_not_retried(repo):
         assert [row["action"] for row in audit]==["permanent_failure"]
 
 
+
+def test_queue_state_and_outbox_share_one_transaction(repo):
+    from jarvis_return_worker.audit import record
+    task_id="outbox-atomic-"+str(uuid.uuid4())
+    row=repo.enqueue(task_id,"sandbox:outbox-test",{"kind":"test"},task_id)
+    with repo.connection() as conn:
+        events=conn.execute("""SELECT event_type FROM jarvis_outbox_events
+            WHERE aggregate_id=%s ORDER BY event_type""",(task_id,)).fetchall()
+        assert {event["event_type"] for event in events}=={"TaskCreated","TaskReady"}
+    with pytest.raises(RuntimeError,match="rollback state and outbox"):
+        with repo.connection() as conn:
+            before=conn.execute("SELECT * FROM jarvis_return_actions WHERE task_id=%s FOR UPDATE",
+                (task_id,)).fetchone()
+            after=conn.execute("""UPDATE jarvis_return_actions SET state='CANCELLED',version=version+1
+                WHERE task_id=%s RETURNING *""",(task_id,)).fetchone()
+            record(conn,before,after,"cancel","outbox-test")
+            raise RuntimeError("rollback state and outbox")
+    with repo.connection() as conn:
+        current=conn.execute("SELECT state FROM jarvis_return_actions WHERE task_id=%s",
+            (task_id,)).fetchone()["state"]
+        cancelled=conn.execute("""SELECT count(*) AS n FROM jarvis_outbox_events
+            WHERE aggregate_id=%s AND event_type='TaskCancelled'""",(task_id,)).fetchone()["n"]
+        assert current=="READY"
+        assert cancelled==0
+
 def test_outbox_insert_rolls_back_with_business_transaction(repo):
     event_id=str(uuid.uuid4())
     with pytest.raises(RuntimeError,match="simulate business rollback"):
