@@ -12,6 +12,8 @@ from .worker import Worker
 from .lease import RecoveryWorker
 from .api import router
 from .health import ready
+from .events import EventBus
+from .outbox import OutboxReplay, ReplayWorker
 
 
 def make_dispatcher(config, repository):
@@ -41,12 +43,18 @@ async def lifespan(app):
     await asyncio.to_thread(repo.migrate)
     stop=asyncio.Event()
     dispatcher=make_dispatcher(config,repo)
-    orchestrator=Orchestrator(repo,dispatcher)
+    registry=EventBus()
+    registry.register("jarvis.lifecycle-projector","*",_project_event,version=1)
+    replay=OutboxReplay(repo,registry,owner=config.worker_id)
+    orchestrator=Orchestrator(repo,dispatcher,event_bus=registry)
     transport=dispatcher.dispatch(os.environ.get('JARVIS_TRANSPORT','fake')).client
     worker=Worker(repo,transport,stop,orchestrator=orchestrator)
     recovery=RecoveryWorker(orchestrator,stop)
+    replay_worker=ReplayWorker(replay,stop,poll_seconds=config.poll_seconds)
     app.state.config,app.state.repository,app.state.stop,app.state.orchestrator=config,repo,stop,orchestrator
-    app.state.loops=[asyncio.create_task(worker.run()),asyncio.create_task(recovery.run())]
+    app.state.event_registry,app.state.outbox_replay=registry,replay
+    app.state.loops=[asyncio.create_task(worker.run()),asyncio.create_task(recovery.run()),
+                     asyncio.create_task(replay_worker.run())]
     logging.getLogger(__name__).warning('sandbox worker ready transport=%s',os.environ.get('JARVIS_TRANSPORT','fake'))
     try:
         yield
