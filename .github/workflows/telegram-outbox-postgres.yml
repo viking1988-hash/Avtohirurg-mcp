@@ -60,6 +60,11 @@ jobs:
         run: npm install --omit=dev --no-audit --no-fund
       - name: Test simulated Telegram transport outcomes without network access
         run: node --test crm-telegram-alerts/staging/outbox_transport_policy.test.mjs
+      - name: Verify simulated transport outcomes against disposable PostgreSQL
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: node crm-telegram-alerts/staging/outbox_transport_db_test.mjs
       - name: Execute guarded mock worker against disposable PostgreSQL
         env:
           OUTBOX_STAGING_MOCK: 'true'
