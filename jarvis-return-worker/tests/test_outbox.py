@@ -31,14 +31,13 @@ def repo():
 
 
 def new_event(repo, event_type="TestEvent"):
-    event_id=str(uuid.uuid4())
+    suffix=str(uuid.uuid4())
     with repo.connection() as conn:
-        append_event(conn,aggregate_id="aggregate-"+event_id,
+        event_id=append_event(conn,aggregate_id="aggregate-"+suffix,
             aggregate_type="test",event_type=event_type,event_version=1,
-            payload={"test":True},correlation_id="corr-"+event_id,
-            causation_id="cause-"+event_id)
+            payload={"test":True},correlation_id="corr-"+suffix,
+            causation_id="cause-"+suffix)
     return event_id
-
 
 def registry(name, event_type, handler):
     result=SubscriberRegistry()
@@ -59,9 +58,9 @@ def delivery(repo,event_id,name="test-subscriber"):
 
 
 def test_event_committed_before_worker_restart_replays_once(repo):
-    event_id=new_event(repo)
+    event_id=new_event(repo,"RestartTestEvent")
     # Simulate a process restart after business commit but before replay.
-    replay=OutboxReplay(repo,registry("test-subscriber","TestEvent",effect_handler),owner="restarted")
+    replay=OutboxReplay(repo,registry("test-subscriber","RestartTestEvent",effect_handler),owner="restarted")
     replay.register_subscribers()
     assert replay.replay_one() is True
     assert replay.replay_one() is False
@@ -75,7 +74,7 @@ def test_event_committed_before_worker_restart_replays_once(repo):
 
 
 def test_two_replay_workers_do_not_process_same_event_twice(repo):
-    event_id=new_event(repo)
+    event_id=new_event(repo,"ConcurrentTestEvent")
     calls=[]
     lock=threading.Lock()
     def handler(conn,event):
@@ -83,7 +82,7 @@ def test_two_replay_workers_do_not_process_same_event_twice(repo):
         with lock:
             calls.append(event["event_id"])
         effect_handler(conn,event)
-    reg=registry("concurrent-subscriber","TestEvent",handler)
+    reg=registry("concurrent-subscriber","ConcurrentTestEvent",handler)
     first=OutboxReplay(repo,reg,owner="worker-a")
     second=OutboxReplay(repo,reg,owner="worker-b")
     first.register_subscribers()
@@ -95,14 +94,14 @@ def test_two_replay_workers_do_not_process_same_event_twice(repo):
 
 
 def test_transient_subscriber_error_retries_without_losing_event(repo):
-    event_id=new_event(repo)
+    event_id=new_event(repo,"FlakyTestEvent")
     attempts={"count":0}
     def flaky(conn,event):
         attempts["count"]+=1
         if attempts["count"]==1:
             raise RuntimeError("temporary database outage")
         effect_handler(conn,event)
-    replay=OutboxReplay(repo,registry("flaky-subscriber","TestEvent",flaky),
+    replay=OutboxReplay(repo,registry("flaky-subscriber","FlakyTestEvent",flaky),
                         owner="retry-worker",retry_base_seconds=1)
     replay.register_subscribers()
     assert replay.replay_one() is True
@@ -118,10 +117,10 @@ def test_transient_subscriber_error_retries_without_losing_event(repo):
 
 
 def test_permanent_subscriber_error_is_audited_and_not_retried(repo):
-    event_id=new_event(repo)
+    event_id=new_event(repo,"PermanentTestEvent")
     def reject(conn,event):
         raise PermanentSubscriberError("unsupported event version")
-    replay=OutboxReplay(repo,registry("rejecting-subscriber","TestEvent",reject),owner="reject-worker")
+    replay=OutboxReplay(repo,registry("rejecting-subscriber","PermanentTestEvent",reject),owner="reject-worker")
     replay.register_subscribers()
     assert replay.replay_one() is True
     assert replay.replay_one() is False
