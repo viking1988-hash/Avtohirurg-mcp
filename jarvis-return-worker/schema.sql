@@ -69,8 +69,9 @@ UPDATE jarvis_return_actions SET
    WHEN state='RECONCILIATION_REQUIRED' THEN 'REQUIRED'
    WHEN state='DONE' AND delivery_receipt IS NOT NULL THEN 'DELIVERED_CONFIRMED'
    ELSE 'NONE' END
-WHERE provider IS NULL OR provider_message_id IS NULL OR provider_receipt IS NULL
-   OR state='RECONCILIATION_REQUIRED' OR delivery_receipt IS NOT NULL;
+WHERE delivery_receipt IS NOT NULL OR external_message_id IS NOT NULL
+   OR provider IS NOT NULL OR provider_message_id IS NOT NULL OR provider_receipt IS NOT NULL
+   OR state='RECONCILIATION_REQUIRED';
 
 -- Extend supported lifecycle states while preserving all existing state invariants.
 ALTER TABLE jarvis_return_actions DROP CONSTRAINT IF EXISTS jarvis_return_actions_state_check;
@@ -105,7 +106,7 @@ UPDATE jarvis_return_action_events SET
 WHERE action IS NULL OR previous_state IS NULL OR new_state IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS jarvis_provider_message_unique_idx
- ON jarvis_return_actions(provider,provider_message_id)
+ ON jarvis_return_actions(provider,destination_key,provider_message_id)
  WHERE provider IS NOT NULL AND provider_message_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS jarvis_provider_receipt_unique_idx
  ON jarvis_return_actions(provider,provider_receipt)
