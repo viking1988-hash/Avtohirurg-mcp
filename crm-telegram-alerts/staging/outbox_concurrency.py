@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Disposable CI-only PostgreSQL concurrency check. Never use customer data."""
-import os
 import threading
 import psycopg
 
@@ -59,3 +58,27 @@ with psycopg.connect(dsn) as db:
         cur.execute("DELETE FROM crm_telegram_outbox WHERE lead_id IN (90000101,90000102)")
     db.commit()
 print("PASS: two simultaneous workers claimed different rows, no duplicate lease")
+
+# One available job, two contenders: exactly one claim must succeed.
+with psycopg.connect(dsn) as db:
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO crm_telegram_outbox(lead_id,alert_type) VALUES (90000103,'new')")
+    db.commit()
+barrier = threading.Barrier(2)
+results.clear()
+errors.clear()
+threads = [threading.Thread(target=worker) for _ in range(2)]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join(timeout=15)
+assert all(not t.is_alive() for t in threads), "worker deadlock on single job"
+assert not errors, errors
+assert len(results)==2 and sum(x is not None for x in results)==1, results
+with psycopg.connect(dsn) as db:
+    with db.cursor() as cur:
+        cur.execute("SELECT count(*) FROM crm_telegram_outbox WHERE lead_id=90000103 AND status='leased' AND attempts=1")
+        assert cur.fetchone()[0]==1
+        cur.execute("DELETE FROM crm_telegram_outbox WHERE lead_id=90000103")
+    db.commit()
+print("PASS: single job claimed by only one of two simultaneous workers")
