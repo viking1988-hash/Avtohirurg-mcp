@@ -63,6 +63,14 @@ jobs:
           OUTBOX_STAGING_MOCK: 'true'
           DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
         run: node crm-telegram-alerts/staging/outbox_mock_worker.mjs
+      - name: Rerun mock worker to verify repeatability and rollback
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: |
+          node crm-telegram-alerts/staging/outbox_mock_worker.mjs
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
+          echo 'PASS: repeat mock run leaves no rows'
       - name: Verify mock worker rejects missing safety flag
         env:
           DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
