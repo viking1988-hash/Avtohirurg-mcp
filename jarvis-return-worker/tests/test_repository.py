@@ -78,7 +78,7 @@ def test_receipt_saved_before_done_recovers_to_done_without_resend(repo):
     assert repo.get(id)['external_message_id']=='fake-message-2'
     assert repo.claim('two') is None
     with repo.connection() as c:
-        assert c.execute('SELECT count(*) AS n FROM jarvis_fake_receipts WHERE task_id=%s',(id,)).fetchone()['n']==1
+        assert c.execute('SELECT count(*) AS n FROM jarvis_return_actions WHERE task_id=%s AND provider_receipt IS NOT NULL',(id,)).fetchone()['n']==1
 
 def test_requeue_requires_new_approval_and_cancel(repo):
     id=make(repo); t=repo.claim('one'); repo.fail(id,'one',t['attempt_count'])
@@ -114,7 +114,7 @@ def test_duplicate_request_and_duplicate_finish_are_idempotent(repo):
     with pytest.raises(Conflict): repo.finish(id,'one',t['attempt_count'],receipt)
     assert repo.claim('two') is None
     with repo.connection() as c:
-        assert c.execute('SELECT count(*) AS n FROM jarvis_fake_receipts WHERE task_id=%s',(id,)).fetchone()['n']==1
+        assert c.execute('SELECT count(*) AS n FROM jarvis_return_actions WHERE task_id=%s AND provider_receipt IS NOT NULL',(id,)).fetchone()['n']==1
 
 def test_two_workers_cannot_claim_same_task(repo):
     id=make(repo)

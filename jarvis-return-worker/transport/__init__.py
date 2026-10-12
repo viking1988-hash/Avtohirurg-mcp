@@ -34,16 +34,25 @@ class Transport(Protocol):
     def deliver(self, task: dict) -> str: ...
 
 class FakeTransport:
-    def __init__(self, repository, worker_id, delay_seconds=0):
-        if not 0 <= delay_seconds <= 180:
+    provider = 'fake'
+
+    def __init__(self, delay_seconds=0, *legacy):
+        # Keep the former constructor shape accepted for callers, while never receiving a Queue.
+        if not isinstance(delay_seconds, (int, float)):
+            # Legacy shape was (repository, worker_id[, delay]); retain only delay.
+            delay_seconds = legacy[1] if len(legacy) > 1 else 0
+        if not 0 <= float(delay_seconds) <= 180:
             raise ValueError('bounded Fake delay required')
-        self.repository, self.worker_id = repository, worker_id
-        self.delay_seconds = delay_seconds
+        self.delay_seconds = float(delay_seconds)
+
+    def send(self, task, idempotency_key):
+        if self.delay_seconds:
+            time.sleep(self.delay_seconds)
+        return {'receipt_id':'sandbox:receipt:'+idempotency_key}
 
     def deliver(self, task):
-        if self.delay_seconds:
-            __import__('time').sleep(self.delay_seconds)
-        return self.repository.fake_delivery(task['task_id'], self.worker_id, task['attempt_count'])
+        # Legacy callers receive the receipt scalar; the provider interface uses send().
+        return self.send(task, task['task_id']+':'+task.get('action_fingerprint',''))['receipt_id']
 
 class DisabledTransport:
     def __init__(self, *args, **kwargs):

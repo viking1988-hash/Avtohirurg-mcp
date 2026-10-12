@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis_return_worker.api import router
+from jarvis_return_worker.dispatcher import TransportDispatcher
+from jarvis_return_worker.orchestrator import Orchestrator
 from jarvis_return_worker.metrics import render_metrics
 from jarvis_return_worker.queue import Conflict, QueueRepository
 from jarvis_return_worker.reconciliation import mutate
@@ -119,6 +121,7 @@ def test_reads_are_protected_logged_and_return_provider_safe_delivery_projection
     app = FastAPI()
     app.include_router(router)
     app.state.repository = repo
+    app.state.orchestrator = Orchestrator(repo,TransportDispatcher())
     app.state.config = SimpleNamespace(read_token=READ_TOKEN, approval_token=APPROVAL_TOKEN,
                                        operator_id="sandbox-operator")
     with TestClient(app) as client:
@@ -136,6 +139,7 @@ def test_stale_api_version_and_duplicate_confirm_are_rejected_and_audited(repo):
     app = FastAPI()
     app.include_router(router)
     app.state.repository = repo
+    app.state.orchestrator = Orchestrator(repo,TransportDispatcher())
     app.state.config = SimpleNamespace(read_token=READ_TOKEN, approval_token=APPROVAL_TOKEN,
                                        operator_id="sandbox-operator")
     headers = {"Authorization": "Bearer "+APPROVAL_TOKEN}

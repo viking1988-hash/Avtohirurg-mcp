@@ -51,30 +51,30 @@ async def call(fn,*args):
 async def listing(request:Request,limit:int=100):
     if not 1<=limit<=500:
         raise HTTPException(422,'limit must be 1..500')
-    return await call(request.app.state.repository.list,limit)
+    return await call(request.app.state.orchestrator.list_tasks,limit)
 
 @router.get('/queue/{task_id}')
 async def task(task_id:str,request:Request,actor:str=Depends(read)):
-    result=await call(read_task,request.app.state.repository,task_id,actor)
+    result=await call(request.app.state.orchestrator.read_task,task_id,actor)
     if not result:
         raise HTTPException(404,'task not found')
     return result
 
 @router.post('/enqueue',dependencies=[Depends(read)])
 async def enqueue(body:Enqueue,request:Request):
-    return await call(request.app.state.repository.enqueue,body.task_id,body.destination,body.payload,body.correlation_id)
+    return await call(request.app.state.orchestrator.enqueue,body.task_id,body.destination,body.payload,body.correlation_id)
 
 @router.post('/approve')
 async def approve(body:Approval,request:Request,actor:str=Depends(human)):
-    return await call(request.app.state.repository.approve,body.task_id,body.fingerprint,body.expires_at,actor)
+    return await call(request.app.state.orchestrator.approve,body.task_id,body.fingerprint,body.expires_at,actor)
 
 @router.post('/cancel')
 async def cancel(body:TaskID,request:Request,actor:str=Depends(human)):
-    return await call(request.app.state.repository.cancel,body.task_id,actor)
+    return await call(request.app.state.orchestrator.cancel,body.task_id,actor)
 
 @router.post('/requeue')
 async def requeue(body:TaskID,request:Request,actor:str=Depends(human)):
-    return await call(request.app.state.repository.requeue,body.task_id,actor)
+    return await call(request.app.state.orchestrator.requeue,body.task_id,actor)
 
 @router.post('/reconcile')
 async def reconcile(body:Reconciliation,request:Request,actor:str=Depends(human)):
