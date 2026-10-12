@@ -176,7 +176,11 @@ class OutboxReplay:
                                AND s.event_version=e.event_version AND s.status='ACTIVE'
                                AND coalesce(d.status,'PENDING')<>'PUBLISHED')
                            THEN 'PUBLISHED' ELSE 'PENDING' END,
-                         published_at=CASE WHEN NOT EXISTS (
+                         published_at=CASE WHEN EXISTS (
+                           SELECT 1 FROM jarvis_event_subscribers s
+                           WHERE (s.event_type=e.event_type OR s.event_type='*')
+                             AND s.event_version=e.event_version AND s.status='ACTIVE')
+                           AND NOT EXISTS (
                            SELECT 1 FROM jarvis_event_subscribers s
                            LEFT JOIN jarvis_outbox_deliveries d ON d.event_id=e.event_id
                              AND d.subscriber_name=s.subscriber_name AND d.event_version=s.event_version
@@ -251,7 +255,10 @@ class OutboxReplay:
                      AND s.event_version=e.event_version AND s.status='ACTIVE'
                    LEFT JOIN jarvis_outbox_deliveries d ON d.event_id=e.event_id
                      AND d.subscriber_name=s.subscriber_name AND d.event_version=s.event_version
-                   WHERE d.event_id IS NULL OR d.status IN ('PENDING','PROCESSING')"""
+                   WHERE e.status='PENDING' OR d.status IN ('PENDING','PROCESSING')
+                     OR NOT EXISTS (SELECT 1 FROM jarvis_event_subscribers s0
+                       WHERE (s0.event_type=e.event_type OR s0.event_type='*')
+                         AND s0.event_version=e.event_version AND s0.status='ACTIVE')"""
             ).fetchone()["n"]
 
 
