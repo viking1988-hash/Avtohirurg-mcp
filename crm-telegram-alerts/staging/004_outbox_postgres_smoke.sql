@@ -37,7 +37,7 @@ BEGIN
   IF FOUND THEN RAISE EXCEPTION 'stale lease token was accepted'; END IF;
 END $$;
 -- Verify retry policy, state constraints and success acknowledgement.
-DO $
+DO $outbox$
 DECLARE k bigint; t uuid; n integer;
 BEGIN
   INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,next_attempt_at)
@@ -68,5 +68,5 @@ BEGIN
     lease_token=gen_random_uuid(),attempts=attempts+1
   WHERE id=k AND status='retryable_error' AND attempts<5;
   IF FOUND THEN RAISE EXCEPTION 'exhausted retry was claimed'; END IF;
-END $;
+END $outbox$;
 ROLLBACK;
