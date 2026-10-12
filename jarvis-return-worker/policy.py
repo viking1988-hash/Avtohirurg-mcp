@@ -32,4 +32,4 @@ class PolicyEngine:
     def may_resend(self, task, provider_classification=None):
         return (provider_classification == Classification.RETRYABLE
                 and not task.get("delivery_receipt")
-                and not task.get("delivery_started_at"))
+                )
