@@ -1,5 +1,6 @@
 // Staging-only dry-run outbox worker. Never contacts Telegram or production CRM.
 import postgres from 'postgres';
+import { readFile } from 'node:fs/promises';
 
 if (process.env.OUTBOX_STAGING_MOCK !== 'true') {
   throw new Error('OUTBOX_STAGING_MOCK=true is required');
@@ -15,6 +16,11 @@ try {
   const [{ db }] = await sql`SELECT current_database() AS db`;
   if (db !== 'outbox_ci' && db !== 'outbox_sandbox') {
     throw new Error('Only disposable outbox_ci or outbox_sandbox database is permitted');
+  }
+  if (process.env.OUTBOX_STAGING_APPLY_SCHEMA === 'true') {
+    const schema = await readFile(new URL('./001_telegram_outbox.sql', import.meta.url), 'utf8');
+    await sql.unsafe(schema);
+    console.log('PASS: isolated staging schema applied');
   }
   await sql.begin(async tx => {
     await tx`
