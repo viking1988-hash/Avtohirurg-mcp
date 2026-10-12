@@ -1,5 +1,7 @@
 # Jarvis Return Worker — Railway Sandbox only
 
+The Orchestrator is the single application boundary for queue lifecycle and providers. See the [Orchestrator architecture, pipeline, policy, events, metrics, and provider guide](docs/orchestrator.md).
+
 This worker is isolated to the Railway Sandbox project and staging environment. Startup checks the exact Railway project/environment and private PostgreSQL database identity. It does not deploy to Production or CRM Booking.
 
 ## Telegram Transport
