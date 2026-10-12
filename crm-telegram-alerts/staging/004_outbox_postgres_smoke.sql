@@ -244,4 +244,24 @@ BEGIN
     AND status='retryable_error' AND attempts=before_attempts)
   THEN RAISE EXCEPTION 'exhausted job was modified'; END IF;
 END $retrylimit$;
+-- A stale token must not alter a newer active lease.
+DO $fencing$
+DECLARE k bigint; original uuid; newer uuid;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,
+    lease_until,lease_token)
+  VALUES(90000014,'new','leased',1,now()+interval '2 minutes',gen_random_uuid())
+  RETURNING id,lease_token INTO k,original;
+  newer:=gen_random_uuid();
+  UPDATE crm_telegram_outbox SET lease_token=newer,attempts=attempts+1
+  WHERE id=k AND status='leased' AND lease_token=original;
+  IF NOT FOUND THEN RAISE EXCEPTION 'new lease token not set'; END IF;
+  UPDATE crm_telegram_outbox SET status='sent',sent_at=now(),
+    telegram_message_id=888,lease_until=NULL,lease_token=NULL
+  WHERE id=k AND status='leased' AND lease_token=original;
+  IF FOUND THEN RAISE EXCEPTION 'stale token acknowledged newer lease'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k
+    AND status='leased' AND lease_token=newer AND attempts=2)
+  THEN RAISE EXCEPTION 'newer lease was modified'; END IF;
+END $fencing$;
 ROLLBACK;
