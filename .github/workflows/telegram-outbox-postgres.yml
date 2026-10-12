@@ -55,6 +55,11 @@ jobs:
         run: python -m pip install 'psycopg[binary]>=3.2,<4'
       - name: Test concurrent workers with separate PostgreSQL connections
         run: python crm-telegram-alerts/staging/outbox_concurrency.py
+      - name: Kill committed lease backend and verify conservative crash recovery
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: python crm-telegram-alerts/staging/outbox_committed_crash.py
       - name: Install mock worker dependencies
         working-directory: crm-telegram-alerts
         run: npm install --omit=dev --no-audit --no-fund
