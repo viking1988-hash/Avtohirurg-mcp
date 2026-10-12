@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS jarvis_return_actions (
  task_id text PRIMARY KEY, action_fingerprint char(64) NOT NULL,
  destination_key text NOT NULL, state text NOT NULL CHECK(state IN
- ('OPEN','READY','APPROVED','PROCESSING','RETRY','FAILED','DONE','CANCELLED','RECONCILIATION_REQUIRED')),
+ ('OPEN','READY','APPROVED','PROCESSING','RETRY','RECONCILIATION_REQUIRED','DELIVERED_CONFIRMED','UNDELIVERED_CONFIRMED','FAILED','DONE','CANCELLED')),
  version bigint NOT NULL DEFAULT 0, approved_by text, approved_at timestamptz,
  approval_expires_at timestamptz, approved_fingerprint char(64),
  lease_owner text, lease_until timestamptz,
