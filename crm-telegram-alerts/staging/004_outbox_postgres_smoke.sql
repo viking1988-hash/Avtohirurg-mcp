@@ -124,4 +124,25 @@ BEGIN
   IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k AND status='review')
   THEN RAISE EXCEPTION 'uncertain delivery was lost'; END IF;
 END $delivery$;
+-- Receipt acknowledgement must be idempotent and reject stale tokens.
+DO $ack$
+DECLARE k bigint; t uuid; count_changed integer;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,
+    lease_until,lease_token)
+  VALUES(90000008,'new','leased',1,now()+interval '2 minutes',gen_random_uuid())
+  RETURNING id,lease_token INTO k,t;
+  UPDATE crm_telegram_outbox SET status='sent',sent_at=now(),
+    telegram_message_id=12345,lease_until=NULL,lease_token=NULL
+  WHERE id=k AND status='leased' AND lease_token=t;
+  GET DIAGNOSTICS count_changed=ROW_COUNT;
+  IF count_changed<>1 THEN RAISE EXCEPTION 'initial receipt failed'; END IF;
+  UPDATE crm_telegram_outbox SET status='sent',telegram_message_id=99999
+  WHERE id=k AND status='leased' AND lease_token=t;
+  GET DIAGNOSTICS count_changed=ROW_COUNT;
+  IF count_changed<>0 THEN RAISE EXCEPTION 'duplicate receipt changed row'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k
+    AND status='sent' AND telegram_message_id=12345)
+  THEN RAISE EXCEPTION 'original receipt was overwritten'; END IF;
+END $ack$;
 ROLLBACK;
