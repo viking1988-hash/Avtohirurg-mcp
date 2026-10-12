@@ -69,4 +69,27 @@ BEGIN
   WHERE id=k AND status='retryable_error' AND attempts<5;
   IF FOUND THEN RAISE EXCEPTION 'exhausted retry was claimed'; END IF;
 END $outbox$;
+-- Expired lease must be quarantined, not automatically retried.
+DO $expiry$
+DECLARE k bigint; affected integer;
+BEGIN
+  INSERT INTO crm_telegram_outbox
+    (lead_id,alert_type,status,attempts,lease_token,lease_until)
+  VALUES
+    (90000005,'new','leased',1,gen_random_uuid(),now()-interval '1 minute')
+  RETURNING id INTO k;
+  UPDATE crm_telegram_outbox
+  SET status='review',lease_until=NULL,lease_token=NULL,
+    last_error_code='LEASE_EXPIRED_DELIVERY_UNCERTAIN'
+  WHERE status='leased' AND lease_until<now();
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  IF affected<1 THEN RAISE EXCEPTION 'expired lease not quarantined'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k
+      AND status='review' AND lease_token IS NULL)
+  THEN RAISE EXCEPTION 'expired lease remains eligible'; END IF;
+  UPDATE crm_telegram_outbox SET status='leased',attempts=attempts+1,
+    lease_token=gen_random_uuid(),lease_until=now()+interval '2 minutes'
+  WHERE id=k AND status IN ('pending','retryable_error') AND attempts<5;
+  IF FOUND THEN RAISE EXCEPTION 'uncertain delivery was automatically retried'; END IF;
+END $expiry$;
 ROLLBACK;
