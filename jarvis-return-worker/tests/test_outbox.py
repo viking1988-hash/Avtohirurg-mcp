@@ -93,6 +93,32 @@ def test_two_replay_workers_do_not_process_same_event_twice(repo):
     assert delivery(repo,event_id,"concurrent-subscriber")["status"]=="PUBLISHED"
 
 
+
+def test_committed_marker_repairs_delivery_without_repeating_handler(repo):
+    event_id=new_event(repo,"AckRecoveryEvent")
+    calls=[]
+    def handler(conn,event):
+        calls.append(event["event_id"])
+        effect_handler(conn,event)
+    replay=OutboxReplay(repo,registry("ack-subscriber","AckRecoveryEvent",handler),
+                        owner="ack-recovery")
+    replay.register_subscribers()
+    # Model a commit whose acknowledgement was lost: business effect and processed
+    # marker committed, while the delivery row still appears pending.
+    with repo.connection() as conn:
+        conn.execute("""INSERT INTO jarvis_outbox_test_effects(event_id,calls)
+            VALUES (%s,1) ON CONFLICT(event_id) DO NOTHING""",(event_id,))
+        conn.execute("""INSERT INTO jarvis_outbox_deliveries
+            (event_id,subscriber_name,event_version,status,attempt_count)
+            VALUES (%s,'ack-subscriber',1,'PENDING',1)""",(event_id,))
+        conn.execute("""INSERT INTO jarvis_processed_events
+            (event_id,subscriber_name,event_version) VALUES (%s,'ack-subscriber',1)""",
+            (event_id,))
+    assert replay.replay_one() is False
+    assert calls==[]
+    assert delivery(repo,event_id,"ack-subscriber")["status"]=="PUBLISHED"
+    assert replay.pending_count()==0
+
 def test_transient_subscriber_error_retries_without_losing_event(repo):
     event_id=new_event(repo,"FlakyTestEvent")
     attempts={"count":0}
