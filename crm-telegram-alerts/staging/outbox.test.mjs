@@ -19,3 +19,16 @@ test("expired lease requires review rather than automatic resend",()=>{
  assert.match(claim,/LEASE_EXPIRED_DELIVERY_UNCERTAIN/);
  assert.match(claim,/id=\$1 AND lease_token=\$2 AND status='leased'/);
 });
+
+const verify=readFileSync(new URL("./003_outbox_readonly_verification.sql",import.meta.url),"utf8");
+test("verification queries cannot mutate staging data",()=>{
+ const withoutComments=verify.replace(/^--.*$/gm,"");
+ assert.doesNotMatch(withoutComments,/\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE)\b/i);
+ assert.match(withoutComments,/information_schema\.columns/);
+ assert.match(withoutComments,/expired_lease_count/);
+ assert.match(withoutComments,/exhausted_retry_count/);
+});
+test("uncertain outcomes never silently requeue",()=>{
+ assert.match(claim,/status='review'/);
+ assert.doesNotMatch(claim,/status='pending'\s*,\s*last_error_code='LEASE_EXPIRED/i);
+});
