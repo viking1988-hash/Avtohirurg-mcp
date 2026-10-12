@@ -51,7 +51,7 @@ async def call(fn,*args):
 async def listing(request:Request,limit:int=100):
     if not 1<=limit<=500:
         raise HTTPException(422,'limit must be 1..500')
-    return await call(request.app.state.repository.list,limit)
+    return await call(request.app.state.orchestrator.list_tasks,limit)
 
 @router.get('/queue/{task_id}')
 async def task(task_id:str,request:Request,actor:str=Depends(read)):
@@ -62,7 +62,7 @@ async def task(task_id:str,request:Request,actor:str=Depends(read)):
 
 @router.post('/enqueue',dependencies=[Depends(read)])
 async def enqueue(body:Enqueue,request:Request):
-    return await call(request.app.state.repository.enqueue,body.task_id,body.destination,body.payload,body.correlation_id)
+    return await call(request.app.state.orchestrator.enqueue,body.task_id,body.destination,body.payload,body.correlation_id)
 
 @router.post('/approve')
 async def approve(body:Approval,request:Request,actor:str=Depends(human)):
