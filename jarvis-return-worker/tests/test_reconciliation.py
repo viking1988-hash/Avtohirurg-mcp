@@ -139,6 +139,7 @@ def test_stale_api_version_and_duplicate_confirm_are_rejected_and_audited(repo):
     app = FastAPI()
     app.include_router(router)
     app.state.repository = repo
+    app.state.orchestrator = Orchestrator(repo,TransportDispatcher())
     app.state.config = SimpleNamespace(read_token=READ_TOKEN, approval_token=APPROVAL_TOKEN,
                                        operator_id="sandbox-operator")
     headers = {"Authorization": "Bearer "+APPROVAL_TOKEN}
