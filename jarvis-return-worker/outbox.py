@@ -149,6 +149,13 @@ class OutboxReplay:
                     attempted,
                 )
                 conn.execute(
+                    """UPDATE jarvis_event_subscribers SET last_success_at=clock_timestamp(),
+                       updated_at=clock_timestamp() WHERE subscriber_name=%s
+                       AND event_version=%s AND event_type IN (
+                         SELECT event_type FROM jarvis_outbox_events WHERE event_id=%s)""",
+                    (row["subscriber_name"], row["event_version"], row["event_id"]),
+                )
+                conn.execute(
                     """INSERT INTO jarvis_outbox_audit
                        (event_id,subscriber_name,event_version,action,actor,detail)
                        VALUES (%s,%s,%s,'delivered',%s,%s)""",
@@ -180,8 +187,7 @@ class OutboxReplay:
                            THEN coalesce(e.published_at,clock_timestamp()) ELSE NULL END
                        WHERE e.event_id=%s""", (row["event_id"],),
                 )
-            from .metrics import outbox_replayed, replay_latency
-            outbox_replayed()
+            from .metrics import replay_latency
             replay_latency(max(0, time.monotonic()-started))
             return True
         except Exception as exc:
@@ -195,16 +201,21 @@ class OutboxReplay:
         permanent = isinstance(exc, PermanentSubscriberError)
         with self.repository.connection() as conn:
             row = conn.execute(
-                """UPDATE jarvis_outbox_deliveries SET
-                     status=%s,attempt_count=attempt_count+CASE WHEN status='PROCESSING' THEN 0 ELSE 1 END,
-                     last_error=%s,lease_owner=NULL,lease_until=NULL,
-                     next_attempt_at=clock_timestamp()+(%s*interval '1 second')
-                   WHERE event_id=%s AND subscriber_name=%s AND event_version=%s
+                """INSERT INTO jarvis_outbox_deliveries
+                     (event_id,subscriber_name,event_version,status,attempt_count,last_error,
+                      next_attempt_at)
+                   VALUES (%s,%s,%s,%s,1,%s,
+                      clock_timestamp()+(%s*interval '1 second'))
+                   ON CONFLICT (event_id,subscriber_name,event_version) DO UPDATE SET
+                     status=EXCLUDED.status,
+                     attempt_count=jarvis_outbox_deliveries.attempt_count+1,
+                     last_error=EXCLUDED.last_error,lease_owner=NULL,lease_until=NULL,
+                     next_attempt_at=EXCLUDED.next_attempt_at
                    RETURNING attempt_count""",
-                ("FAILED" if permanent else "PENDING", str(exc)[:500],
-                 0 if permanent else self.retry_base_seconds, event_id, name, version),
+                (event_id, name, version, "FAILED" if permanent else "PENDING",
+                 str(exc)[:500], 0 if permanent else self.retry_base_seconds),
             ).fetchone()
-            attempts = row["attempt_count"] if row else 1
+            attempts = row["attempt_count"]
             if not permanent:
                 delay = min(self.retry_max_seconds, self.retry_base_seconds * (2 ** min(attempts-1, 16)))
                 conn.execute(
@@ -231,9 +242,6 @@ class OutboxReplay:
                    retry_count=retry_count+1,
                    status=CASE WHEN %s THEN 'FAILED' ELSE 'PENDING' END
                    WHERE event_id=%s""", (permanent, event_id))
-        from .metrics import outbox_failed, subscriber_error
-        outbox_failed()
-        subscriber_error()
 
     def pending_count(self):
         with self.repository.connection() as conn:
