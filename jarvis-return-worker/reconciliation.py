@@ -9,6 +9,20 @@ import psycopg
 from psycopg.types.json import Jsonb
 from .queue import Conflict
 
+SNAPSHOT_FIELDS = ('version','state','provider','provider_message_id','provider_receipt',
+    'delivery_status','reconciliation_status','reconciliation_reason','reconciliation_by',
+    'reconciliation_at','reconciliation_comment','delivery_started_at','chat_id','delivery_response')
+
+
+def _json_value(value):
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
 DELIVERY_FIELDS = (
     "provider", "provider_message_id", "provider_receipt", "delivery_status",
     "reconciliation_status", "reconciliation_reason", "reconciliation_by",
@@ -25,7 +39,8 @@ def _event(conn, before, after, actor, action, reason=None, provider=None, metad
             action,provider,reason,previous_state,new_state)
            VALUES (%s,%s,%s,%s,%s,clock_timestamp(),%s,%s,%s,%s,%s,%s)""",
         (after["task_id"], before["state"] if before else None, after["state"],
-         actor, after["correlation_id"], Jsonb(metadata or {}), action, provider,
+         actor, after["correlation_id"], Jsonb(_json_value({**(metadata or {}),
+             "snapshot": {key: after.get(key) for key in SNAPSHOT_FIELDS}})), action, provider,
          reason, before["state"] if before else None, after["state"]),
     )
 
