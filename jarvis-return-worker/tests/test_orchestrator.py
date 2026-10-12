@@ -173,3 +173,14 @@ def test_orchestrator_metrics_are_exported():
         "transport_dispatch_total","policy_retry_total","policy_reconcile_total",
         "event_bus_events_total","dispatcher_failures_total","provider_calls_total"):
         assert name in output
+
+
+def test_policy_engine_error_fails_closed_before_provider_call():
+    class BrokenPolicy:
+        def approval(self,task): raise RuntimeError("policy unavailable")
+    repo=Repo()
+    provider=Provider("alpha")
+    core=Orchestrator(repo,dispatcher(("alpha",provider,True)),policy=BrokenPolicy())
+    run(core)
+    assert provider.calls==[]
+    assert repo.calls==["fail"]
