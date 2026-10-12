@@ -74,6 +74,13 @@ Metrics include `crm_requests_total`, `crm_success_total`, `crm_failed_total`,
 `crm_duplicate_prevented_total`, and `crm_latency_seconds`. See
 [CRM transport and recovery](docs/crm-transport.md).
 
+When a dedicated Railway Sandbox CRM endpoint is configured, a separate CRM
+operation worker sends outbox-created intents through the Orchestrator and Policy
+Engine. Inspect an operation with `GET /crm/operations/{event_id}`; an authorized
+operator can trigger a read-only lookup with
+`POST /crm/operations/{event_id}/reconcile`. This Sandbox has no CRM endpoint or
+token configured by this change, so no CRM request is sent.
+
 ## Audit and metrics
 
 The append-only event journal includes task ID, actor, provider, action, previous and new state, reason, event time, correlation ID, and action metadata. It supports a replay of state changes and operator decisions.

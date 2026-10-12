@@ -322,3 +322,116 @@ class QueueRepository:
             counts=c.execute("SELECT coalesce(sum(attempt_count-1) FILTER(WHERE attempt_count>1),0) AS retry_count FROM jarvis_return_actions").fetchone()
             events=c.execute("SELECT metadata->>'action' AS action,count(*) AS count FROM jarvis_return_action_events WHERE metadata->>'action' IN ('approve','recovery') GROUP BY 1").fetchall()
             return {**{r['state']:r['count'] for r in rows},'oldest_task':max(0,oldest),**counts,**{r['action']:r['count'] for r in events}}
+
+    def claim_crm_operation(self,owner):
+        """Fence one CRM intent; an expired send is uncertain, never re-queued."""
+        if not owner:
+            raise ValueError('CRM lease owner required')
+        with self.connection() as c:
+            expired=c.execute("""UPDATE jarvis_crm_operations SET state='RECONCILIATION_REQUIRED',
+                reconciliation_reason='lease_expired_after_claim',lease_owner=NULL,lease_until=NULL,
+                updated_at=clock_timestamp() WHERE state='PROCESSING' AND lease_until<clock_timestamp()
+                RETURNING event_id""").fetchall()
+            for item in expired:
+                c.execute("""INSERT INTO jarvis_crm_operation_events(event_id,action,actor,reason)
+                    VALUES (%s,'reconciliation_required',%s,'lease_expired_after_claim')""",
+                    (item['event_id'],owner))
+            if expired:
+                from .metrics import crm_reconciliation_required
+                for _ in expired: crm_reconciliation_required()
+            row=c.execute("""SELECT * FROM jarvis_crm_operations WHERE state='PENDING'
+                AND next_attempt_at<=clock_timestamp() ORDER BY created_at,event_id
+                FOR UPDATE SKIP LOCKED LIMIT 1""").fetchone()
+            if not row:
+                return None
+            claimed=c.execute("""UPDATE jarvis_crm_operations SET state='PROCESSING',lease_owner=%s,
+                lease_until=clock_timestamp()+(%s*interval '1 second'),attempt_count=attempt_count+1,
+                updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",
+                (owner,self.config.lease_seconds,row['event_id'])).fetchone()
+            c.execute("""INSERT INTO jarvis_crm_operation_events(event_id,action,actor)
+                VALUES (%s,'claimed',%s)""",(row['event_id'],owner))
+            return claimed
+
+    def _crm_owned(self,c,event_id,owner,attempt):
+        row=c.execute("SELECT * FROM jarvis_crm_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
+        now=c.execute("SELECT clock_timestamp() AS now").fetchone()['now']
+        if (not row or row['state']!='PROCESSING' or row['lease_owner']!=owner
+                or row['attempt_count']!=attempt or row['lease_until']<=now):
+            raise Conflict('stale CRM lease or fencing token')
+        return row
+
+    def finish_crm_operation(self,event_id,owner,attempt,result):
+        receipt=result.get('receipt_id') or result.get('provider_receipt')
+        external=result.get('external_booking_id')
+        status=result.get('status')
+        if not receipt or not external or not status:
+            raise Conflict('CRM receipt, external booking ID and status required')
+        with self.connection() as c:
+            row=self._crm_owned(c,event_id,owner,attempt)
+            saved=c.execute("""UPDATE jarvis_crm_operations SET state='DONE',crm_status=%s,
+                external_booking_id=%s,provider_receipt=%s,reconciliation_reason=NULL,
+                lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp()
+                WHERE event_id=%s RETURNING *""",
+                (str(status)[:80],str(external)[:256],str(receipt)[:512],event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_crm_operation_events(event_id,action,actor)
+                VALUES (%s,'completed',%s)""",(event_id,owner))
+            return saved
+
+    def fail_crm_operation(self,event_id,owner,attempt,classification,reason,retry_after=None):
+        """Only definitive provider rejection can return an operation to PENDING."""
+        from .transport import Classification
+        kind=Classification(classification)
+        delay=max(1,min(int(retry_after or 1),3600))
+        if kind==Classification.RETRYABLE:
+            state='PENDING'; recon_reason=None; last_error=str(reason)[:100]
+        elif kind==Classification.PERMANENT:
+            state='FAILED'; recon_reason=None; last_error=str(reason)[:100]
+        else:
+            state='RECONCILIATION_REQUIRED'; recon_reason=str(reason)[:200] or 'provider_outcome_unknown'; last_error=recon_reason
+        with self.connection() as c:
+            row=self._crm_owned(c,event_id,owner,attempt)
+            if kind==Classification.RETRYABLE and row['attempt_count']>=self.config.max_attempts:
+                state='FAILED'
+            saved=c.execute("""UPDATE jarvis_crm_operations SET state=%s,
+                reconciliation_reason=%s,lease_owner=NULL,lease_until=NULL,
+                next_attempt_at=clock_timestamp()+(%s*interval '1 second'),updated_at=clock_timestamp()
+                WHERE event_id=%s RETURNING *""",
+                (state,recon_reason,delay,event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_crm_operation_events(event_id,action,actor,reason)
+                VALUES (%s,%s,%s,%s)""",
+                (event_id,'reconciliation_required' if state=='RECONCILIATION_REQUIRED' else state.lower(),owner,last_error))
+            if state=='RECONCILIATION_REQUIRED':
+                from .metrics import crm_reconciliation_required
+                crm_reconciliation_required()
+            return saved
+
+    def get_crm_operation(self,event_id):
+        with self.connection() as c:
+            return c.execute("SELECT * FROM jarvis_crm_operations WHERE event_id=%s",(event_id,)).fetchone()
+
+    def resolve_crm_reconciliation(self,event_id,actor,result,reason):
+        if not actor:
+            raise Conflict('authenticated operator required')
+        external=result.get('external_booking_id')
+        receipt=result.get('receipt_id') or result.get('provider_receipt')
+        status=result.get('status')
+        proven=bool(external and receipt and status and str(status).upper() not in ('UNKNOWN','NOT_FOUND'))
+        with self.connection() as c:
+            row=c.execute("SELECT * FROM jarvis_crm_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
+            if not row or row['state']!='RECONCILIATION_REQUIRED':
+                raise Conflict('CRM operation is not awaiting reconciliation')
+            state='DONE' if proven else 'RECONCILIATION_REQUIRED'
+            updated=c.execute("""UPDATE jarvis_crm_operations SET state=%s,
+                crm_status=coalesce(%s,crm_status),external_booking_id=coalesce(%s,external_booking_id),
+                provider_receipt=coalesce(%s,provider_receipt),
+                reconciliation_reason=%s,updated_at=clock_timestamp()
+                WHERE event_id=%s RETURNING *""",
+                (state,str(status)[:80] if status else None,
+                 str(external)[:256] if external else None,str(receipt)[:512] if receipt else None,
+                 None if proven else str(reason or 'provider_did_not_prove_outcome')[:200],event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_crm_operation_events(event_id,action,actor,reason)
+                VALUES (%s,%s,%s,%s)""",
+                (event_id,'reconciled_delivered' if proven else 'reconciliation_pending',actor,
+                 None if proven else str(reason or 'provider_did_not_prove_outcome')[:200]))
+            return updated
+

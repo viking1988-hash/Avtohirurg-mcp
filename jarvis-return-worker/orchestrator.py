@@ -46,6 +46,66 @@ class Orchestrator:
         provider_call(name,"cancel")
         return provider.cancel(message_id)
 
+    def claim_crm_operation(self, owner):
+        return self.repository.claim_crm_operation(owner)
+
+    def read_crm_operation(self,event_id):
+        return self.repository.get_crm_operation(event_id)
+
+    def reconcile_crm_operation(self,event_id,actor):
+        operation=self.repository.get_crm_operation(event_id)
+        decision=self.policy.crm_reconciliation(operation or {})
+        if decision.action!='reconcile':
+            raise Conflict(decision.reason)
+        provider=self.dispatcher.dispatch('crm')
+        from .metrics import provider_call
+        provider_call('crm','reconcile')
+        try:
+            evidence=provider.reconcile(operation['payload'])
+        except Exception as exc:
+            reason=exc.code if isinstance(exc,DeliveryError) else 'crm_reconciliation_unavailable'
+            evidence={}
+        else:
+            reason='provider_did_not_prove_outcome'
+        return self.repository.resolve_crm_reconciliation(event_id,actor,evidence,reason)
+
+    async def process_crm_operation(self, operation, owner):
+        """Deliver one replay-created CRM intent behind policy and lease fencing."""
+        try:
+            decision=self.policy.crm_operation(operation)
+            if decision.action!='dispatch':
+                await asyncio.to_thread(self.repository.fail_crm_operation,
+                    operation['event_id'],owner,operation['attempt_count'],
+                    Classification.UNKNOWN,decision.reason)
+                return
+            provider=self.dispatcher.dispatch('crm')
+            method=getattr(provider,operation['operation'])
+            from .metrics import provider_call,transport_dispatch
+            transport_dispatch('crm')
+            provider_call('crm',operation['operation'])
+            result=await asyncio.to_thread(method,operation['payload'],operation['idempotency_key'])
+            if not result.get('receipt_id') and not result.get('provider_receipt'):
+                raise DeliveryError(Classification.UNKNOWN,'crm_provider_receipt_missing')
+            if not result.get('external_booking_id') or not result.get('status'):
+                raise DeliveryError(Classification.UNKNOWN,'crm_provider_booking_evidence_missing')
+            await asyncio.to_thread(self.repository.finish_crm_operation,
+                operation['event_id'],owner,operation['attempt_count'],result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            decision=self.policy.crm_delivery_failure(exc,operation)
+            classification=(exc.classification if isinstance(exc,DeliveryError)
+                            else Classification.UNKNOWN)
+            reason=(exc.code if isinstance(exc,DeliveryError) else decision.reason)
+            try:
+                await asyncio.to_thread(self.repository.fail_crm_operation,
+                    operation['event_id'],owner,operation['attempt_count'],classification,
+                    reason,getattr(exc,'retry_after',None))
+            except Conflict:
+                logging.getLogger(__name__).warning('CRM operation fenced')
+            except Exception:
+                logging.getLogger(__name__).warning('CRM operation state unavailable')
+
     def approve(self, task_id, fingerprint, expires_at, actor):
         result=self.repository.approve(task_id,fingerprint,expires_at,actor)
         self._publish(OrchestratorEvent("TaskApproved",task_id,result.get("correlation_id"),None,"READY","APPROVED",actor))

@@ -9,7 +9,7 @@ from .queue import QueueRepository
 from .transport import FakeTransport, TelegramTransport
 from .dispatcher import TransportDispatcher
 from .orchestrator import Orchestrator
-from .worker import Worker
+from .worker import Worker, CRMOperationWorker
 from .lease import RecoveryWorker
 from .api import router
 from .health import ready
@@ -72,10 +72,13 @@ async def lifespan(app):
     worker=Worker(repo,transport,stop,orchestrator=orchestrator)
     recovery=RecoveryWorker(orchestrator,stop)
     replay_worker=ReplayWorker(replay,stop,poll_seconds=config.poll_seconds)
+    loops=[asyncio.create_task(worker.run()),asyncio.create_task(recovery.run()),
+           asyncio.create_task(replay_worker.run())]
+    if 'crm' in dispatcher.names():
+        loops.append(asyncio.create_task(CRMOperationWorker(orchestrator,stop).run()))
     app.state.config,app.state.repository,app.state.stop,app.state.orchestrator=config,repo,stop,orchestrator
     app.state.event_registry,app.state.outbox_replay=registry,replay
-    app.state.loops=[asyncio.create_task(worker.run()),asyncio.create_task(recovery.run()),
-                     asyncio.create_task(replay_worker.run())]
+    app.state.loops=loops
     logging.getLogger(__name__).warning('sandbox worker ready transport=%s',os.environ.get('JARVIS_TRANSPORT','fake'))
     try:
         yield

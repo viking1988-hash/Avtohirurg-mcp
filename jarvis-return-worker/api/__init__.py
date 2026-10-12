@@ -86,5 +86,21 @@ async def reconcile(body:Reconciliation,request:Request,actor:str=Depends(human)
 async def metrics(request:Request):
     return Response(await call(render_metrics,request.app.state.repository),media_type='text/plain; version=0.0.4')
 
+@router.get('/crm/operations/{event_id}')
+async def crm_operation(event_id:str,request:Request,actor:str=Depends(read)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid CRM event ID')
+    result=await call(request.app.state.orchestrator.read_crm_operation,event_id)
+    if not result:
+        raise HTTPException(404,'CRM operation not found')
+    return result
+
+@router.post('/crm/operations/{event_id}/reconcile')
+async def reconcile_crm_operation(event_id:str,request:Request,actor:str=Depends(human)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid CRM event ID')
+    return await call(request.app.state.orchestrator.reconcile_crm_operation,event_id,actor)
+
 from .reconciliation import router as reconciliation_router
 router.include_router(reconciliation_router,prefix='/queue')
+

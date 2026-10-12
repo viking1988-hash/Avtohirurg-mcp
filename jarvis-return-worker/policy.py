@@ -33,3 +33,25 @@ class PolicyEngine:
         return (provider_classification == Classification.RETRYABLE
                 and not task.get("delivery_receipt")
                 )
+
+    def crm_operation(self, operation):
+        allowed=(operation.get('operation') in ('send','update','cancel')
+                 and operation.get('state')=='PROCESSING'
+                 and bool(operation.get('booking_id'))
+                 and operation.get('idempotency_key')=='jarvis-crm:'+str(operation.get('event_id')))
+        return PolicyDecision('dispatch' if allowed else 'reconcile',
+                              'crm_operation_valid' if allowed else 'crm_operation_integrity')
+
+    def crm_delivery_failure(self,error,operation):
+        if isinstance(error,DeliveryError):
+            if error.classification==Classification.RETRYABLE:
+                return PolicyDecision('retry','crm_confirmed_rejection')
+            if error.classification==Classification.PERMANENT:
+                return PolicyDecision('fail','crm_permanent_rejection')
+        return PolicyDecision('reconcile','crm_outcome_unknown')
+
+    def crm_reconciliation(self,operation):
+        allowed=operation.get('state')=='RECONCILIATION_REQUIRED' and bool(operation.get('booking_id'))
+        return PolicyDecision('reconcile' if allowed else 'reject',
+                              'crm_reconciliation_allowed' if allowed else 'crm_not_awaiting_reconciliation')
+

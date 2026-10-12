@@ -37,6 +37,7 @@ class CRMProvider:
         sandbox_host=any("sandbox" in label for label in labels)
         production_host=any("production" in label or label=="prod" or label.startswith("prod-") for label in labels)
         if (parsed.scheme != "https" or not host.endswith(".up.railway.app") or not token
+                or parsed.username or parsed.password or parsed.query or parsed.fragment
                 or not sandbox_host or production_host
                 or not 1 <= timeout_seconds <= 30):
             raise ValueError("CRM transport requires HTTPS Railway Sandbox endpoint and bounded timeout")
@@ -121,6 +122,12 @@ class CRMProvider:
         if status_code < 200 or status_code >= 300 or not isinstance(result, dict):
             observe_crm("permanent", elapsed)
             raise DeliveryError(Classification.PERMANENT, "crm_request_rejected")
+        if method!='GET' and not (result.get('receipt_id') or result.get('provider_receipt')):
+            observe_crm('unknown',elapsed)
+            raise DeliveryError(Classification.UNKNOWN,'crm_provider_receipt_missing')
+        if method!='GET' and (not result.get('external_booking_id') or not result.get('status')):
+            observe_crm('unknown',elapsed)
+            raise DeliveryError(Classification.UNKNOWN,'crm_provider_booking_evidence_missing')
         observe_crm("success", elapsed)
         # Keep only CRM identifiers/status/receipt, never arbitrary PII response data.
         return {key: result[key] for key in ("external_booking_id", "booking_id", "status", "receipt_id", "message_id") if key in result}

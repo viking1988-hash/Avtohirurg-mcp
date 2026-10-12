@@ -57,6 +57,8 @@ external transport is enabled by this subscriber.
 | `jarvis_processed_events` | Unique exactly-once marker per event/subscriber/version |
 | `jarvis_outbox_audit` | Success, retry, and permanent-failure history |
 | `jarvis_event_projection` | Durable built-in lifecycle projection |
+| `jarvis_crm_operations` | Idempotent CRM intents, lease, receipt, external ID, and reconciliation state |
+| `jarvis_crm_operation_events` | Append-only CRM operation delivery/reconciliation audit |
 
 The schema is additive and is applied by the worker's existing PostgreSQL migration
 under its advisory migration lock.
@@ -101,3 +103,4 @@ FROM jarvis_outbox_audit ORDER BY audit_id DESC LIMIT 25;
 
 The two counters ending in `_total` that reflect durable state are reconstructed from
 PostgreSQL after process restart; replay latency is process-local.
+
