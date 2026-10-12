@@ -27,25 +27,49 @@ reconcile {task_id,outcome,receipt_id,message_id}.
 Do not automate the human credential in n8n or client integrations.
 Docs and OpenAPI are disabled; access logs disabled to avoid logging tokens/identifiers.
 
-## Loop and recovery
-FOR UPDATE SKIP LOCKED claim -> approval check -> heartbeat -> durable send marker -> transport -> durable receipt -> DONE.
-Lease owner and attempt_count form a fencing token. An expired owner cannot heartbeat,
-deliver or finish. Every change and duplicate preparation is audited in the same transaction.
-Fake receipts are PostgreSQL-persisted and deduplicated by task+fingerprint. Provider receipt
-and message IDs are stored on the task before DONE. No assertion of exactly-once real provider delivery.
-Recovery runs every 15s and requires an expired lease and absent/stale heartbeat. Before the
-send marker, a still-valid approval and remaining attempt budget may return the task to APPROVED.
-After the marker, no saved receipt means RECONCILIATION_REQUIRED; a saved receipt means DONE.
-The reconciliation endpoint is operator-only: confirmed delivery records identifiers and closes
-DONE; confirmed non-delivery clears the old approval and returns READY, requiring fresh approval.
-Unknown results remain non-sendable. Recovery never recreates an approval.
-Cancel of PROCESSING is rejected: receipt reconciliation is required before cancellation.
-Uncertain delivery is excluded from claims and manual requeue; only explicit operator reconciliation can resolve it.
+## State transitions and recovery
+```text
+OPEN -> READY -> APPROVED -> PROCESSING -> DONE
+                         |          |  `- saved receipt after restart -> DONE
+                         |          `---- uncertain send / no receipt -> RECONCILIATION_REQUIRED
+                         `--------------- approval expires before send -> FAILED
+PROCESSING -- lease expires before send, valid approval/budget --> APPROVED
+RECONCILIATION_REQUIRED -- operator confirms delivered --> DONE
+RECONCILIATION_REQUIRED -- operator confirms not delivered --> READY -> fresh APPROVAL required
+```
 
-## Metrics
-Authenticated /metrics: queue_size, oldest_task (seconds), processing, failed, retry_count,
-recovery_count, approval_count. Values derive from PostgreSQL and survive process restarts.
-Prometheus gauges are used for persisted snapshot totals. No client payload metric labels.
+`RECONCILIATION_REQUIRED` is a quarantine state: `claim()`, automatic recovery, and manual
+requeue cannot send it. Recovery runs every 15 seconds and uses lease expiry plus stale/missing
+heartbeat. Before the durable send marker, a still-valid approval and remaining attempt budget
+may return the task to `APPROVED`. After the marker, no saved receipt requires reconciliation;
+a durable receipt recovers directly to `DONE` without another send. Recovery never creates approval.
+
+Manual reconciliation is operator-authenticated:
+1. Query the provider's test channel using the task correlation/idempotency reference.
+2. If delivery is confirmed, submit `outcome=delivered` with its receipt and optional external message ID.
+3. If non-delivery is confirmed, submit `outcome=not_delivered`; the old approval is cleared and state becomes `READY`.
+4. An operator must inspect the action again and issue a new fingerprint-bound approval before retry.
+5. If the provider result remains unknown, leave the task quarantined. Do not retry.
+
+The receipt and optional external message ID are persisted before `DONE`; unique indexes reject
+duplicate identifiers. Lease owner plus attempt count form a fencing token. Expired owners cannot
+heartbeat, send through the guarded repository, or finish. Fake receipt idempotency is enforced
+by PostgreSQL. A real provider's exactly-once guarantee is not assumed.
+
+## Prometheus metrics
+Authenticated `/metrics` exposes current queue gauges plus DB-journal-backed counters. The
+counters survive worker restarts and have no customer/payload labels.
+
+| Counter | Meaning |
+|---|---|
+| `reconciliation_required_total` | Deliveries quarantined because the result is uncertain |
+| `delivery_receipt_saved_total` | Durable receipts recorded before completion |
+| `duplicate_delivery_prevented_total` | Fake idempotency-key collisions that returned the original receipt |
+| `approval_expired_total` | Expired approvals rejected during lease recovery |
+| `lease_recovery_total` | Expired processing leases recovered |
+
+Queue gauges remain `queue_size`, `oldest_task`, `processing`, `failed`,
+`reconciliation_required_queue`, `retry_count`, `recovery_count`, and `approval_count`.
 
 ## Shutdown and rollback
 SIGTERM stops claims/recovery and waits up to JARVIS_SHUTDOWN_SECONDS (20 default).
