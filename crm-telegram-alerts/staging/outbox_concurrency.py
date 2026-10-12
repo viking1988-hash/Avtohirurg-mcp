@@ -82,3 +82,48 @@ with psycopg.connect(dsn) as db:
         cur.execute("DELETE FROM crm_telegram_outbox WHERE lead_id=90000103")
     db.commit()
 print("PASS: single job claimed by only one of two simultaneous workers")
+
+# A dropped connection before commit must roll back its claim, allowing recovery.
+with psycopg.connect(dsn) as setup:
+    with setup.cursor() as cur:
+        cur.execute("INSERT INTO crm_telegram_outbox(lead_id,alert_type) VALUES (90000104,'new')")
+    setup.commit()
+crashed = psycopg.connect(dsn)
+crashed.autocommit = False
+with crashed.cursor() as cur:
+    cur.execute("""
+      WITH candidate AS (
+        SELECT id FROM crm_telegram_outbox
+        WHERE lead_id=90000104 AND status='pending'
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE crm_telegram_outbox o SET status='leased',attempts=attempts+1,
+        lease_until=now()+interval '2 minutes',lease_token=gen_random_uuid()
+      FROM candidate WHERE o.id=candidate.id RETURNING o.id
+    """)
+    claimed = cur.fetchone()
+    assert claimed is not None
+# Simulate abrupt transport failure: close backend without COMMIT.
+with psycopg.connect(dsn, autocommit=True) as admin:
+    with admin.cursor() as cur:
+        cur.execute("SELECT pg_terminate_backend(%s)", (crashed.info.backend_pid,))
+        assert cur.fetchone()[0] is True
+try:
+    crashed.close()
+except psycopg.Error:
+    pass
+with psycopg.connect(dsn) as recovered:
+    with recovered.cursor() as cur:
+        cur.execute("SELECT status,attempts,lease_token FROM crm_telegram_outbox WHERE lead_id=90000104")
+        status, attempts, token = cur.fetchone()
+        assert (status,attempts,token)==('pending',0,None), (status,attempts,token)
+        cur.execute("""
+          UPDATE crm_telegram_outbox SET status='leased',attempts=attempts+1,
+            lease_until=now()+interval '2 minutes',lease_token=gen_random_uuid()
+          WHERE lead_id=90000104 AND status='pending'
+          RETURNING id
+        """)
+        assert cur.fetchone() is not None
+        cur.execute("DELETE FROM crm_telegram_outbox WHERE lead_id=90000104")
+    recovered.commit()
+print("PASS: terminated DB connection rolled back uncommitted lease and job recovered")
