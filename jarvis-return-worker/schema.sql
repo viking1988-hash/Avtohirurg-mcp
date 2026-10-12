@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS jarvis_return_actions (
  lease_owner text, lease_until timestamptz,
  attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
  delivery_receipt text, external_message_id text, delivery_started_at timestamptz,
+ chat_id text, delivery_response jsonb,
  updated_at timestamptz NOT NULL DEFAULT now(),
  CHECK(state NOT IN ('APPROVED','PROCESSING','DONE') OR
  (approved_by IS NOT NULL AND approved_at IS NOT NULL AND approved_fingerprint=action_fingerprint)),
@@ -28,6 +29,8 @@ ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS next_attempt_at times
 ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS last_error text;
 ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS external_message_id text;
 ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS delivery_started_at timestamptz;
+ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS chat_id text;
+ALTER TABLE jarvis_return_actions ADD COLUMN IF NOT EXISTS delivery_response jsonb;
 -- Replace the original unnamed state check additively so existing rows remain intact.
 ALTER TABLE jarvis_return_actions DROP CONSTRAINT IF EXISTS jarvis_return_actions_state_check;
 ALTER TABLE jarvis_return_actions DROP CONSTRAINT IF EXISTS jarvis_return_actions_state_allowed;

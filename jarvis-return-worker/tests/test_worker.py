@@ -17,7 +17,7 @@ def task():
         approved_at=NOW,approval_expires_at=NOW+timedelta(minutes=5),
         approved_fingerprint=fp,action_fingerprint=fp,attempt_count=1)
 
-@pytest.mark.parametrize('transport',[TelegramTransport,EmailTransport,WhatsAppTransport,CRMTransport])
+@pytest.mark.parametrize('transport',[EmailTransport,WhatsAppTransport,CRMTransport])
 def test_real_transport_disabled(transport):
     with pytest.raises(RuntimeError): transport()
 

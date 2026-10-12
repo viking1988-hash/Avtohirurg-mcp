@@ -1,8 +1,21 @@
 import asyncio
+import json
 import logging
+import time
 from .approval import valid_approval
 from .lease import LeaseManager
 from .queue import Conflict
+from .transport import Classification, DeliveryError
+
+
+def _log(task, owner, provider, state, started, provider_message_id=None):
+    # Structured JSON fields only. Transport exceptions, URLs, tokens and message text are excluded.
+    record={'task_id':task.get('task_id'),'correlation_id':task.get('correlation_id'),
+            'attempt':task.get('attempt_count'),'lease_owner':owner,'provider':provider,
+            'provider_message_id':provider_message_id,'state':state,
+            'duration_ms':round((time.monotonic()-started)*1000,2)}
+    logging.getLogger(__name__).info(json.dumps(record,separators=(',',':'),sort_keys=True))
+
 
 class Worker:
     def __init__(self, repository, transport, stop):
@@ -12,9 +25,11 @@ class Worker:
         self.last_tick = 0.0
 
     async def process(self, task):
-        # No transport call without exact approval; repository repeats under lock.
+        started=time.monotonic()
+        provider=getattr(self.transport,'provider','fake')
         if not valid_approval(task):
             await asyncio.to_thread(self.repository.fail,task['task_id'],self.owner,task['attempt_count'])
+            _log(task,self.owner,provider,'PERMANENT',started)
             return
         heartbeat = asyncio.create_task(self.leases.heartbeat(task))
         async def effect():
@@ -24,33 +39,54 @@ class Worker:
             if isinstance(result,dict):
                 receipt=result.get('receipt_id') or result.get('receipt') or result.get('message_id')
                 message_id=result.get('message_id')
+                chat_id=result.get('chat_id')
+                response=result.get('response')
             else:
                 receipt=str(result) if result is not None else None
-                message_id=None
+                message_id=chat_id=response=None
             if not receipt:
-                raise RuntimeError('transport returned no durable receipt identifier')
+                raise DeliveryError(Classification.UNKNOWN,'transport_receipt_missing')
             await asyncio.to_thread(self.repository.save_delivery_receipt,task['task_id'],self.owner,
-                task['attempt_count'],receipt,message_id)
+                task['attempt_count'],receipt,message_id,chat_id,response)
             await asyncio.to_thread(self.repository.finish,task['task_id'],self.owner,task['attempt_count'],receipt)
+            return message_id
         delivery = asyncio.create_task(effect())
+        state='SUCCESS'
+        message_id=None
         try:
             done,_=await asyncio.wait([heartbeat,delivery],return_when=asyncio.FIRST_COMPLETED)
             if heartbeat in done:
-                await heartbeat  # heartbeat failure stops processing; fencing protects in-flight DB operations
+                await heartbeat
                 raise Conflict('heartbeat stopped')
-            await delivery
+            message_id=await delivery
         except asyncio.CancelledError:
             raise
+        except DeliveryError as exc:
+            state=exc.classification.value
+            try:
+                if exc.classification == Classification.RETRYABLE:
+                    await asyncio.to_thread(self.repository.retry_confirmed_rejection,task['task_id'],
+                        self.owner,task['attempt_count'],exc.retry_after)
+                elif exc.classification == Classification.PERMANENT:
+                    await asyncio.to_thread(self.repository.fail_permanent_rejection,task['task_id'],
+                        self.owner,task['attempt_count'],exc.code)
+                else:
+                    await asyncio.to_thread(self.repository.fail,task['task_id'],self.owner,task['attempt_count'])
+            except Exception:
+                pass
         except Exception:
-            logging.getLogger(__name__).warning('task processing failed; receipt reconciliation retained')
+            # Once the marker exists, unclassified failures are UNKNOWN. fail() will
+            # choose RECONCILIATION_REQUIRED unless a durable receipt already exists.
+            state='UNKNOWN'
             try:
                 await asyncio.to_thread(self.repository.fail,task['task_id'],self.owner,task['attempt_count'])
             except Exception:
-                pass  # expired lease remains for Recovery Worker
+                pass
         finally:
             heartbeat.cancel()
             delivery.cancel()
             await asyncio.gather(heartbeat,delivery,return_exceptions=True)
+            _log(task,self.owner,provider,state,started,message_id)
 
     async def run(self):
         while not self.stop.is_set():
