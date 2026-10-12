@@ -83,7 +83,13 @@ class Orchestrator:
         started=time.monotonic()
         from .metrics import observe_orchestrator
         provider_name=task.get("provider") or self._provider_for(task)
-        if self.policy.approval(task).action != "send":
+        try:
+            approval=self.policy.approval(task)
+        except Exception:
+            await asyncio.to_thread(self.repository.fail,task["task_id"],owner,task["attempt_count"])
+            observe_orchestrator("policy_error",time.monotonic()-started,"unknown")
+            return
+        if approval.action != "send":
             await asyncio.to_thread(self.repository.fail,task["task_id"],owner,task["attempt_count"])
             return
         try:
