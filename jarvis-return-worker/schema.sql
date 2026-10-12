@@ -115,3 +115,89 @@ CREATE INDEX IF NOT EXISTS jarvis_reconciliation_queue_idx
  ON jarvis_return_actions(state,reconciliation_status,updated_at);
 CREATE INDEX IF NOT EXISTS jarvis_return_events_action_idx
  ON jarvis_return_action_events(action,event_time);
+
+
+-- Transactional outbox. Domain events are written by audit.record in the same
+-- transaction as each queue or reconciliation state change.
+CREATE TABLE IF NOT EXISTS jarvis_outbox_events (
+ event_id text PRIMARY KEY,
+ aggregate_id text NOT NULL,
+ aggregate_type text NOT NULL,
+ event_type text NOT NULL,
+ event_version integer NOT NULL CHECK(event_version>0),
+ payload jsonb NOT NULL,
+ correlation_id text,
+ causation_id text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ published_at timestamptz,
+ retry_count integer NOT NULL DEFAULT 0 CHECK(retry_count>=0),
+ status text NOT NULL DEFAULT 'PENDING'
+   CHECK(status IN ('PENDING','PUBLISHED','FAILED')),
+ UNIQUE(causation_id,event_type)
+);
+CREATE INDEX IF NOT EXISTS jarvis_outbox_pending_idx
+ ON jarvis_outbox_events(status,created_at,event_id);
+
+CREATE TABLE IF NOT EXISTS jarvis_event_subscribers (
+ subscriber_name text NOT NULL,
+ event_type text NOT NULL,
+ event_version integer NOT NULL CHECK(event_version>0),
+ status text NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','PAUSED')),
+ error_count bigint NOT NULL DEFAULT 0 CHECK(error_count>=0),
+ last_success_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(subscriber_name,event_type,event_version)
+);
+
+CREATE TABLE IF NOT EXISTS jarvis_outbox_deliveries (
+ event_id text NOT NULL REFERENCES jarvis_outbox_events(event_id),
+ subscriber_name text NOT NULL,
+ event_version integer NOT NULL,
+ status text NOT NULL DEFAULT 'PENDING'
+   CHECK(status IN ('PENDING','PROCESSING','PUBLISHED','FAILED')),
+ attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ lease_owner text,
+ lease_until timestamptz,
+ started_at timestamptz,
+ published_at timestamptz,
+ last_error text,
+ PRIMARY KEY(event_id,subscriber_name,event_version)
+);
+CREATE INDEX IF NOT EXISTS jarvis_outbox_delivery_pending_idx
+ ON jarvis_outbox_deliveries(status,next_attempt_at,event_id);
+
+CREATE TABLE IF NOT EXISTS jarvis_processed_events (
+ event_id text NOT NULL REFERENCES jarvis_outbox_events(event_id),
+ subscriber_name text NOT NULL,
+ event_version integer NOT NULL,
+ processed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(event_id,subscriber_name,event_version)
+);
+
+CREATE TABLE IF NOT EXISTS jarvis_outbox_audit (
+ audit_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ event_id text NOT NULL REFERENCES jarvis_outbox_events(event_id),
+ subscriber_name text NOT NULL,
+ event_version integer NOT NULL,
+ action text NOT NULL CHECK(action IN ('delivered','retry_scheduled','permanent_failure')),
+ actor text NOT NULL,
+ detail jsonb NOT NULL DEFAULT '{}'::jsonb,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS jarvis_outbox_audit_event_idx
+ ON jarvis_outbox_audit(event_id,created_at);
+
+-- A transactionally updated projection demonstrates a durable built-in
+-- subscriber while keeping delivery handlers inside the database boundary.
+CREATE TABLE IF NOT EXISTS jarvis_event_projection (
+ event_id text NOT NULL REFERENCES jarvis_outbox_events(event_id),
+ subscriber_name text NOT NULL,
+ aggregate_id text NOT NULL,
+ event_type text NOT NULL,
+ event_version integer NOT NULL,
+ payload jsonb NOT NULL,
+ projected_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(event_id,subscriber_name)
+);
