@@ -1,4 +1,5 @@
 """Sandbox project and task registry. This records work; it never performs external actions."""
+from psycopg.types.json import Jsonb
 from .queue import Conflict, QueueRepository
 
 
@@ -39,7 +40,7 @@ class ProjectRepository:
                     """INSERT INTO jarvis_project_events
                        (project_key,actor,action,metadata)
                        VALUES (%s,%s,'project_created',%s)""",
-                    (project_key, actor, {"title": title}),
+                    (project_key, actor, Jsonb({"title": title})),
                 )
                 return row
             row = conn.execute(
@@ -93,7 +94,7 @@ class ProjectRepository:
                     """INSERT INTO jarvis_project_task_events
                        (task_id,from_state,to_state,actor,metadata)
                        VALUES (%s,NULL,'INBOX',%s,%s)""",
-                    (task_id, actor, {"action": "task_created", "source": source or ""}),
+                    (task_id, actor, Jsonb({"action": "task_created", "source": source or ""})),
                 )
                 return row
             row = conn.execute(
@@ -139,6 +140,6 @@ class ProjectRepository:
                    (task_id,from_state,to_state,actor,metadata)
                    VALUES (%s,%s,%s,%s,%s)""",
                 (task_id, before["state"], state, actor,
-                 {"evidence": evidence.strip()} if completed else {}),
+                 Jsonb({"evidence": evidence.strip()} if completed else {})),
             )
             return after
