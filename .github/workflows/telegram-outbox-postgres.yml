@@ -32,8 +32,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Apply schema to disposable CI PostgreSQL
         run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/001_telegram_outbox.sql
+      - name: Seed a sentinel row before repeat migration
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c "INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,sent_at,telegram_message_id) VALUES (99000001,'new','sent',now(),123456)"
       - name: Reapply schema to verify migration idempotency
         run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/001_telegram_outbox.sql
+      - name: Verify repeated migration preserved existing receipt
+        run: |
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox WHERE lead_id=99000001 AND alert_type='new' AND status='sent' AND telegram_message_id=123456")" = "1"
+          psql -X -v ON_ERROR_STOP=1 -c "DELETE FROM crm_telegram_outbox WHERE lead_id=99000001"
+          echo "PASS: existing receipt preserved after repeated migration"
       - name: Execute transaction and rollback smoke tests
         run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/004_outbox_postgres_smoke.sql
       - name: Install isolated PostgreSQL test client
