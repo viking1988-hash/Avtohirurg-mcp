@@ -49,3 +49,10 @@ The SQL scripts are a prototype and do not yet implement an end-to-end outbox wo
 - GitHub Actions `Avtohirurg MCP check`, `CRM Telegram alerts isolated tests`, `Telegram Outbox PostgreSQL integration` passed on `d14cd89c`; integration CI also tests missing safety flag and injected Telegram token.
 - The schema persists in the **disposable** Railway database. The mock transaction rolls back its test row; an independent read-only Railway row-count verification has **not** yet been performed.
 - No live Telegram delivery, production deployment, production database migration, or PR merge was performed. PR #32 remains draft.
+
+## Simulated transport failure policy (CI PASS at `5ce028c`, 2026-10-12)
+- `outbox_transport_policy.mjs` is a **pure classification module**; it does not send Telegram requests and is not wired into the deployed mock worker or production.
+- CI `node --test` covers HTTP 429 (bounded retry-after), HTTP 500/503, timeout, connection reset, crash after acknowledgement, malformed accepted receipt and HTTP 400.
+- Confirmed successful receipt maps to `sent`; explicit HTTP 429 maps to bounded `retryable_error`; uncertain 5xx/network/crash outcomes map to manual `review` to avoid duplicate delivery.
+- All three PR workflows passed on `5ce028cca33d1190b0319fdc5540a89b6d801e7b`.
+- **Not yet verified:** a real staging delivery worker applying this policy to PostgreSQL transitions, process-kill fault injection, read-only Railway row-count query, and manual review/reconciliation interface. No real Telegram sends.
