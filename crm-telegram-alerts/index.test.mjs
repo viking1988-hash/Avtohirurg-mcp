@@ -19,7 +19,7 @@ async function scenario({leads,previous=[],fail=false}){
   return sql;
  };
  const oldFetch=globalThis.fetch,oldLog=console.log,oldError=console.error;
- globalThis.fetch=async (url,options)=>{assert.match(url,/api.telegram.org/);sent.push(JSON.parse(options.body));return {ok:!fail,status:fail?429:200,json:async()=>({ok:!fail})};};
+ globalThis.fetch=async (url,options)=>{assert.match(url,/api.telegram.org/);assert.equal(options.signal?.aborted,false);assert.equal(typeof options.signal?.addEventListener,"function");sent.push(JSON.parse(options.body));return {ok:!fail,status:fail?429:200,json:async()=>({ok:!fail})};};
  console.log=(x)=>logs.push(JSON.parse(x));console.error=(x)=>errors.push(JSON.parse(x));
  try{await import("data:text/javascript,"+encodeURIComponent(source)+"#"+Math.random());}
  finally{globalThis.fetch=oldFetch;console.log=oldLog;console.error=oldError;}
@@ -27,7 +27,7 @@ async function scenario({leads,previous=[],fail=false}){
 }
 const fresh=new Date().toISOString(),old=new Date(Date.now()-3600000).toISOString();
 const a=await scenario({leads:[{id:1,created_at:fresh}]});
-assert.equal(a.summary.sent,1);assert.equal(a.summary.failed,0);assert.equal(a.sent.length,1);
+assert.equal(a.summary.sent,1);assert.equal(a.summary.failed,0);assert.equal(a.sent.length,1);assert.deepEqual(Object.keys(a.sent[0]).sort(),["chat_id","text"]);assert.doesNotMatch(a.sent[0].text,/\+7\s?\d{3}/);
 const b=await scenario({leads:[{id:2,created_at:old}]});
 assert.equal(b.summary.sent,2);assert.equal(b.summary.claimed,2);
 const c=await scenario({leads:[{id:3,created_at:old}],previous:["3:new","3:overdue"]});
