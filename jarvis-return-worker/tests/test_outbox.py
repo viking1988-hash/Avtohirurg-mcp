@@ -117,7 +117,9 @@ def test_committed_marker_repairs_delivery_without_repeating_handler(repo):
     assert replay.replay_one() is False
     assert calls==[]
     assert delivery(repo,event_id,"ack-subscriber")["status"]=="PUBLISHED"
-    assert replay.pending_count()==0
+    with repo.connection() as conn:
+        assert conn.execute("SELECT status FROM jarvis_outbox_events WHERE event_id=%s",
+            (event_id,)).fetchone()["status"]=="PUBLISHED"
 
 def test_transient_subscriber_error_retries_without_losing_event(repo):
     event_id=new_event(repo,"FlakyTestEvent")
