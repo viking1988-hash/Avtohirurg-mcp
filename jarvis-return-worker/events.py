@@ -36,6 +36,8 @@ class EventBus:
                 return False
             self._seen.add(key)
             self._events_total += 1
+            from .metrics import event_published
+            event_published(event.name)
             observers=tuple(self._observers)
         errors=[]
         for observer in observers:
