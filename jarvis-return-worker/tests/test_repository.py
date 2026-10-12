@@ -200,7 +200,7 @@ def test_persisted_prometheus_counters_cover_safety_events(repo):
     expected=('reconciliation_required_total','delivery_receipt_saved_total',
         'duplicate_delivery_prevented_total','approval_expired_total','lease_recovery_total')
     for metric in expected:
-        match=re.search(r'^'+re.escape(metric)+r' (\d+(?:\.\d+)?),exposition,re.M)
+        match=re.search(r'^'+re.escape(metric)+r' (\d+(?:\.\d+)?)$',exposition,re.M)
         assert match and float(match.group(1))>=1, (metric,exposition)
 ,exposition,re.M)
         assert match and float(match.group(1))>=1, (metric,exposition)
