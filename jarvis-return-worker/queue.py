@@ -229,10 +229,11 @@ class QueueRepository:
             b=self._owned(c,task_id,owner,attempt)
             if b['delivery_receipt']:
                 raise Conflict('receipt exists; refusing retry')
-            r=c.execute('''UPDATE jarvis_return_actions SET state='APPROVED',delivery_started_at=NULL,
+            state='APPROVED' if b['attempt_count']<self.config.max_attempts else 'FAILED'
+            r=c.execute('''UPDATE jarvis_return_actions SET state=%s,delivery_started_at=NULL,
                 lease_owner=NULL,lease_until=NULL,heartbeat_at=NULL,last_error='telegram_rate_limited',
                 next_attempt_at=clock_timestamp()+(%s*interval '1 second'),version=version+1,updated_at=now()
-                WHERE task_id=%s RETURNING *''',(delay,task_id)).fetchone()
+                WHERE task_id=%s RETURNING *''',(state,delay,task_id)).fetchone()
             record(c,b,r,'telegram_retry_after_rejection',owner,metadata={'retry_after_seconds':delay})
             return r
 

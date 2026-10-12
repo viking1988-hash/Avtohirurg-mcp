@@ -29,12 +29,15 @@ class Worker:
         provider=getattr(self.transport,'provider','fake')
         if not valid_approval(task):
             await asyncio.to_thread(self.repository.fail,task['task_id'],self.owner,task['attempt_count'])
-            _log(task,self.owner,provider,'PERMANENT',started)
+            _log(task,self.owner,provider,'FAILED',started)
             return
         heartbeat = asyncio.create_task(self.leases.heartbeat(task))
+        message_id=None
         async def effect():
+            nonlocal message_id
             await asyncio.to_thread(self.repository.heartbeat,task['task_id'],self.owner,task['attempt_count'])
             await asyncio.to_thread(self.repository.mark_delivery_started,task['task_id'],self.owner,task['attempt_count'])
+            task['delivery_started_at']=True
             result = await asyncio.to_thread(self.transport.deliver,task)
             if isinstance(result,dict):
                 receipt=result.get('receipt_id') or result.get('receipt') or result.get('message_id')
@@ -48,11 +51,10 @@ class Worker:
                 raise DeliveryError(Classification.UNKNOWN,'transport_receipt_missing')
             await asyncio.to_thread(self.repository.save_delivery_receipt,task['task_id'],self.owner,
                 task['attempt_count'],receipt,message_id,chat_id,response)
+            task['delivery_receipt']=receipt
             await asyncio.to_thread(self.repository.finish,task['task_id'],self.owner,task['attempt_count'],receipt)
-            return message_id
         delivery = asyncio.create_task(effect())
-        state='SUCCESS'
-        message_id=None
+        state='DONE'
         try:
             done,_=await asyncio.wait([heartbeat,delivery],return_when=asyncio.FIRST_COMPLETED)
             if heartbeat in done:
@@ -62,7 +64,8 @@ class Worker:
         except asyncio.CancelledError:
             raise
         except DeliveryError as exc:
-            state=exc.classification.value
+            state={Classification.RETRYABLE:'APPROVED',Classification.PERMANENT:'FAILED',
+                   Classification.UNKNOWN:'RECONCILIATION_REQUIRED'}[exc.classification]
             try:
                 if exc.classification == Classification.RETRYABLE:
                     await asyncio.to_thread(self.repository.retry_confirmed_rejection,task['task_id'],
@@ -77,7 +80,8 @@ class Worker:
         except Exception:
             # Once the marker exists, unclassified failures are UNKNOWN. fail() will
             # choose RECONCILIATION_REQUIRED unless a durable receipt already exists.
-            state='UNKNOWN'
+            state=('DONE' if task.get('delivery_receipt') else
+                   'RECONCILIATION_REQUIRED' if task.get('delivery_started_at') else 'FAILED')
             try:
                 await asyncio.to_thread(self.repository.fail,task['task_id'],self.owner,task['attempt_count'])
             except Exception:

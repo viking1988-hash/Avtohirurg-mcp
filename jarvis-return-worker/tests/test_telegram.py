@@ -60,11 +60,12 @@ def test_chat_allowlist_blocks_any_non_test_destination_before_network():
     (URLError('connection dropped'),Classification.UNKNOWN),
 ])
 def test_error_classification_and_token_not_in_exception(error,classification):
-    with patch('jarvis_return_worker.transport.urlopen',side_effect=error):
+    with patch('jarvis_return_worker.transport.urlopen',side_effect=error) as call:
         with pytest.raises(DeliveryError) as err:
             TelegramTransport(TOKEN,CHAT).deliver({**task(),'destination_key':'sandbox:telegram:'+CHAT,'payload':'test'})
     assert err.value.classification==classification
     assert TOKEN not in str(err.value)
+    assert call.call_count==1  # No automatic replay on any response or network error.
     if classification==Classification.RETRYABLE:
         assert err.value.retry_after==7
 

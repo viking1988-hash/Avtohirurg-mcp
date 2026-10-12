@@ -23,7 +23,7 @@ class DeliveryError(RuntimeError):
 
 
 def _telegram_result(kind, elapsed):
-    from .metrics import observe_telegram
+    from ..metrics import observe_telegram
     observe_telegram(kind, elapsed)
 
 

@@ -9,6 +9,7 @@ _telegram_failure=Counter('telegram_send_failure_total','Telegram confirmed fail
 _telegram_unknown=Counter('telegram_send_unknown_total','Telegram outcomes requiring reconciliation',registry=_registry)
 _telegram_duplicates=Counter('telegram_duplicate_prevented_total','Duplicate Telegram sends prevented',registry=_registry)
 _telegram_latency=Histogram('telegram_api_latency_seconds','Telegram Bot API latency',registry=_registry)
+_gauges={name:Gauge(name,'Jarvis Sandbox '+name,registry=_registry) for name in NAMES}
 
 def observe_telegram(outcome, elapsed):
     _telegram_send.inc()
@@ -26,9 +27,6 @@ def render_metrics(repo):
     values=(sum(s.get(k,0) for k in ('OPEN','READY','APPROVED','RETRY')),
         s.get('oldest_task',0),s.get('PROCESSING',0),s.get('FAILED',0),s.get('RECONCILIATION_REQUIRED',0),
         s.get('retry_count',0),s.get('recovery',0),s.get('approve',0))
-    registry=CollectorRegistry()
     for name,value in zip(NAMES,values):
-        Gauge(name,'Jarvis Sandbox '+name,registry=registry).set(value)
-    for metric in _registry.collect():
-        registry.register(metric)
-    return generate_latest(registry)
+        _gauges[name].set(value)
+    return generate_latest(_registry)
