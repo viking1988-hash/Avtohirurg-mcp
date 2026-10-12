@@ -264,4 +264,23 @@ BEGIN
     AND status='leased' AND lease_token=newer AND attempts=2)
   THEN RAISE EXCEPTION 'newer lease was modified'; END IF;
 END $fencing$;
+-- An acknowledgement for a review job must never silently mark it sent.
+DO $reviewack$
+DECLARE k bigint; old_token uuid;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,attempts,
+    lease_until,lease_token)
+  VALUES(90000015,'new','leased',1,now()-interval '1 minute',gen_random_uuid())
+  RETURNING id,lease_token INTO k,old_token;
+  UPDATE crm_telegram_outbox SET status='review',lease_until=NULL,
+    lease_token=NULL,last_error_code='LEASE_EXPIRED_DELIVERY_UNCERTAIN'
+  WHERE id=k;
+  UPDATE crm_telegram_outbox SET status='sent',sent_at=now(),
+    telegram_message_id=123,lease_until=NULL,lease_token=NULL
+  WHERE id=k AND status='leased' AND lease_token=old_token;
+  IF FOUND THEN RAISE EXCEPTION 'review job accepted stale acknowledgement'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k
+    AND status='review' AND sent_at IS NULL)
+  THEN RAISE EXCEPTION 'review status was lost'; END IF;
+END $reviewack$;
 ROLLBACK;
