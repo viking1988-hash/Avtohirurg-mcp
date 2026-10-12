@@ -90,6 +90,59 @@ class OutboxReplay:
         started = time.monotonic()
         try:
             with self.repository.connection() as conn:
+                repaired = conn.execute(
+                    """UPDATE jarvis_outbox_deliveries d SET status='PUBLISHED',
+                         lease_owner=NULL,lease_until=NULL,
+                         published_at=coalesce(d.published_at,clock_timestamp()),last_error=NULL
+                       FROM jarvis_processed_events p
+                       WHERE p.event_id=d.event_id AND p.subscriber_name=d.subscriber_name
+                         AND p.event_version=d.event_version AND d.status<>'PUBLISHED'
+                       RETURNING d.event_id,d.subscriber_name,d.event_version"""
+                ).fetchall()
+                for item in repaired:
+                    conn.execute(
+                        """INSERT INTO jarvis_outbox_audit
+                           (event_id,subscriber_name,event_version,action,actor,detail)
+                           VALUES (%s,%s,%s,'delivered',%s,%s)""",
+                        (item["event_id"],item["subscriber_name"],item["event_version"],
+                         self.owner,Jsonb({"recovered_processed_marker": True})),
+                    )
+                    conn.execute(
+                        """UPDATE jarvis_event_subscribers SET last_success_at=clock_timestamp(),
+                           updated_at=clock_timestamp() WHERE subscriber_name=%s AND event_version=%s
+                           AND (event_type=(SELECT event_type FROM jarvis_outbox_events WHERE event_id=%s)
+                                OR event_type='*')""",
+                        (item["subscriber_name"],item["event_version"],item["event_id"]),
+                    )
+                    conn.execute(
+                        """UPDATE jarvis_outbox_events e SET
+                           status=CASE
+                             WHEN EXISTS (SELECT 1 FROM jarvis_outbox_deliveries d
+                               WHERE d.event_id=e.event_id AND d.status='FAILED') THEN 'FAILED'
+                             WHEN EXISTS (SELECT 1 FROM jarvis_event_subscribers s
+                               WHERE (s.event_type=e.event_type OR s.event_type='*')
+                                 AND s.event_version=e.event_version AND s.status='ACTIVE')
+                              AND NOT EXISTS (SELECT 1 FROM jarvis_event_subscribers s
+                               LEFT JOIN jarvis_outbox_deliveries d ON d.event_id=e.event_id
+                                 AND d.subscriber_name=s.subscriber_name
+                                 AND d.event_version=s.event_version
+                               WHERE (s.event_type=e.event_type OR s.event_type='*')
+                                 AND s.event_version=e.event_version AND s.status='ACTIVE'
+                                 AND coalesce(d.status,'PENDING')<>'PUBLISHED')
+                             THEN 'PUBLISHED' ELSE 'PENDING' END,
+                           published_at=CASE WHEN EXISTS (SELECT 1 FROM jarvis_event_subscribers s
+                             WHERE (s.event_type=e.event_type OR s.event_type='*')
+                               AND s.event_version=e.event_version AND s.status='ACTIVE')
+                             AND NOT EXISTS (SELECT 1 FROM jarvis_event_subscribers s
+                              LEFT JOIN jarvis_outbox_deliveries d ON d.event_id=e.event_id
+                                AND d.subscriber_name=s.subscriber_name
+                                AND d.event_version=s.event_version
+                              WHERE (s.event_type=e.event_type OR s.event_type='*')
+                                AND s.event_version=e.event_version AND s.status='ACTIVE'
+                                AND coalesce(d.status,'PENDING')<>'PUBLISHED')
+                             THEN coalesce(e.published_at,clock_timestamp()) ELSE NULL END
+                           WHERE e.event_id=%s""",(item["event_id"],),
+                    )
                 row = conn.execute(
                     """SELECT e.*,s.subscriber_name,s.event_version
                        FROM jarvis_outbox_events e
