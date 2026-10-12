@@ -388,6 +388,9 @@ def materialize_crm_operation(repository):
         if repository.get_crm_operation(event_id): break
         assert replay.replay_one() is True
     assert repository.get_crm_operation(event_id)
+    # Claim tests share the disposable CI database; leave only this intent claimable.
+    with repository.connection() as conn:
+        conn.execute("UPDATE jarvis_crm_operations SET state='FAILED',updated_at=clock_timestamp() WHERE state='PENDING' AND event_id<>%s",(event_id,))
     return event_id
 
 
