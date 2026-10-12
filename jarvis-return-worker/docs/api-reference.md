@@ -43,3 +43,21 @@ Request a new approval after confirmed non-delivery:
 ~~~
 
 The POST response contains the updated task and incremented version. Stale versions, duplicate confirmations, invalid transitions and concurrent conflicts return 409; callers must GET the current state before deciding what to do. Missing tasks return 404; repository outages return 503. Every accepted or rejected valid operation is written to the audit journal.
+
+
+## Outbox metrics
+
+The authenticated `/metrics` endpoint also exports:
+
+| Metric | Meaning |
+| --- | --- |
+| `outbox_events_total` | Persisted events |
+| `outbox_pending_total` | Pending events, including events waiting for an active subscriber |
+| `outbox_replayed_total` | Committed event/subscriber deliveries |
+| `outbox_failed_total` | Audited retry and permanent failure attempts |
+| `subscriber_errors_total` | Cumulative subscriber registry error count |
+| `replay_latency_seconds` | Replay handler latency histogram |
+| `replay_queue_size` | Current pending event count |
+
+The durable totals are reconstructed from PostgreSQL after restart. Replay latency
+is process-local. See the [Transactional Outbox and Replay guide](transactional-outbox.md).
