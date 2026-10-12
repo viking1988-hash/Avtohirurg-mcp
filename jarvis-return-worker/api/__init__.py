@@ -55,7 +55,7 @@ async def listing(request:Request,limit:int=100):
 
 @router.get('/queue/{task_id}')
 async def task(task_id:str,request:Request,actor:str=Depends(read)):
-    result=await call(read_task,request.app.state.repository,task_id,actor)
+    result=await call(request.app.state.orchestrator.read_task,task_id,actor)
     if not result:
         raise HTTPException(404,'task not found')
     return result
@@ -66,15 +66,15 @@ async def enqueue(body:Enqueue,request:Request):
 
 @router.post('/approve')
 async def approve(body:Approval,request:Request,actor:str=Depends(human)):
-    return await call(request.app.state.repository.approve,body.task_id,body.fingerprint,body.expires_at,actor)
+    return await call(request.app.state.orchestrator.approve,body.task_id,body.fingerprint,body.expires_at,actor)
 
 @router.post('/cancel')
 async def cancel(body:TaskID,request:Request,actor:str=Depends(human)):
-    return await call(request.app.state.repository.cancel,body.task_id,actor)
+    return await call(request.app.state.orchestrator.cancel,body.task_id,actor)
 
 @router.post('/requeue')
 async def requeue(body:TaskID,request:Request,actor:str=Depends(human)):
-    return await call(request.app.state.repository.requeue,body.task_id,actor)
+    return await call(request.app.state.orchestrator.requeue,body.task_id,actor)
 
 @router.post('/reconcile')
 async def reconcile(body:Reconciliation,request:Request,actor:str=Depends(human)):
