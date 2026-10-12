@@ -17,6 +17,17 @@ from .events import EventBus
 from .outbox import OutboxReplay, ReplayWorker
 
 
+def _project_event(conn,event):
+    conn.execute(
+        """INSERT INTO jarvis_event_projection
+           (event_id,subscriber_name,aggregate_id,event_type,event_version,payload)
+           VALUES (%s,'jarvis.lifecycle-projector',%s,%s,%s,%s)
+           ON CONFLICT (event_id,subscriber_name) DO NOTHING""",
+        (event["event_id"],event["aggregate_id"],event["event_type"],
+         event["event_version"],Jsonb(event["payload"])),
+    )
+
+
 def make_dispatcher(config, repository):
     dispatcher=TransportDispatcher()
     selected=os.environ.get('JARVIS_TRANSPORT','fake')
