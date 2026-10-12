@@ -145,4 +145,31 @@ BEGIN
     AND status='sent' AND telegram_message_id=12345)
   THEN RAISE EXCEPTION 'original receipt was overwritten'; END IF;
 END $ack$;
+-- Repeated enqueue must retain the same row and never reset a sent receipt.
+DO $enqueue$
+DECLARE k bigint; k2 bigint;
+BEGIN
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type)
+  VALUES(90000009,'new') RETURNING id INTO k;
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type)
+  VALUES(90000009,'new')
+  ON CONFLICT(lead_id,alert_type) DO NOTHING;
+  SELECT id INTO k2 FROM crm_telegram_outbox
+  WHERE lead_id=90000009 AND alert_type='new';
+  IF k<>k2 OR (SELECT count(*) FROM crm_telegram_outbox
+    WHERE lead_id=90000009 AND alert_type='new')<>1
+  THEN RAISE EXCEPTION 'duplicate enqueue created a second row'; END IF;
+  UPDATE crm_telegram_outbox SET status='sent',sent_at=now(),
+    telegram_message_id=777 WHERE id=k;
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type)
+  VALUES(90000009,'new')
+  ON CONFLICT(lead_id,alert_type) DO NOTHING;
+  IF NOT EXISTS(SELECT 1 FROM crm_telegram_outbox WHERE id=k
+    AND status='sent' AND telegram_message_id=777)
+  THEN RAISE EXCEPTION 're-enqueue modified sent receipt'; END IF;
+  INSERT INTO crm_telegram_outbox(lead_id,alert_type)
+  VALUES(90000009,'overdue');
+  IF (SELECT count(*) FROM crm_telegram_outbox WHERE lead_id=90000009)<>2
+  THEN RAISE EXCEPTION 'different alert type was blocked'; END IF;
+END $enqueue$;
 ROLLBACK;
