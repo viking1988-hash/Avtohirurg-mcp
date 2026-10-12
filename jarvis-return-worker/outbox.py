@@ -249,16 +249,10 @@ class OutboxReplay:
     def pending_count(self):
         with self.repository.connection() as conn:
             return conn.execute(
-                """SELECT count(DISTINCT e.event_id) AS n FROM jarvis_outbox_events e
-                   JOIN jarvis_event_subscribers s ON
-                     (s.event_type=e.event_type OR s.event_type='*')
-                     AND s.event_version=e.event_version AND s.status='ACTIVE'
-                   LEFT JOIN jarvis_outbox_deliveries d ON d.event_id=e.event_id
-                     AND d.subscriber_name=s.subscriber_name AND d.event_version=s.event_version
-                   WHERE e.status='PENDING' OR d.status IN ('PENDING','PROCESSING')
-                     OR NOT EXISTS (SELECT 1 FROM jarvis_event_subscribers s0
-                       WHERE (s0.event_type=e.event_type OR s0.event_type='*')
-                         AND s0.event_version=e.event_version AND s0.status='ACTIVE')"""
+                """SELECT count(*) AS n FROM jarvis_outbox_events e
+                   WHERE e.status='PENDING' OR EXISTS (
+                     SELECT 1 FROM jarvis_outbox_deliveries d
+                     WHERE d.event_id=e.event_id AND d.status IN ('PENDING','PROCESSING'))"""
             ).fetchone()["n"]
 
 
