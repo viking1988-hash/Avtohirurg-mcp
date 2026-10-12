@@ -36,7 +36,7 @@ class Worker:
         async def effect():
             nonlocal message_id
             await asyncio.to_thread(self.repository.heartbeat,task['task_id'],self.owner,task['attempt_count'])
-            await asyncio.to_thread(self.repository.mark_delivery_started,task['task_id'],self.owner,task['attempt_count'])
+            await asyncio.to_thread(self.repository.mark_delivery_started,task['task_id'],self.owner,task['attempt_count'],provider)
             task['delivery_started_at']=True
             result = await asyncio.to_thread(self.transport.deliver,task)
             if isinstance(result,dict):
@@ -50,7 +50,7 @@ class Worker:
             if not receipt:
                 raise DeliveryError(Classification.UNKNOWN,'transport_receipt_missing')
             await asyncio.to_thread(self.repository.save_delivery_receipt,task['task_id'],self.owner,
-                task['attempt_count'],receipt,message_id,chat_id,response)
+                task['attempt_count'],receipt,message_id,chat_id,response,provider)
             task['delivery_receipt']=receipt
             await asyncio.to_thread(self.repository.finish,task['task_id'],self.owner,task['attempt_count'],receipt)
         delivery = asyncio.create_task(effect())
