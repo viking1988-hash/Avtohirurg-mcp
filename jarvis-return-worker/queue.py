@@ -285,7 +285,7 @@ class QueueRepository:
                     reconciliation_at=CASE WHEN %s='RECONCILIATION_REQUIRED' THEN clock_timestamp() ELSE reconciliation_at END,
                     version=version+1,updated_at=now(),last_error=%s,
                     next_attempt_at=clock_timestamp()+(%s*interval '1 second') WHERE task_id=%s RETURNING *''',
-                    (state,state,state,state,state,state,error,min(300,2**min(b['attempt_count'],8)),b['task_id'])).fetchone()
+                    (state,state,state,state,state,state,state,error,min(300,2**min(b['attempt_count'],8)),b['task_id'])).fetchone()
                 record(c,b,r,'recovery',owner)
                 recovered+=1
         return recovered
