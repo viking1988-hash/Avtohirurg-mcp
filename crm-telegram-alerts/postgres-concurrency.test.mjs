@@ -4,6 +4,7 @@ import postgres from 'postgres';
 
 // CI-only: a disposable PostgreSQL service; never point this at CRM staging/production.
 const url=process.env.TELEGRAM_TEST_DATABASE_URL;
+if(!url && process.env.CI)throw new Error('CI requires TELEGRAM_TEST_DATABASE_URL; PostgreSQL tests must not be skipped');
 if(!url){test('PostgreSQL integration skipped without isolated test database',{skip:true},()=>{});}
 else {
  const parsed=new URL(url);
