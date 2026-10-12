@@ -1,0 +1,24 @@
+name: Jarvis migration tests
+
+on:
+  push:
+    branches:
+      - jarvis-gpt-migration
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pytest
+      - name: Run static migration tests
+        run: python -m pytest -q tests/test_jarvis_core_static.py
