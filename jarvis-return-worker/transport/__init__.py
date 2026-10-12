@@ -51,7 +51,8 @@ class FakeTransport:
         return {'receipt_id':'sandbox:receipt:'+idempotency_key}
 
     def deliver(self, task):
-        return self.send(task, task['task_id']+':'+task.get('action_fingerprint',''))
+        # Legacy callers receive the receipt scalar; the provider interface uses send().
+        return self.send(task, task['task_id']+':'+task.get('action_fingerprint',''))['receipt_id']
 
 class DisabledTransport:
     def __init__(self, *args, **kwargs):
