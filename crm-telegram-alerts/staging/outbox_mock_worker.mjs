@@ -10,7 +10,7 @@ if (process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_CHAT_ID) {
 }
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL is required');
-const sql = postgres(url, { max: 2, connect_timeout: 5 });
+const sql = postgres(url, { max: 1, connect_timeout: 5 });
 const fakeLead = 99010001;
 try {
   const [{ db }] = await sql`SELECT current_database() AS db`;
