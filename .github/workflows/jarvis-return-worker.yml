@@ -34,8 +34,14 @@ jobs:
       - name: Verify receipt survives PostgreSQL restart
         run: |
           export JARVIS_WORKER_CI_DATABASE_URL='postgresql://jarvis_sandbox@localhost:5432/jarvis_return_queue_test'
-          export PYTHONPATH='jarvis-return-worker'
           python - <<'PY'
+          import importlib.util, pathlib, sys
+          package = pathlib.Path('jarvis-return-worker')
+          spec = importlib.util.spec_from_file_location('jarvis_return_worker', package/'__init__.py',
+              submodule_search_locations=[str(package)])
+          module = importlib.util.module_from_spec(spec)
+          sys.modules['jarvis_return_worker'] = module
+          spec.loader.exec_module(module)
           from datetime import datetime, timedelta, timezone
           from types import SimpleNamespace
           from jarvis_return_worker.queue import QueueRepository
@@ -62,6 +68,13 @@ jobs:
           done
           docker exec "$container_id" pg_isready -U jarvis_sandbox -d jarvis_return_queue_test
           python - <<'PY'
+          import importlib.util, pathlib, sys
+          package = pathlib.Path('jarvis-return-worker')
+          spec = importlib.util.spec_from_file_location('jarvis_return_worker', package/'__init__.py',
+              submodule_search_locations=[str(package)])
+          module = importlib.util.module_from_spec(spec)
+          sys.modules['jarvis_return_worker'] = module
+          spec.loader.exec_module(module)
           import os
           from types import SimpleNamespace
           from jarvis_return_worker.queue import QueueRepository
