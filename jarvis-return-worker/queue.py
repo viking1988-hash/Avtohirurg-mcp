@@ -437,3 +437,139 @@ class QueueRepository:
                  None if proven else str(reason or 'provider_did_not_prove_outcome')[:200]))
             return updated
 
+    @staticmethod
+    def _append_email_lifecycle(conn, operation, event_type, action):
+        from .outbox import append_event
+        append_event(conn, aggregate_id=operation['event_id'], aggregate_type='email',
+            event_type=event_type, event_version=1,
+            payload={'request_event_id':operation['event_id'],'state':operation['state'],
+                     'action':action,'provider_message_id':operation.get('provider_message_id'),
+                     'smtp_message_id':operation.get('smtp_message_id')},
+            correlation_id=operation.get('correlation_id'),
+            causation_id=f"email:{operation['event_id']}:{event_type}:{operation['version']}")
+
+    def claim_email_operation(self, owner):
+        if not owner:
+            raise ValueError('Email lease owner required')
+        with self.connection() as c:
+            expired=c.execute("""UPDATE jarvis_email_operations SET state='RECONCILIATION_REQUIRED',
+                reconciliation_reason='lease_expired_after_smtp_attempt',lease_owner=NULL,lease_until=NULL,
+                version=version+1,updated_at=clock_timestamp() WHERE state='PROCESSING'
+                AND lease_until<clock_timestamp() RETURNING *""").fetchall()
+            for operation in expired:
+                c.execute("""INSERT INTO jarvis_email_operation_events(event_id,action,actor,reason)
+                    VALUES (%s,'reconciliation_required',%s,'lease_expired_after_smtp_attempt')""",
+                    (operation['event_id'],owner))
+                self._append_email_lifecycle(c,operation,'EmailUnknown','lease_timeout')
+                from .metrics import email_reconciliation_required
+                email_reconciliation_required()
+            row=c.execute("""SELECT * FROM jarvis_email_operations WHERE state='PENDING'
+                AND next_attempt_at<=clock_timestamp() ORDER BY created_at,event_id
+                FOR UPDATE SKIP LOCKED LIMIT 1""").fetchone()
+            if not row:
+                return None
+            claimed=c.execute("""UPDATE jarvis_email_operations SET state='PROCESSING',lease_owner=%s,
+                lease_until=clock_timestamp()+(%s*interval '1 second'),attempt_count=attempt_count+1,
+                updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",
+                (owner,self.config.lease_seconds,row['event_id'])).fetchone()
+            c.execute("""INSERT INTO jarvis_email_operation_events(event_id,action,actor)
+                VALUES (%s,'claimed',%s)""",(row['event_id'],owner))
+            return claimed
+
+    def _email_owned(self,c,event_id,owner,attempt):
+        row=c.execute("SELECT * FROM jarvis_email_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
+        now=c.execute("SELECT clock_timestamp() AS now").fetchone()['now']
+        if (not row or row['state']!='PROCESSING' or row['lease_owner']!=owner
+                or row['attempt_count']!=attempt or row['lease_until']<=now):
+            raise Conflict('stale Email lease or fencing token')
+        return row
+
+    def finish_email_operation(self,event_id,owner,attempt,result):
+        receipt=result.get('receipt'); smtp_message_id=result.get('smtp_message_id')
+        if not receipt or not smtp_message_id or result.get('provider_status')!='accepted':
+            raise Conflict('SMTP acceptance receipt required')
+        with self.connection() as c:
+            row=self._email_owned(c,event_id,owner,attempt)
+            saved=c.execute("""UPDATE jarvis_email_operations SET state='QUEUED',
+                provider_message_id=%s,smtp_message_id=%s,receipt=%s,provider_status=%s,
+                delivery_time=%s,reconciliation_reason=NULL,lease_owner=NULL,lease_until=NULL,
+                version=version+1,updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",
+                (result.get('provider_message_id'),str(smtp_message_id)[:256],str(receipt)[:512],
+                 'accepted',result.get('delivery_time'),event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_email_operation_events(event_id,action,actor)
+                VALUES (%s,'smtp_accepted',%s)""",(event_id,owner))
+            self._append_email_lifecycle(c,saved,'EmailQueued','smtp_accepted')
+            return saved
+
+    def fail_email_operation(self,event_id,owner,attempt,classification,reason,retry_after=None):
+        from .transport import Classification
+        kind=Classification(classification)
+        delay=max(1,min(int(retry_after or 1),3600))
+        if kind==Classification.RETRYABLE:
+            state='PENDING'; recon_reason=None; action='retry_scheduled'
+        elif kind==Classification.PERMANENT:
+            state='FAILED'; recon_reason=None; action='failed'
+        else:
+            state='RECONCILIATION_REQUIRED'; recon_reason=str(reason or 'smtp_outcome_unknown')[:200]; action='reconciliation_required'
+        with self.connection() as c:
+            row=self._email_owned(c,event_id,owner,attempt)
+            if kind==Classification.RETRYABLE and row['attempt_count']>=self.config.max_attempts:
+                state='FAILED'; action='failed'
+            saved=c.execute("""UPDATE jarvis_email_operations SET state=%s,reconciliation_reason=%s,
+                lease_owner=NULL,lease_until=NULL,next_attempt_at=clock_timestamp()+(%s*interval '1 second'),
+                version=version+1,updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",
+                (state,recon_reason,delay,event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_email_operation_events(event_id,action,actor,reason)
+                VALUES (%s,%s,%s,%s)""",(event_id,action,owner,str(reason)[:200]))
+            if state=='RECONCILIATION_REQUIRED':
+                self._append_email_lifecycle(c,saved,'EmailUnknown',str(reason)[:200])
+                from .metrics import email_reconciliation_required
+                email_reconciliation_required()
+            elif state=='FAILED':
+                self._append_email_lifecycle(c,saved,'EmailFailed',str(reason)[:200])
+            return saved
+
+    def cancel_email_operation(self,event_id,actor,expected_version):
+        if not actor:
+            raise Conflict('authenticated operator required')
+        with self.connection() as c:
+            row=c.execute("SELECT * FROM jarvis_email_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
+            if not row or row['state']!='PENDING':
+                raise Conflict('only unsent pending Email operations can be cancelled')
+            if row['version']!=expected_version:
+                raise Conflict('stale Email operation version')
+            saved=c.execute("""UPDATE jarvis_email_operations SET state='CANCELLED',version=version+1,
+                updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",(event_id,)).fetchone()
+            c.execute("""INSERT INTO jarvis_email_operation_events(event_id,action,actor)
+                VALUES (%s,'cancelled',%s)""",(event_id,actor))
+            self._append_email_lifecycle(c,saved,'EmailCancelled','operator_cancelled_before_send')
+            return saved
+
+    def resolve_email_reconciliation(self,event_id,actor,expected_version,outcome,evidence):
+        if not actor or outcome not in ('delivered','not_delivered'):
+            raise Conflict('authenticated operator and valid reconciliation outcome required')
+        evidence=evidence or {}
+        if outcome=='delivered' and not (evidence.get('receipt') or evidence.get('provider_message_id')):
+            raise Conflict('delivery evidence required')
+        with self.connection() as c:
+            row=c.execute("SELECT * FROM jarvis_email_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
+            if not row or row['state']!='RECONCILIATION_REQUIRED':
+                raise Conflict('Email operation is not awaiting reconciliation')
+            if row['version']!=expected_version:
+                raise Conflict('stale Email operation version')
+            new_state='SENT' if outcome=='delivered' else 'FAILED'
+            status='delivered_confirmed' if outcome=='delivered' else 'undelivered_confirmed'
+            saved=c.execute("""UPDATE jarvis_email_operations SET state=%s,provider_status=%s,
+                provider_message_id=coalesce(%s,provider_message_id),receipt=coalesce(%s,receipt),
+                reconciliation_reason=NULL,version=version+1,updated_at=clock_timestamp()
+                WHERE event_id=%s RETURNING *""",
+                (new_state,status,evidence.get('provider_message_id'),evidence.get('receipt'),event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_email_operation_events(event_id,action,actor,reason)
+                VALUES (%s,%s,%s,%s)""",(event_id,'reconciled_'+outcome,actor,str(evidence.get('reason',''))[:200]))
+            self._append_email_lifecycle(c,saved,'EmailSent' if outcome=='delivered' else 'EmailFailed',status)
+            return saved
+
+    def get_email_operation(self,event_id):
+        with self.connection() as c:
+            return c.execute("SELECT * FROM jarvis_email_operations WHERE event_id=%s",(event_id,)).fetchone()
+

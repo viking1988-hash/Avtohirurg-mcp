@@ -49,6 +49,88 @@ class Orchestrator:
     def claim_crm_operation(self, owner):
         return self.repository.claim_crm_operation(owner)
 
+    def request_email(self, recipient, subject, body, correlation_id, causation_id):
+        from .email_provider import EmailProvider
+        if not EmailProvider._valid_recipient(recipient):
+            raise ValueError('only Sandbox test-domain recipients are permitted')
+        if not isinstance(correlation_id,str) or not correlation_id or not isinstance(causation_id,str) or not causation_id:
+            raise ValueError('email correlation and causation IDs are required')
+        if not isinstance(subject,str) or not subject.strip() or len(subject)>998 or '\r' in subject or '\n' in subject:
+            raise ValueError('invalid email subject')
+        if not isinstance(body,str) or not body.strip() or len(body)>100000:
+            raise ValueError('invalid email body')
+        from .outbox import append_event
+        with self.repository.connection() as conn:
+            return append_event(conn,aggregate_id=causation_id,aggregate_type='email',
+                event_type='EmailRequested',event_version=1,
+                payload={'to':recipient,'subject':subject,'body':body},
+                correlation_id=correlation_id,causation_id=causation_id)
+
+    def claim_email_operation(self,owner):
+        return self.repository.claim_email_operation(owner)
+
+    def read_email_operation(self,event_id):
+        return self.repository.get_email_operation(event_id)
+
+    def cancel_email_operation(self,event_id,actor,expected_version):
+        operation=self.repository.get_email_operation(event_id)
+        decision=self.policy.email_cancellation(operation or {})
+        if decision.action!='cancel':
+            raise Conflict(decision.reason)
+        return self.repository.cancel_email_operation(event_id,actor,expected_version)
+
+    def reconcile_email_operation(self,event_id,actor,expected_version,outcome,evidence=None):
+        operation=self.repository.get_email_operation(event_id)
+        decision=self.policy.email_reconciliation(operation or {})
+        if decision.action!='reconcile':
+            raise Conflict(decision.reason)
+        provider=self.dispatcher.dispatch('email')
+        from .metrics import provider_call
+        provider_call('email','reconcile')
+        lookup=provider.reconcile({'event_id':event_id,'smtp_message_id':operation.get('smtp_message_id')})
+        # A caller may attach explicit, audited operator evidence. A provider's
+        # generic SMTP UNKNOWN is never treated as delivery evidence.
+        evidence=evidence or {}
+        if not evidence.get('reason'):
+            raise Conflict('manual verification reason is required')
+        if outcome=='delivered' and not (evidence.get('receipt') or evidence.get('provider_message_id')):
+            raise Conflict('delivery evidence is required')
+        if lookup.get('status') not in ('delivered','accepted') and not evidence:
+            raise Conflict('SMTP provider did not confirm delivery; manual evidence is required')
+        return self.repository.resolve_email_reconciliation(
+            event_id,actor,expected_version,outcome,evidence)
+
+    async def process_email_operation(self,operation,owner):
+        try:
+            decision=self.policy.email_operation(operation)
+            if decision.action!='dispatch':
+                await asyncio.to_thread(self.repository.fail_email_operation,
+                    operation['event_id'],owner,operation['attempt_count'],
+                    Classification.PERMANENT,decision.reason)
+                return
+            provider=self.dispatcher.dispatch('email')
+            from .metrics import provider_call,transport_dispatch
+            transport_dispatch('email'); provider_call('email','send')
+            message={**operation['payload'],'to':operation['recipient']}
+            result=await asyncio.to_thread(provider.send,message,operation['idempotency_key'])
+            await asyncio.to_thread(self.repository.finish_email_operation,
+                operation['event_id'],owner,operation['attempt_count'],result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            decision=self.policy.email_delivery_failure(exc,operation)
+            classification=(exc.classification if isinstance(exc,DeliveryError)
+                            else Classification.UNKNOWN)
+            reason=(exc.code if isinstance(exc,DeliveryError) else decision.reason)
+            try:
+                await asyncio.to_thread(self.repository.fail_email_operation,
+                    operation['event_id'],owner,operation['attempt_count'],classification,reason,
+                    getattr(exc,'retry_after',None))
+            except Conflict:
+                logging.getLogger(__name__).warning('Email operation fenced')
+            except Exception:
+                logging.getLogger(__name__).warning('Email operation state unavailable')
+
     def read_crm_operation(self,event_id):
         return self.repository.get_crm_operation(event_id)
 

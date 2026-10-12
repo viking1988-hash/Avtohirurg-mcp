@@ -31,6 +31,18 @@ class CRMReconciliation(BaseModel):
     model_config=ConfigDict(extra='forbid')
     expected_version: int=Field(ge=0)
 
+class EmailCancel(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+
+class EmailReconciliation(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+    outcome: str=Field(pattern=r'^(delivered|not_delivered)$')
+    provider_message_id: str|None=Field(default=None,max_length=256)
+    receipt: str|None=Field(default=None,max_length=512)
+    reason: str=Field(min_length=3,max_length=500)
+
 def auth(role):
     def check(request:Request,authorization:str=Header(default='')):
         c=request.app.state.config
@@ -105,6 +117,30 @@ async def reconcile_crm_operation(event_id:str,body:CRMReconciliation,request:Re
         raise HTTPException(422,'invalid CRM event ID')
     return await call(request.app.state.orchestrator.reconcile_crm_operation,
                       event_id,actor,body.expected_version)
+
+@router.get('/email/operations/{event_id}')
+async def email_operation(event_id:str,request:Request,actor:str=Depends(read)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid email event ID')
+    result=await call(request.app.state.orchestrator.read_email_operation,event_id)
+    if not result:
+        raise HTTPException(404,'email operation not found')
+    return result
+
+@router.post('/email/operations/{event_id}/cancel')
+async def cancel_email_operation(event_id:str,body:EmailCancel,request:Request,actor:str=Depends(human)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid email event ID')
+    return await call(request.app.state.orchestrator.cancel_email_operation,
+                      event_id,actor,body.expected_version)
+
+@router.post('/email/operations/{event_id}/reconcile')
+async def reconcile_email_operation(event_id:str,body:EmailReconciliation,request:Request,actor:str=Depends(human)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid email event ID')
+    evidence={'provider_message_id':body.provider_message_id,'receipt':body.receipt,'reason':body.reason}
+    return await call(request.app.state.orchestrator.reconcile_email_operation,
+        event_id,actor,body.expected_version,body.outcome,evidence)
 
 from .reconciliation import router as reconciliation_router
 router.include_router(reconciliation_router,prefix='/queue')
