@@ -1,6 +1,6 @@
 # Railway Sandbox integration gate — Telegram Outbox
 
-Status: **not executed in Railway**. PostgreSQL 16 disposable CI integration: PASS at c12ae3e.
+Status: **isolated Railway mock PASS** on commit `bcb330ff` (deployment `435e0da9-e693-4492-a8bb-0b344d150360`, 2026-10-12). Latest GitHub CI safety tests: **3/3 PASS** at `d14cd89c`. This is not a real Telegram transport test.
 
 ## Preconditions
 1. Use **Avtohirurg-Alerts-Sandbox**, staging only, with a dedicated disposable PostgreSQL instance. Do not connect the worker to CRM production or CRM Staging data.
@@ -37,7 +37,15 @@ The SQL scripts are a prototype and do not yet implement an end-to-end outbox wo
 - Require zero leftover test rows after all CI scenarios.
 
 ## Explicit blockers to production readiness
-- No actual outbox worker has been deployed or exercised against Railway staging.
+- An isolated rollback-only mock worker ran successfully in Railway staging, but **no real outbox delivery worker** has been deployed or exercised.
 - No proof of real network timeout, 429 handling or mock-transport crash-after-acknowledgement.
 - Manual review and reconciliation workflow is not implemented.
 - No rollout/rollback evidence for an existing production database.
+
+## Verified evidence (2026-10-12)
+- Railway project `Avtohirurg-Alerts-Sandbox`, environment `staging`: disposable PostgreSQL, isolated test service and `telegram-outbox-mock-runner` each reported `SUCCESS`.
+- Pinned mock runner `bcb330ff`: deployment log recorded `PASS: isolated staging schema applied` and `PASS: staging mock claim, receipt, fencing and rollback`.
+- Mock runner rejects Telegram credentials, requires `OUTBOX_STAGING_MOCK=true`, checks database name against `outbox_ci` and `outbox_sandbox`, and intentionally rolls back the fake job transaction.
+- GitHub Actions `Avtohirurg MCP check`, `CRM Telegram alerts isolated tests`, `Telegram Outbox PostgreSQL integration` passed on `d14cd89c`; integration CI also tests missing safety flag and injected Telegram token.
+- The schema persists in the **disposable** Railway database. The mock transaction rolls back its test row; an independent read-only Railway row-count verification has **not** yet been performed.
+- No live Telegram delivery, production deployment, production database migration, or PR merge was performed. PR #32 remains draft.
