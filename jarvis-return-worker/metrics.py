@@ -51,7 +51,7 @@ def _reconciliation_totals(repo):
             SELECT
               count(*) FILTER (WHERE action IN ('reconcile_started','confirm-delivered',
                  'confirm-undelivered','request-new-approval')) AS reconciliation_total,
-              count(*) FILTER (WHERE action='confirm-delivered') AS reconciliation_success_total,
+              count(*) FILTER (WHERE action IN ('confirm-delivered','confirm-undelivered')) AS reconciliation_success_total,
               count(*) FILTER (WHERE action='reconcile_failed') AS reconciliation_failed_total,
               count(*) FILTER (WHERE action='confirm-delivered') AS delivery_confirmed_total,
               count(*) FILTER (WHERE action='confirm-undelivered') AS delivery_rejected_total,
