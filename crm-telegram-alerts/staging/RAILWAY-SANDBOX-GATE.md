@@ -56,3 +56,9 @@ The SQL scripts are a prototype and do not yet implement an end-to-end outbox wo
 - Confirmed successful receipt maps to `sent`; explicit HTTP 429 maps to bounded `retryable_error`; uncertain 5xx/network/crash outcomes map to manual `review` to avoid duplicate delivery.
 - All three PR workflows passed on `5ce028cca33d1190b0319fdc5540a89b6d801e7b`.
 - **Not yet verified:** a real staging delivery worker applying this policy to PostgreSQL transitions, process-kill fault injection, read-only Railway row-count query, and manual review/reconciliation interface. No real Telegram sends.
+
+## Database-backed simulated transport integration (CI PASS at `413cc32`, 2026-10-12)
+- `outbox_transport_db_test.mjs` executes six mocked delivery outcomes against disposable PostgreSQL 16, validating actual `sent`, `retryable_error` and `review` transitions, receipt fields, bounded retry delay, lease cleanup and non-claimability of uncertain outcomes.
+- Every case deliberately throws an expected rollback and asserts no fake lead rows persist.
+- All three workflows passed on commit `413cc32095d8a8cb421466c699ad2aeadfb302a2`.
+- This is CI database-backed simulation, **not** a deployed delivery worker, real Telegram HTTP call, or proof of Railway row counts.
