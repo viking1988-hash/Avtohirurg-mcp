@@ -55,6 +55,14 @@ jobs:
         run: python -m pip install 'psycopg[binary]>=3.2,<4'
       - name: Test concurrent workers with separate PostgreSQL connections
         run: python crm-telegram-alerts/staging/outbox_concurrency.py
+      - name: Install mock worker dependencies
+        working-directory: crm-telegram-alerts
+        run: npm install --omit=dev --no-audit --no-fund
+      - name: Execute guarded mock worker against disposable PostgreSQL
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: node crm-telegram-alerts/staging/outbox_mock_worker.mjs
       - name: Verify no smoke data persisted
         run: |
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
