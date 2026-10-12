@@ -33,16 +33,20 @@ def _public(row):
     return dict(row) if row is not None else None
 
 def _event(conn, before, after, actor, action, reason=None, provider=None, metadata=None):
-    conn.execute(
+    audit_row = conn.execute(
         """INSERT INTO jarvis_return_action_events
            (task_id,from_state,to_state,actor,correlation_id,event_time,metadata,
             action,provider,reason,previous_state,new_state)
-           VALUES (%s,%s,%s,%s,%s,clock_timestamp(),%s,%s,%s,%s,%s,%s)""",
+           VALUES (%s,%s,%s,%s,%s,clock_timestamp(),%s,%s,%s,%s,%s,%s)
+           RETURNING event_id""",
         (after["task_id"], before["state"] if before else None, after["state"],
          actor, after["correlation_id"], Jsonb(_json_value({**(metadata or {}),
              "snapshot": {key: after.get(key) for key in SNAPSHOT_FIELDS}})), action, provider,
          reason, before["state"] if before else None, after["state"]),
-    )
+    ).fetchone()
+    from .audit import append_audit_outbox
+    append_audit_outbox(conn, audit_row["event_id"], before, after, action,
+                        provider=provider or after.get("provider"), reason=reason)
 
 def _task(conn, task_id, lock=False):
     suffix = " FOR UPDATE" if lock else ""
