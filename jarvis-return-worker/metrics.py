@@ -1,7 +1,7 @@
 from threading import Lock
 from prometheus_client import CollectorRegistry, Gauge, Counter, Histogram, generate_latest
 
-NAMES=('queue_size','oldest_task','processing','failed','reconciliation_required','retry_count','recovery_count','approval_count')
+NAMES=('queue_size','oldest_task','processing','failed','reconciliation_required_queue','retry_count','recovery_count','approval_count')
 _registry=CollectorRegistry()
 _telegram_send=Counter('telegram_send_total','Telegram send attempts',registry=_registry)
 _telegram_success=Counter('telegram_send_success_total','Telegram sends accepted',registry=_registry)
