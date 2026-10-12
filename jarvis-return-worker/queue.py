@@ -112,7 +112,7 @@ class QueueRepository:
             if not valid_approval(b):
                 raise Conflict('approval no longer valid')
             r=c.execute('''UPDATE jarvis_return_actions SET heartbeat_at=clock_timestamp(),
-                lease_until=clock_timestamp()+(%s*interval '1 second'),updated_at=now()
+                lease_until=clock_timestamp()+(%s*interval '1 second'),version=version+1,updated_at=now()
                 WHERE task_id=%s RETURNING *''',(self.config.lease_seconds,task_id)).fetchone()
             record(c,b,r,'heartbeat',owner)
             return r
@@ -125,7 +125,7 @@ class QueueRepository:
                 raise Conflict('approval no longer valid before delivery')
             if b['delivery_started_at']:
                 raise Conflict('delivery was already started for this lease')
-            r=c.execute('''UPDATE jarvis_return_actions SET delivery_started_at=clock_timestamp(),
+            r=c.execute('''UPDATE jarvis_return_actions SET delivery_started_at=clock_timestamp(),version=version+1,
                 updated_at=now() WHERE task_id=%s RETURNING *''',(task_id,)).fetchone()
             record(c,b,r,'delivery_started',owner)
             return r
@@ -136,11 +136,13 @@ class QueueRepository:
             raise ValueError('receipt id required')
         with self.connection() as c:
             b=self._owned(c,task_id,owner,attempt)
-            if b['delivery_receipt'] and (b['delivery_receipt']!=str(receipt_id)
-                or b['external_message_id']!=(str(message_id) if message_id is not None else None)):
+            if b['delivery_receipt']:
+                if (b['delivery_receipt']==str(receipt_id)
+                    and b['external_message_id']==(str(message_id) if message_id is not None else None)):
+                    return b
                 raise Conflict('delivery receipt identifiers cannot be replaced')
             r=c.execute('''UPDATE jarvis_return_actions SET delivery_receipt=%s,
-                external_message_id=%s,updated_at=now() WHERE task_id=%s RETURNING *''',
+                external_message_id=%s,version=version+1,updated_at=now() WHERE task_id=%s RETURNING *''',
                 (str(receipt_id),str(message_id) if message_id is not None else None,task_id)).fetchone()
             record(c,b,r,'delivery_receipt_saved',owner,metadata={'has_message_id':message_id is not None})
             return r
@@ -153,8 +155,11 @@ class QueueRepository:
                 raise Conflict('approval invalid before transport')
             key=task_id+':'+b['action_fingerprint']
             receipt='sandbox:receipt:'+key
-            c.execute('''INSERT INTO jarvis_fake_receipts(idempotency_key,task_id,fingerprint,receipt)
-                VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING''',(key,task_id,b['action_fingerprint'],receipt))
+            inserted=c.execute('''INSERT INTO jarvis_fake_receipts(idempotency_key,task_id,fingerprint,receipt)
+                VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING idempotency_key''',
+                (key,task_id,b['action_fingerprint'],receipt)).fetchone()
+            if not inserted:
+                record(c,b,b,'duplicate_delivery_prevented',owner)
             r=c.execute('SELECT receipt FROM jarvis_fake_receipts WHERE idempotency_key=%s',(key,)).fetchone()
             if r['receipt']!=receipt:
                 raise Conflict('receipt integrity failure')
@@ -228,6 +233,8 @@ class QueueRepository:
                     error='delivery_outcome_unknown'
                 else:
                     valid=valid_approval(b)
+                    approval_expired=bool(b['approval_expires_at'] and
+                        b['approval_expires_at']<=datetime.now(timezone.utc))
                     eligible=valid and b['attempt_count']<self.config.max_attempts
                     state='APPROVED' if eligible else 'FAILED'
                     error='lease_expired'
@@ -236,6 +243,8 @@ class QueueRepository:
                     next_attempt_at=clock_timestamp()+(%s*interval '1 second') WHERE task_id=%s RETURNING *''',
                     (state,error,min(300,2**min(b['attempt_count'],8)),b['task_id'])).fetchone()
                 record(c,b,r,'recovery',owner)
+                if not b['delivery_started_at'] and 'approval_expired' in locals() and approval_expired:
+                    record(c,r,r,'approval_expired',owner,metadata={'reason':'expired_before_recovery'})
                 recovered+=1
         return recovered
 
@@ -269,5 +278,17 @@ class QueueRepository:
             rows=c.execute('SELECT state,count(*) AS count FROM jarvis_return_actions GROUP BY state').fetchall()
             oldest=c.execute("SELECT coalesce(extract(epoch FROM clock_timestamp()-min(created_at)),0)::float AS age FROM jarvis_return_actions WHERE state IN ('READY','APPROVED','RETRY')").fetchone()['age']
             counts=c.execute("SELECT coalesce(sum(attempt_count-1) FILTER(WHERE attempt_count>1),0) AS retry_count FROM jarvis_return_actions").fetchone()
-            events=c.execute("SELECT metadata->>'action' AS action,count(*) AS count FROM jarvis_return_action_events WHERE metadata->>'action' IN ('approve','recovery') GROUP BY 1").fetchall()
-            return {**{r['state']:r['count'] for r in rows},'oldest_task':max(0,oldest),**counts,**{r['action']:r['count'] for r in events}}
+            events=c.execute("""SELECT metadata->>'action' AS action,to_state,count(*) AS count
+                FROM jarvis_return_action_events GROUP BY 1,2""").fetchall()
+            by_action={}
+            reconciliation_total=0
+            for event in events:
+                by_action[event['action']]=by_action.get(event['action'],0)+event['count']
+                if event['to_state']=='RECONCILIATION_REQUIRED' and event['action'] in ('recovery','delivery_uncertain'):
+                    reconciliation_total+=event['count']
+            return {**{r['state']:r['count'] for r in rows},'oldest_task':max(0,oldest),**counts,
+                **by_action,'reconciliation_required_total':reconciliation_total,
+                'delivery_receipt_saved_total':by_action.get('delivery_receipt_saved',0),
+                'duplicate_delivery_prevented_total':by_action.get('duplicate_delivery_prevented',0),
+                'approval_expired_total':by_action.get('approval_expired',0),
+                'lease_recovery_total':by_action.get('recovery',0)}
