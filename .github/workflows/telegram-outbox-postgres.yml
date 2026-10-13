@@ -135,6 +135,19 @@ jobs:
           fi
           grep -F 'Operator API requires explicit staging-only opt-in' /tmp/outbox-operator-denied.log
           echo 'PASS: container fails closed without opt-in'
+      - name: Reject operator API on non-disposable database
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE operator_forbidden_ci'
+          if OUTBOX_OPERATOR_API_ENABLED=true OUTBOX_STAGING_MOCK=true \\
+            OUTBOX_OPERATOR_TOKEN=ci-token-abcdefghijklmnopqrstuvwxyz-123456 \\
+            DATABASE_URL=postgres://outbox_test:disposable_ci_password@localhost:5432/operator_forbidden_ci \\
+            node crm-telegram-alerts/staging/outbox_operator_api.mjs > /tmp/operator-db-denied.log 2>&1; then
+            echo 'FAIL: API accepted unapproved database'
+            exit 1
+          fi
+          grep -F 'Refusing non-disposable database' /tmp/operator-db-denied.log
+          psql -X -v ON_ERROR_STOP=1 -c 'DROP DATABASE operator_forbidden_ci'
+          echo 'PASS: operator API rejected unapproved database'
       - name: Test loopback operator API authentication and rejected decisions
         env:
           DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
