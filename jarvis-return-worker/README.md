@@ -101,8 +101,9 @@ Replay materializes one email intent; the Email Operation Worker obtains a
 Policy Engine decision and sends only through the generic Dispatcher. The Email
 Provider is registered only when `JARVIS_EMAIL_SANDBOX_SMTP_HOST` points to a
 private test sink. Recipients and sender are restricted to `.test`/`.invalid`.
-This Railway Sandbox currently has no SMTP sink configured, and no real email
-was sent. SMTP acceptance is stored as `QUEUED`; it is not proof of final
+The Railway Sandbox uses a private Mailpit SMTP sink for synthetic `@example.test`
+checks only; it is not a public or real mail service. No external recipients or
+working SMTP services are configured. SMTP acceptance is stored as `QUEUED`; SMTP acceptance is stored as `QUEUED`; it is not proof of final
 mailbox delivery. A timeout after DATA becomes `RECONCILIATION_REQUIRED` and is
 never automatically resent. See the [Email Provider Guide](docs/email-provider-guide.md),
 [Adapter Guide](docs/email-adapter-guide.md), [Recovery Guide](docs/email-recovery-guide.md),
