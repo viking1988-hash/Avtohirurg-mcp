@@ -125,6 +125,10 @@ jobs:
         run: |
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox_review_audit")" = "0"
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
+      - name: Test loopback operator API authentication and rejected decisions
+        env:
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: node crm-telegram-alerts/staging/outbox_operator_api.test.mjs
       - name: Verify no smoke data persisted
         run: |
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
