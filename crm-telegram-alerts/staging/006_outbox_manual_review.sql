@@ -22,6 +22,9 @@ BEGIN
   IF current_database() NOT IN ('outbox_ci','outbox_sandbox') THEN
     RAISE EXCEPTION 'Disposable database only';
   END IF;
+  IF session_user <> current_user THEN
+    RAISE EXCEPTION 'Session role switching is not permitted for manual review';
+  END IF;
   IF p_action NOT IN ('mark_sent','authorize_retry')
      OR p_action IS NULL OR length(btrim(coalesce(p_actor,''))) NOT BETWEEN 3 AND 128
      OR length(btrim(coalesce(p_reason,''))) NOT BETWEEN 10 AND 1000 THEN
@@ -52,4 +55,5 @@ BEGIN
   VALUES (p_outbox_id,p_action,p_actor,p_reason,p_receipt_message_id);
 END $review$;
 REVOKE ALL ON FUNCTION crm_telegram_outbox_review_decide(bigint,text,text,text,bigint) FROM PUBLIC;
+REVOKE ALL ON TABLE crm_telegram_outbox_review_audit FROM PUBLIC;
 COMMIT;
