@@ -117,6 +117,14 @@ jobs:
           fi
           echo 'PASS: audit rejected forbidden database'
           psql -X -v ON_ERROR_STOP=1 -c 'DROP DATABASE outbox_forbidden_ci'
+      - name: Apply staging-only audited manual review function
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/006_outbox_manual_review.sql
+      - name: Verify manual review decisions, receipts and rollback
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/007_outbox_manual_review_smoke.sql
+      - name: Verify review smoke left no rows
+        run: |
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox_review_audit")" = "0"
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
       - name: Verify no smoke data persisted
         run: |
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
