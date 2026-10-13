@@ -125,6 +125,16 @@ jobs:
         run: |
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox_review_audit")" = "0"
           test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
+      - name: Build isolated operator API Docker image
+        run: docker build -f crm-telegram-alerts/Dockerfile.outbox-operator -t outbox-operator-ci crm-telegram-alerts
+      - name: Reject operator API container without explicit opt-in
+        run: |
+          if docker run --rm outbox-operator-ci > /tmp/outbox-operator-denied.log 2>&1; then
+            echo 'FAIL: operator API started without staging flags'
+            exit 1
+          fi
+          grep -F 'Operator API requires explicit staging-only opt-in' /tmp/outbox-operator-denied.log
+          echo 'PASS: container fails closed without opt-in'
       - name: Test loopback operator API authentication and rejected decisions
         env:
           DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
