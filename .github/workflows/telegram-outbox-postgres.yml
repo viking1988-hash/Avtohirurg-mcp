@@ -138,9 +138,9 @@ jobs:
       - name: Reject operator API on non-disposable database
         run: |
           psql -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE operator_forbidden_ci'
-          if OUTBOX_OPERATOR_API_ENABLED=true OUTBOX_STAGING_MOCK=true \\
-            OUTBOX_OPERATOR_TOKEN=ci-token-abcdefghijklmnopqrstuvwxyz-123456 \\
-            DATABASE_URL=postgres://outbox_test:disposable_ci_password@localhost:5432/operator_forbidden_ci \\
+          if OUTBOX_OPERATOR_API_ENABLED=true OUTBOX_STAGING_MOCK=true \
+            OUTBOX_OPERATOR_TOKEN=ci-token-abcdefghijklmnopqrstuvwxyz-123456 \
+            DATABASE_URL=postgres://outbox_test:disposable_ci_password@localhost:5432/operator_forbidden_ci \
             node crm-telegram-alerts/staging/outbox_operator_api.mjs > /tmp/operator-db-denied.log 2>&1; then
             echo 'FAIL: API accepted unapproved database'
             exit 1
