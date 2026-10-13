@@ -40,7 +40,17 @@ class EmailRequest(BaseModel):
     to: str=Field(min_length=9,max_length=320)
     subject: str=Field(min_length=1,max_length=998)
     body: str=Field(min_length=1,max_length=100000)
-    correlation_id: str=Field(min_length=1,max_length=128,pattern=r'^[A-Za-z0-9:_-]+
+    correlation_id: str=Field(min_length=1,max_length=128)
+    causation_id: str=Field(min_length=1,max_length=128)
+
+    @field_validator('to')
+    @classmethod
+    def sandbox_recipient_only(cls,value):
+        from ..email_provider import EmailProvider
+        if not EmailProvider._valid_recipient(value):
+            raise ValueError('only Sandbox test-domain recipients are permitted')
+        return value
+
 class EmailReconciliation(BaseModel):
     model_config=ConfigDict(extra='forbid')
     expected_version: int=Field(ge=0)
