@@ -1,0 +1,170 @@
+name: Telegram Outbox PostgreSQL integration
+on:
+  pull_request:
+    paths:
+      - 'crm-telegram-alerts/staging/**'
+      - '.github/workflows/telegram-outbox-postgres.yml'
+  workflow_dispatch:
+jobs:
+  postgres-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: outbox_test
+          POSTGRES_PASSWORD: disposable_ci_password
+          POSTGRES_DB: outbox_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U outbox_test -d outbox_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: outbox_test
+      PGPASSWORD: disposable_ci_password
+      PGDATABASE: outbox_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply schema to disposable CI PostgreSQL
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/001_telegram_outbox.sql
+      - name: Seed a sentinel row before repeat migration
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c "INSERT INTO crm_telegram_outbox(lead_id,alert_type,status,sent_at,telegram_message_id) VALUES (99000001,'new','sent',now(),123456)"
+      - name: Reapply schema to verify migration idempotency
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/001_telegram_outbox.sql
+      - name: Verify repeated migration preserved existing receipt
+        run: |
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox WHERE lead_id=99000001 AND alert_type='new' AND status='sent' AND telegram_message_id=123456")" = "1"
+          psql -X -v ON_ERROR_STOP=1 -c "DELETE FROM crm_telegram_outbox WHERE lead_id=99000001"
+          echo "PASS: existing receipt preserved after repeated migration"
+      - name: Verify expected schema columns and constraints
+        run: |
+          columns=$(psql -X -tA -c "SELECT count(*) FROM information_schema.columns WHERE table_name='crm_telegram_outbox' AND column_name IN ('lease_token','lease_until','telegram_message_id','next_attempt_at','attempts')")
+          unique_constraints=$(psql -X -tA -c "SELECT count(*) FROM pg_constraint WHERE conrelid='crm_telegram_outbox'::regclass AND contype='u'")
+          test "$columns" = "5"
+          test "$unique_constraints" = "1"
+          echo "PASS: schema columns and uniqueness constraint"
+      - name: Execute transaction and rollback smoke tests
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/004_outbox_postgres_smoke.sql
+      - name: Install isolated PostgreSQL test client
+        run: python -m pip install 'psycopg[binary]>=3.2,<4'
+      - name: Test concurrent workers with separate PostgreSQL connections
+        run: python crm-telegram-alerts/staging/outbox_concurrency.py
+      - name: Kill committed lease backend and verify conservative crash recovery
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: python crm-telegram-alerts/staging/outbox_committed_crash.py
+      - name: Install mock worker dependencies
+        working-directory: crm-telegram-alerts
+        run: npm install --omit=dev --no-audit --no-fund
+      - name: Test simulated Telegram transport outcomes without network access
+        run: node --test crm-telegram-alerts/staging/outbox_transport_policy.test.mjs
+      - name: Verify simulated transport outcomes against disposable PostgreSQL
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: node crm-telegram-alerts/staging/outbox_transport_db_test.mjs
+      - name: Execute guarded mock worker against disposable PostgreSQL
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: node crm-telegram-alerts/staging/outbox_mock_worker.mjs
+      - name: Rerun mock worker to verify repeatability and rollback
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: |
+          node crm-telegram-alerts/staging/outbox_mock_worker.mjs
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
+          echo 'PASS: repeat mock run leaves no rows'
+      - name: Verify mock worker rejects missing safety flag
+        env:
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: |
+          if node crm-telegram-alerts/staging/outbox_mock_worker.mjs; then
+            echo 'FAIL: safety flag was not required'
+            exit 1
+          fi
+          echo 'PASS: missing safety flag rejected'
+      - name: Verify mock worker rejects Telegram credentials
+        env:
+          OUTBOX_STAGING_MOCK: 'true'
+          TELEGRAM_BOT_TOKEN: fake-ci-token
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: |
+          if node crm-telegram-alerts/staging/outbox_mock_worker.mjs; then
+            echo 'FAIL: Telegram token was accepted'
+            exit 1
+          fi
+          echo 'PASS: Telegram credentials rejected'
+      - name: Verify read-only operator audit on disposable database
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/005_outbox_review_readonly.sql
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
+          echo 'PASS: operator audit succeeds without changing rows'
+      - name: Verify operator audit refuses another database
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE outbox_forbidden_ci'
+          if PGDATABASE=outbox_forbidden_ci psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/005_outbox_review_readonly.sql; then
+            echo 'FAIL: audit accepted forbidden database'
+            exit 1
+          fi
+          echo 'PASS: audit rejected forbidden database'
+          psql -X -v ON_ERROR_STOP=1 -c 'DROP DATABASE outbox_forbidden_ci'
+      - name: Apply staging-only audited manual review function
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/006_outbox_manual_review.sql
+      - name: Verify manual review decisions, receipts and rollback
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/staging/007_outbox_manual_review_smoke.sql
+      - name: Verify review smoke left no rows
+        run: |
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox_review_audit")" = "0"
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
+      - name: Build isolated operator API Docker image
+        run: docker build -f crm-telegram-alerts/Dockerfile.outbox-operator -t outbox-operator-ci crm-telegram-alerts
+      - name: Reject operator API container without explicit opt-in
+        run: |
+          if docker run --rm outbox-operator-ci > /tmp/outbox-operator-denied.log 2>&1; then
+            echo 'FAIL: operator API started without staging flags'
+            exit 1
+          fi
+          grep -F 'Operator API requires explicit staging-only opt-in' /tmp/outbox-operator-denied.log
+          echo 'PASS: container fails closed without opt-in'
+      - name: Reject operator API on non-disposable database
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE operator_forbidden_ci'
+          if OUTBOX_OPERATOR_API_ENABLED=true OUTBOX_STAGING_MOCK=true \
+            OUTBOX_OPERATOR_TOKEN=ci-token-abcdefghijklmnopqrstuvwxyz-123456 \
+            DATABASE_URL=postgres://outbox_test:disposable_ci_password@localhost:5432/operator_forbidden_ci \
+            node crm-telegram-alerts/staging/outbox_operator_api.mjs > /tmp/operator-db-denied.log 2>&1; then
+            echo 'FAIL: API accepted unapproved database'
+            exit 1
+          fi
+          grep -F 'Refusing non-disposable database' /tmp/operator-db-denied.log
+          psql -X -v ON_ERROR_STOP=1 -c 'DROP DATABASE operator_forbidden_ci'
+          echo 'PASS: operator API rejected unapproved database'
+      - name: Reject real Telegram credentials in isolated operator API
+        run: |
+          if OUTBOX_OPERATOR_API_ENABLED=true OUTBOX_STAGING_MOCK=true \
+            OUTBOX_OPERATOR_TOKEN=ci-token-abcdefghijklmnopqrstuvwxyz-123456 \
+            TELEGRAM_BOT_TOKEN=forbidden-ci-placeholder \
+            DATABASE_URL=postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci \
+            node crm-telegram-alerts/staging/outbox_operator_api.mjs > /tmp/operator-telegram-denied.log 2>&1; then
+            echo 'FAIL: operator API accepted Telegram credentials'
+            exit 1
+          fi
+          grep -F 'Telegram credentials forbidden' /tmp/operator-telegram-denied.log
+          echo 'PASS: operator API refuses Telegram credentials'
+      - name: Test loopback operator API authentication and rejected decisions
+        env:
+          DATABASE_URL: postgres://outbox_test:disposable_ci_password@localhost:5432/outbox_ci
+        run: node crm-telegram-alerts/staging/outbox_operator_api.test.mjs
+      - name: Verify no smoke data persisted
+        run: |
+          test "$(psql -X -tA -c "SELECT count(*) FROM crm_telegram_outbox")" = "0"
+          echo "PASS: schema, uniqueness, lease, review, stale token, rollback, concurrency and cleanup"

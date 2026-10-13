@@ -17,3 +17,5 @@ jobs:
         run: node --check crm-telegram-alerts/index.mjs
       - name: Test with mocked database and Telegram
         run: node crm-telegram-alerts/index.test.mjs
+      - name: Test staging outbox safety contract
+        run: node --test crm-telegram-alerts/staging/outbox.test.mjs
