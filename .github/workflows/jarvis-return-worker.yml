@@ -1,7 +1,7 @@
 name: Jarvis Return Worker
 on:
   push:
-    branches: ['feat/jarvis-return-worker-*', 'feat/jarvis-telegram-transport-*']
+    branches: ['feat/jarvis-return-worker-*', 'feat/jarvis-telegram-transport-*', 'feat/oct13-stability-diagnostics-*']
   pull_request:
     paths: ['jarvis-return-worker/**', '.github/workflows/jarvis-return-worker.yml']
 jobs:
