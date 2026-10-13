@@ -1,12 +1,12 @@
 -- STAGING ONLY. Operator review inventory; SELECT only, no PII and no state changes.
 -- Use only after verifying current_database() is outbox_ci or outbox_sandbox.
 BEGIN READ ONLY;
-DO $
+DO $audit_guard$
 BEGIN
   IF current_database() NOT IN ('outbox_ci', 'outbox_sandbox') THEN
     RAISE EXCEPTION 'Refusing outbox audit on non-disposable database: %', current_database();
   END IF;
-END $;
+END $audit_guard$;
 SELECT current_database() AS database_name, current_user AS database_user;
 SELECT status, last_error_code, count(*)::integer AS jobs,
        min(created_at) AS oldest_job,
