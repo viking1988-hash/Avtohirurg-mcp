@@ -114,7 +114,8 @@ def test_email_outbox_request_requires_authenticated_human_and_test_recipient():
     assert app.state.orchestrator.requests == []
 
     invalid_recipient = client.post("/email/requests", json={
-        **payload, "to": "customer@example.com"})
+        **payload, "to": "customer@example.com"}, headers={
+            "Authorization": "Bearer synthetic-approval-token"})
     assert invalid_recipient.status_code == 422
     assert app.state.orchestrator.requests == []
 
