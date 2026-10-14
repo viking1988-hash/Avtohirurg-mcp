@@ -332,6 +332,18 @@ class Orchestrator:
     def read_webhook_operation(self,event_id):
         return self.repository.get_webhook_operation(event_id)
 
+    def check_webhook_status(self,event_id):
+        """Read provider status only for a fenced operation awaiting reconciliation."""
+        operation=self.repository.get_webhook_operation(event_id) or {}
+        decision=self.policy.webhook_reconciliation(operation)
+        if decision.action!='reconcile': raise Conflict(decision.reason)
+        provider=self.dispatcher.dispatch('webhook')
+        task={'method':operation['method'],'path':operation['path'],
+              'correlation_id':operation.get('correlation_id'),
+              'request_id':operation.get('request_id'),
+              'idempotency_key':operation['idempotency_key']}
+        return provider.reconcile(task)
+
     def reconcile_webhook_operation(self,event_id,actor,expected_version,outcome,evidence=None):
         operation=self.repository.get_webhook_operation(event_id) or {}
         decision=self.policy.webhook_reconciliation(operation)
