@@ -350,7 +350,8 @@ class Orchestrator:
             provider=self.dispatcher.dispatch('webhook')
             transport_dispatch('webhook');provider_call('webhook','send')
             payload={'method':operation['method'],'path':operation['path'],
-              'body':operation.get('request_body'),'correlation_id':operation.get('correlation_id')}
+              'body':operation.get('request_body'),'correlation_id':operation.get('correlation_id'),
+              'request_id':operation.get('request_id')}
             result=await asyncio.to_thread(provider.send,payload,operation['idempotency_key'])
             await asyncio.to_thread(self.repository.finish_webhook_operation,
               operation['event_id'],owner,operation['attempt_count'],operation['version'],result)
