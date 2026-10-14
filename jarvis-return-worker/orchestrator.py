@@ -289,6 +289,8 @@ class Orchestrator:
     def _provider_for(self, task):
         if task.get("destination_key","").startswith("sandbox:telegram:"):
             return "telegram"
+        if task.get("destination_key","").startswith("sandbox:http:"):
+            return "http"
         return "fake"
 
     def _send(self, provider, task):

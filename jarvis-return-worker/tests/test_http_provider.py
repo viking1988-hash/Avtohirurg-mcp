@@ -97,14 +97,23 @@ def test_redirect_handler_refuses_cross_host_credential_forwarding():
             None,302,"Found",{},"https://other.example/private")
 
 
-def test_http_selected_transport_requires_sandbox_credentials(monkeypatch):
+def test_http_is_optional_provider_not_a_primary_worker_transport(monkeypatch):
     from jarvis_return_worker.config import Config
-    import secrets
     monkeypatch.setenv("JARVIS_TRANSPORT","http")
-    config=Config("postgresql://jarvis_sandbox:secret@jarvis-sandbox-postgres.railway.internal/jarvis_return_queue_test",
-                  secrets.token_urlsafe(32),secrets.token_urlsafe(32),"operator","worker")
-    with pytest.raises(ValueError,match="HTTP Sandbox transport"):
-        config.validate()
+    monkeypatch.setenv("JARVIS_SANDBOX_PROJECT_ID","sandbox-project")
+    monkeypatch.setenv("JARVIS_SANDBOX_ENVIRONMENT_ID","sandbox-staging")
+    monkeypatch.setenv("RAILWAY_PROJECT_ID","sandbox-project")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_ID","sandbox-staging")
+    with pytest.raises(ValueError,match="unsupported transport"):
+        Config.from_env()
+
+
+def test_http_destination_routes_via_orchestrator_not_dispatcher_special_case():
+    from jarvis_return_worker.orchestrator import Orchestrator
+    service=Orchestrator(None,None)
+    assert service._provider_for({"destination_key":"sandbox:http:synthetic"})=="http"
+    assert service._provider_for({"destination_key":"sandbox:telegram:-1000000000000"})=="telegram"
+    assert service._provider_for({"destination_key":"sandbox:test"})=="fake"
 
 
 def test_update_cancel_status_and_receipt_use_encoded_provider_id():

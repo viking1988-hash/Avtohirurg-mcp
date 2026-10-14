@@ -44,7 +44,7 @@ def make_dispatcher(config, repository):
     if selected=='telegram':
         if 'telegram' not in dispatcher.names():
             raise ValueError('Telegram requires Sandbox bot credentials and a test chat')
-    elif selected!='fake' and selected!='http':
+    elif selected!='fake':
         raise ValueError('unknown transport; refusing startup')
     crm_url=os.environ.get('JARVIS_CRM_SANDBOX_URL','')
     crm_token=os.environ.get('JARVIS_CRM_SANDBOX_TOKEN','')
@@ -66,8 +66,6 @@ def make_dispatcher(config, repository):
             raise ValueError('HTTP Sandbox endpoint and token must be configured together')
         dispatcher.register('http',HTTPProvider(http_url,http_token,
             int(os.environ.get('JARVIS_HTTP_TIMEOUT_SECONDS','8'))),enabled=True)
-    if selected=='http' and 'http' not in dispatcher.names():
-        raise ValueError('HTTP Sandbox endpoint and token are required')
     return dispatcher
 
 

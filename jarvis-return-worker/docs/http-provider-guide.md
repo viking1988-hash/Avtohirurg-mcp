@@ -14,6 +14,9 @@ and must not contain a `prod`/`production` label. Redirects are refused so a
 configured service cannot forward the bearer credential to a different host.
 Timeouts are bounded to 1–30 seconds. Do not configure Production credentials,
 arbitrary destinations, or endpoints outside the isolated Railway environment.
+Tasks use the `sandbox:http:` destination namespace to route through the
+Orchestrator into the generic Dispatcher. The destination and payload remain
+bound to the existing human approval fingerprint.
 
 Supported request contract:
 

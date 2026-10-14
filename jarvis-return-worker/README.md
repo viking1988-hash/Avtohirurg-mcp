@@ -146,7 +146,9 @@ send, update, cancel, status, reconciliation, and receipt lookup, while keeping
 business decisions in the Orchestrator and Policy Engine. Mutations forward the
 stable idempotency key; ambiguous network/5xx/incomplete-receipt outcomes enter
 `RECONCILIATION_REQUIRED` and are never resent automatically. Redirects are
-blocked and only minimal provider IDs/receipt/status fields are retained.
+blocked and only minimal provider IDs/receipt/status fields are retained. Tasks
+addressed to the `sandbox:http:` destination namespace are routed by the
+Orchestrator and remain covered by the human approval fingerprint.
 
 The Sandbox currently has no generic HTTP endpoint or token configured, so the
 provider is disabled there and no external HTTP request has been made. Contract
