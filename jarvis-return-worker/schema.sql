@@ -323,11 +323,22 @@ CREATE TABLE IF NOT EXISTS jarvis_webhook_operations (
  duration_ms double precision,
  retry_count integer NOT NULL DEFAULT 0 CHECK(retry_count>=0),
  reconciliation_reason text,
+ reconciliation_evidence jsonb,
+ reconciled_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL),
- CHECK(state <> 'DONE' OR (request_id IS NOT NULL AND http_status BETWEEN 200 AND 299 AND receipt IS NOT NULL))
+ CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL)
 );
+-- Backfill-safe migration: a DONE result may come from explicit, persisted
+-- reconciliation when the original write returned an ambiguous non-2xx status.
+ALTER TABLE jarvis_webhook_operations ADD COLUMN IF NOT EXISTS reconciliation_evidence jsonb;
+ALTER TABLE jarvis_webhook_operations ADD COLUMN IF NOT EXISTS reconciled_at timestamptz;
+ALTER TABLE jarvis_webhook_operations DROP CONSTRAINT IF EXISTS jarvis_webhook_operations_check1;
+ALTER TABLE jarvis_webhook_operations DROP CONSTRAINT IF EXISTS jarvis_webhook_done_requires_evidence;
+ALTER TABLE jarvis_webhook_operations ADD CONSTRAINT jarvis_webhook_done_requires_evidence
+ CHECK(state <> 'DONE' OR (request_id IS NOT NULL AND receipt IS NOT NULL
+   AND (http_status BETWEEN 200 AND 299 OR
+        (reconciled_at IS NOT NULL AND reconciliation_evidence IS NOT NULL))));
 CREATE INDEX IF NOT EXISTS jarvis_webhook_pending_idx
  ON jarvis_webhook_operations(state,next_attempt_at,created_at,event_id);
 CREATE UNIQUE INDEX IF NOT EXISTS jarvis_webhook_response_unique
