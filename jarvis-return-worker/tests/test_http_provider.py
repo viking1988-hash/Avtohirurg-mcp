@@ -144,6 +144,67 @@ def test_http_metrics_are_rendered():
         assert metric in output
 
 
+def test_real_local_http_socket_preserves_idempotency_and_receipt():
+    """Exercise urllib over TCP against a strict, in-process synthetic sink."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    records = {}
+    seen = []
+
+    class Sink(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def _reply(self, status, body):
+            encoded = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def do_POST(self):
+            assert self.path == "/messages"
+            assert self.headers.get("Authorization") == "Bearer local-test-token"
+            assert self.headers.get("Idempotency-Key")
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            assert payload == {"destination": "sandbox:http:test", "payload": {"case": "synthetic-test"}}
+            key = self.headers["Idempotency-Key"]
+            seen.append(key)
+            if key not in records:
+                records[key] = {
+                    "message_id": "local-message-1",
+                    "receipt_id": "local-receipt-1",
+                    "status": "accepted",
+                }
+            self._reply(200, records[key])
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = HTTPProvider("https://contract-sandbox.up.railway.app", "local-test-token")
+        # The endpoint guard remains tested separately; this override is confined to
+        # this test so urllib uses a real local TCP socket and sends no external data.
+        client._HTTPProvider__base_url = f"http://127.0.0.1:{server.server_port}"
+        task = {
+            "destination_key": "sandbox:http:test",
+            "payload": {"case": "synthetic-test"},
+        }
+        first = client.send(task, "stable-local-key")
+        second = client.send(task, "stable-local-key")
+
+        assert first["provider_message_id"] == second["provider_message_id"] == "local-message-1"
+        assert first["receipt_id"] == second["receipt_id"] == "local-receipt-1"
+        assert seen == ["stable-local-key", "stable-local-key"]
+        assert len(records) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_generic_http_provider_registers_alongside_existing_providers(monkeypatch):
     from jarvis_return_worker.app import make_dispatcher
     monkeypatch.setenv("JARVIS_TRANSPORT","fake")
