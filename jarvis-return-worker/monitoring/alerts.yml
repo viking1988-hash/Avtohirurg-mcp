@@ -1,0 +1,35 @@
+groups:
+- name: jarvis-sandbox
+  rules:
+  - alert: JarvisWorkerUnavailable
+    expr: up{job="jarvis-sandbox-worker"} == 0
+    for: 5m
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Sandbox worker metrics unavailable
+  - alert: JarvisOutboxPending
+    expr: outbox_pending_total > 0
+    for: 10m
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Pending outbox events require investigation
+  - alert: JarvisReconciliationRequired
+    expr: reconciliation_required_queue > 0
+    for: 15m
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Manual reconciliation required
+  - alert: JarvisOutboxReplayFailures
+    expr: increase(outbox_failed_total[10m]) > 0
+    for: 2m
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Outbox replay failures detected
