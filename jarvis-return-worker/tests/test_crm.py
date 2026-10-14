@@ -444,6 +444,7 @@ def test_expired_crm_approval_requires_a_new_versioned_approval(repository):
 
 
 def test_concurrent_crm_approvals_with_same_version_have_one_winner(repository):
+    from concurrent.futures import ThreadPoolExecutor
     from jarvis_return_worker.queue import Conflict
     event_id=materialize_crm_operation(repository,approved=False)
     row=repository.get_crm_operation(event_id)
