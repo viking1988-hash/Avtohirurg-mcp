@@ -1,0 +1,23 @@
+name: Synthetic intake benchmark
+on:
+  push:
+    branches: ['feat/oct13-stability-diagnostics-*']
+  pull_request:
+    paths: ['jarvis-return-worker/benchmark.py','jarvis-return-worker/automation_policy.py','.github/workflows/synthetic-classification.yml']
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python jarvis-return-worker/benchmark.py --output classification-baseline-100.json --corpus synthetic-intake-100.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-intake-baseline
+          path: |
+            classification-baseline-100.json
+            synthetic-intake-100.json

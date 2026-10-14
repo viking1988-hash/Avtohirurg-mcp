@@ -31,6 +31,12 @@ class CRMReconciliation(BaseModel):
     model_config=ConfigDict(extra='forbid')
     expected_version: int=Field(ge=0)
 
+class CRMApproval(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+    fingerprint: str=Field(pattern=r'^[a-f0-9]{64}$')
+    expires_at: datetime
+
 class EmailCancel(BaseModel):
     model_config=ConfigDict(extra='forbid')
     expected_version: int=Field(ge=0)
@@ -127,6 +133,13 @@ async def crm_operation(event_id:str,request:Request,actor:str=Depends(read)):
     if not result:
         raise HTTPException(404,'CRM operation not found')
     return result
+
+@router.post('/crm/operations/{event_id}/approve')
+async def approve_crm_operation(event_id:str,body:CRMApproval,request:Request,actor:str=Depends(human)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid CRM event ID')
+    return await call(request.app.state.orchestrator.approve_crm_operation,
+                      event_id,actor,body.expected_version,body.fingerprint,body.expires_at)
 
 @router.post('/crm/operations/{event_id}/reconcile')
 async def reconcile_crm_operation(event_id:str,body:CRMReconciliation,request:Request,actor:str=Depends(human)):

@@ -134,6 +134,10 @@ class Orchestrator:
     def read_crm_operation(self,event_id):
         return self.repository.get_crm_operation(event_id)
 
+    def approve_crm_operation(self,event_id,actor,expected_version,fingerprint,expires_at):
+        return self.repository.approve_crm_operation(
+            event_id,actor,expected_version,fingerprint,expires_at)
+
     def reconcile_crm_operation(self,event_id,actor,expected_version):
         operation=self.repository.get_crm_operation(event_id)
         decision=self.policy.crm_reconciliation(operation or {})

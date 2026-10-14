@@ -178,13 +178,13 @@ class CRMAdapter:
         from psycopg.types.json import Jsonb
         inserted = conn.execute(
             """INSERT INTO jarvis_crm_operations
-               (event_id,idempotency_key,booking_id,operation,crm_status,payload,
+               (event_id,idempotency_key,booking_id,operation,crm_status,payload,operation_fingerprint,
                 correlation_id,state,created_at,updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,'PENDING',clock_timestamp(),clock_timestamp())
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',clock_timestamp(),clock_timestamp())
                ON CONFLICT (event_id) DO NOTHING""",
             (command["event_id"], command["idempotency_key"], command["booking_id"],
              command["operation"], command["crm_status"], Jsonb(command["payload"]),
-             command["correlation_id"]),
+             command["action_fingerprint"], command["correlation_id"]),
         )
         if inserted.rowcount == 0:
             from .metrics import prevent_crm_duplicate

@@ -1,5 +1,6 @@
 """Central policy for approval, retries, reconciliation and repeat sends."""
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from .approval import valid_approval
 from .transport import Classification, DeliveryError
 
@@ -13,18 +14,23 @@ class PolicyDecision:
 class PolicyEngine:
     """Only this module classifies whether a failed send can be attempted again."""
 
+    def automation(self, channel, operation, **context):
+        from .automation_policy import route
+        return route(channel, operation, **context)
+
     def approval(self, task):
         return PolicyDecision("send" if valid_approval(task) else "fail", "approval_valid" if valid_approval(task) else "approval_invalid")
 
     def delivery_failure(self, error, task):
+        # A durable receipt takes precedence over a later exception.
+        if task.get("delivery_receipt"):
+            return PolicyDecision("complete", "receipt_already_durable")
         if isinstance(error, DeliveryError):
             if error.classification == Classification.RETRYABLE:
                 return PolicyDecision("retry", "provider_confirmed_rejection")
             if error.classification == Classification.PERMANENT:
                 return PolicyDecision("fail", "provider_permanent_rejection")
             return PolicyDecision("reconcile", "provider_outcome_unknown")
-        if task.get("delivery_receipt"):
-            return PolicyDecision("complete", "receipt_already_durable")
         if task.get("delivery_started_at"):
             return PolicyDecision("reconcile", "send_outcome_unknown")
         return PolicyDecision("fail", "failure_before_send")
@@ -35,12 +41,28 @@ class PolicyEngine:
                 )
 
     def crm_operation(self, operation):
+        from .crm import crm_operation_fingerprint
+        expiry=operation.get('approval_expires_at')
+        if isinstance(expiry,str):
+            try: expiry=datetime.fromisoformat(expiry.replace('Z','+00:00'))
+            except ValueError: expiry=None
+        try:
+            computed=crm_operation_fingerprint(operation.get('event_id'),operation.get('booking_id'),
+                                               operation.get('operation'),operation.get('payload') or {})
+        except Exception:
+            computed=None
+        approved=(bool(operation.get('approved_by'))
+                  and operation.get('operation_fingerprint')==computed
+                  and operation.get('approved_fingerprint')==computed
+                  and expiry is not None and expiry.tzinfo is not None
+                  and expiry>datetime.now(timezone.utc))
         allowed=(operation.get('operation') in ('send','update','cancel')
                  and operation.get('state')=='PROCESSING'
                  and bool(operation.get('booking_id'))
-                 and operation.get('idempotency_key')=='jarvis-crm:'+str(operation.get('event_id')))
+                 and operation.get('idempotency_key')=='jarvis-crm:'+str(operation.get('event_id'))
+                 and approved)
         return PolicyDecision('dispatch' if allowed else 'reconcile',
-                              'crm_operation_valid' if allowed else 'crm_operation_integrity')
+                              'crm_operation_approved' if allowed else 'crm_operation_integrity_or_approval')
 
     def crm_delivery_failure(self,error,operation):
         if isinstance(error,DeliveryError):
