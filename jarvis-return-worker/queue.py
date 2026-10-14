@@ -2,6 +2,7 @@ from time import monotonic
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+import uuid
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -634,8 +635,9 @@ class QueueRepository:
             if not row:return None
             saved=c.execute("""UPDATE jarvis_webhook_operations SET state='PROCESSING',lease_owner=%s,
               lease_until=clock_timestamp()+(%s*interval '1 second'),attempt_count=attempt_count+1,
-              version=version+1,updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",
-              (owner,self.config.lease_seconds,row['event_id'])).fetchone()
+              request_id=%s,version=version+1,updated_at=clock_timestamp()
+              WHERE event_id=%s RETURNING *""",
+              (owner,self.config.lease_seconds,str(uuid.uuid4()),row['event_id'])).fetchone()
             c.execute("""INSERT INTO jarvis_webhook_operation_events(event_id,action,actor)
               VALUES (%s,'claimed',%s)""",(row['event_id'],owner))
             return saved
@@ -726,11 +728,18 @@ class QueueRepository:
             if row['version']!=expected_version: raise Conflict('stale Webhook operation version')
             state='DONE' if outcome=='delivered' else 'FAILED'
             receipt=evidence.get('receipt')
+            safe_evidence={key:evidence[key] for key in
+                ('response_id','provider_status','receipt','reason','source') if key in evidence}
             saved=c.execute("""UPDATE jarvis_webhook_operations SET state=%s,
-              response_id=coalesce(%s,response_id),receipt=coalesce(%s,receipt),
-              reconciliation_reason=NULL,version=version+1,updated_at=clock_timestamp()
+              request_id=coalesce(%s,request_id),response_id=coalesce(%s,response_id),
+              provider_status=coalesce(%s,provider_status),
+              receipt=coalesce(%s,receipt),reconciliation_evidence=%s,
+              reconciled_at=clock_timestamp(),reconciliation_reason=NULL,
+              version=version+1,updated_at=clock_timestamp()
               WHERE event_id=%s RETURNING *""",
-              (state,evidence.get('response_id'),Jsonb(receipt) if receipt is not None else None,event_id)).fetchone()
+              (state,evidence.get('request_id'),evidence.get('response_id'),
+               str(evidence['provider_status'])[:80] if evidence.get('provider_status') else None,
+               Jsonb(receipt) if receipt is not None else None,Jsonb(safe_evidence),event_id)).fetchone()
             c.execute("""INSERT INTO jarvis_webhook_operation_events(event_id,action,actor,reason)
               VALUES (%s,%s,%s,%s)""",(event_id,'reconciled_'+outcome,actor,str(evidence.get('reason',''))[:200]))
             return saved
