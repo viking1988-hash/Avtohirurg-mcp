@@ -219,6 +219,11 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_operations (
  state text NOT NULL DEFAULT 'PENDING'
    CHECK(state IN ('PENDING','PROCESSING','DONE','FAILED','RECONCILIATION_REQUIRED')),
  version bigint NOT NULL DEFAULT 0 CHECK(version>=0),
+ operation_fingerprint char(64),
+ approved_fingerprint char(64),
+ approved_by text,
+ approved_at timestamptz,
+ approval_expires_at timestamptz,
  attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
  next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  lease_owner text,
@@ -228,6 +233,11 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_operations (
  CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL)
 );
 ALTER TABLE jarvis_crm_operations ADD COLUMN IF NOT EXISTS version bigint NOT NULL DEFAULT 0;
+ALTER TABLE jarvis_crm_operations ADD COLUMN IF NOT EXISTS operation_fingerprint char(64);
+ALTER TABLE jarvis_crm_operations ADD COLUMN IF NOT EXISTS approved_fingerprint char(64);
+ALTER TABLE jarvis_crm_operations ADD COLUMN IF NOT EXISTS approved_by text;
+ALTER TABLE jarvis_crm_operations ADD COLUMN IF NOT EXISTS approved_at timestamptz;
+ALTER TABLE jarvis_crm_operations ADD COLUMN IF NOT EXISTS approval_expires_at timestamptz;
 CREATE INDEX IF NOT EXISTS jarvis_crm_pending_idx
  ON jarvis_crm_operations(state,next_attempt_at,created_at,event_id);
 

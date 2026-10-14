@@ -3,12 +3,13 @@ import json
 import os
 import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 import pytest
 
-from jarvis_return_worker.crm import CRMAdapter, CRMProvider, EVENT_OPERATIONS
+from jarvis_return_worker.crm import CRMAdapter, CRMProvider, EVENT_OPERATIONS, crm_operation_fingerprint
 from jarvis_return_worker.transport import Classification, DeliveryError
 
 
@@ -126,8 +127,7 @@ def test_orchestrator_delivers_crm_operation_and_persists_provider_receipt():
     repo=Repo(); provider=Provider(); dispatcher=TransportDispatcher()
     dispatcher.register('crm',provider)
     orchestrator=Orchestrator(repo,dispatcher)
-    op={'event_id':'event-1','idempotency_key':'jarvis-crm:event-1','booking_id':'booking-1',
-        'operation':'send','state':'PROCESSING','attempt_count':1,'payload':{'booking_id':'booking-1'}}
+    op=unit_approved_operation('event-1','booking-1')
     asyncio.run(orchestrator.process_crm_operation(op,'crm-worker'))
     assert len(provider.calls)==1
     assert provider.calls[0][1]=='jarvis-crm:event-1'
@@ -149,8 +149,7 @@ def test_unknown_crm_operation_is_not_retried():
             raise DeliveryError(Classification.UNKNOWN,'timeout')
     repo=Repo(); provider=Provider(); dispatcher=TransportDispatcher()
     dispatcher.register('crm',provider)
-    op={'event_id':'event-2','idempotency_key':'jarvis-crm:event-2','booking_id':'booking-2',
-        'operation':'send','state':'PROCESSING','attempt_count':1,'payload':{'booking_id':'booking-2'}}
+    op=unit_approved_operation('event-2','booking-2')
     asyncio.run(Orchestrator(repo,dispatcher).process_crm_operation(op,'crm-worker'))
     assert provider.calls==1 and repo.saved==[]
     assert len(repo.failures)==1 and repo.failures[0][3]==Classification.UNKNOWN
@@ -329,9 +328,10 @@ def test_unknown_crm_response_stays_reconciliation_required_and_uses_optimistic_
 def test_policy_engine_gates_crm_retry_reconciliation_and_dispatch():
     from jarvis_return_worker.policy import PolicyEngine
     policy=PolicyEngine()
-    operation={"event_id":"event-policy","idempotency_key":"jarvis-crm:event-policy",
-        "booking_id":"booking-policy","operation":"send","state":"PROCESSING"}
+    operation=unit_approved_operation("event-policy","booking-policy")
     assert policy.crm_operation(operation).action=="dispatch"
+    assert policy.crm_operation({**operation,"payload":{"booking_id":"tampered"}}).action=="reconcile"
+    assert policy.crm_operation({**operation,"approval_expires_at":datetime.now(timezone.utc)-timedelta(seconds=1)}).action=="reconcile"
     assert policy.crm_operation({**operation,"state":"DONE"}).action=="reconcile"
     assert policy.crm_delivery_failure(DeliveryError(Classification.RETRYABLE,"429"),operation).action=="retry"
     assert policy.crm_delivery_failure(DeliveryError(Classification.UNKNOWN,"timeout"),operation).action=="reconcile"
@@ -371,7 +371,16 @@ def test_crm_adapter_is_transactional_and_does_not_call_queue_or_provider():
     assert "queue" not in source.lower()
 
 
-def materialize_crm_operation(repository):
+def unit_approved_operation(event_id,booking_id):
+    payload={"booking_id":booking_id}
+    fingerprint=crm_operation_fingerprint(event_id,booking_id,"send",payload)
+    return {"event_id":event_id,"idempotency_key":"jarvis-crm:"+event_id,"booking_id":booking_id,
+        "operation":"send","state":"PROCESSING","attempt_count":1,"payload":payload,
+        "operation_fingerprint":fingerprint,"approved_fingerprint":fingerprint,
+        "approved_by":"synthetic-human","approval_expires_at":datetime.now(timezone.utc)+timedelta(minutes=5)}
+
+
+def materialize_crm_operation(repository,approved=True):
     from jarvis_return_worker.events import EventBus
     from jarvis_return_worker.outbox import OutboxReplay, append_event
     suffix=str(uuid.uuid4())
@@ -391,7 +400,65 @@ def materialize_crm_operation(repository):
     # Claim tests share the disposable CI database; leave only this intent claimable.
     with repository.connection() as conn:
         conn.execute("UPDATE jarvis_crm_operations SET state='FAILED',updated_at=clock_timestamp() WHERE state='PENDING' AND event_id<>%s",(event_id,))
+    if approved:
+        row=repository.get_crm_operation(event_id)
+        repository.approve_crm_operation(event_id,"synthetic-human",row["version"],
+            row["operation_fingerprint"],datetime.now(timezone.utc)+timedelta(minutes=10))
     return event_id
+
+
+def test_crm_operation_requires_fingerprint_bound_versioned_human_approval(repository):
+    from jarvis_return_worker.queue import Conflict
+    event_id=materialize_crm_operation(repository,approved=False)
+    row=repository.get_crm_operation(event_id)
+    assert row["state"]=="PENDING" and row["approved_by"] is None
+    assert repository.claim_crm_operation("crm-before-approval") is None
+    with pytest.raises(Conflict,match="fingerprint mismatch"):
+        repository.approve_crm_operation(event_id,"synthetic-human",row["version"],
+            "0"*64,datetime.now(timezone.utc)+timedelta(minutes=5))
+    with pytest.raises(Conflict,match="expiry"):
+        repository.approve_crm_operation(event_id,"synthetic-human",row["version"],
+            row["operation_fingerprint"],datetime.now(timezone.utc)-timedelta(seconds=1))
+    approved=repository.approve_crm_operation(event_id,"synthetic-human",row["version"],
+        row["operation_fingerprint"],datetime.now(timezone.utc)+timedelta(minutes=5))
+    assert approved["version"]==row["version"]+1
+    assert approved["approved_fingerprint"]==approved["operation_fingerprint"]
+    assert approved["approved_by"]=="synthetic-human"
+    with pytest.raises(Conflict,match="stale CRM operation version"):
+        repository.approve_crm_operation(event_id,"synthetic-human",row["version"],
+            row["operation_fingerprint"],datetime.now(timezone.utc)+timedelta(minutes=5))
+    claim=repository.claim_crm_operation("crm-after-approval")
+    assert claim and claim["event_id"]==event_id
+
+
+def test_expired_crm_approval_requires_a_new_versioned_approval(repository):
+    event_id=materialize_crm_operation(repository)
+    row=repository.get_crm_operation(event_id)
+    with repository.connection() as conn:
+        conn.execute("UPDATE jarvis_crm_operations SET approval_expires_at=clock_timestamp()-interval '1 second' WHERE event_id=%s",(event_id,))
+    assert repository.claim_crm_operation("crm-expired-approval") is None
+    refreshed=repository.approve_crm_operation(event_id,"synthetic-human",row["version"],
+        row["operation_fingerprint"],datetime.now(timezone.utc)+timedelta(minutes=5))
+    assert refreshed["version"]==row["version"]+1
+    assert repository.claim_crm_operation("crm-reapproved")["event_id"]==event_id
+
+
+def test_concurrent_crm_approvals_with_same_version_have_one_winner(repository):
+    from jarvis_return_worker.queue import Conflict
+    event_id=materialize_crm_operation(repository,approved=False)
+    row=repository.get_crm_operation(event_id)
+    def attempt(_):
+        try:
+            repository.approve_crm_operation(event_id,"synthetic-human",row["version"],
+                row["operation_fingerprint"],datetime.now(timezone.utc)+timedelta(minutes=5))
+            return "approved"
+        except Conflict:
+            return "conflict"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes=list(pool.map(attempt,(1,2)))
+    assert sorted(outcomes)==["approved","conflict"]
+    claim=repository.claim_crm_operation("crm-single-approved-claim")
+    assert claim and claim["event_id"]==event_id
 
 
 def test_two_crm_workers_cannot_claim_same_operation(repository):

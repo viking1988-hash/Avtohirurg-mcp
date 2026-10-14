@@ -1,5 +1,6 @@
 """Central policy for approval, retries, reconciliation and repeat sends."""
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from .approval import valid_approval
 from .transport import Classification, DeliveryError
 
@@ -40,12 +41,28 @@ class PolicyEngine:
                 )
 
     def crm_operation(self, operation):
+        from .crm import crm_operation_fingerprint
+        expiry=operation.get('approval_expires_at')
+        if isinstance(expiry,str):
+            try: expiry=datetime.fromisoformat(expiry.replace('Z','+00:00'))
+            except ValueError: expiry=None
+        try:
+            computed=crm_operation_fingerprint(operation.get('event_id'),operation.get('booking_id'),
+                                               operation.get('operation'),operation.get('payload') or {})
+        except Exception:
+            computed=None
+        approved=(bool(operation.get('approved_by'))
+                  and operation.get('operation_fingerprint')==computed
+                  and operation.get('approved_fingerprint')==computed
+                  and expiry is not None and expiry.tzinfo is not None
+                  and expiry>datetime.now(timezone.utc))
         allowed=(operation.get('operation') in ('send','update','cancel')
                  and operation.get('state')=='PROCESSING'
                  and bool(operation.get('booking_id'))
-                 and operation.get('idempotency_key')=='jarvis-crm:'+str(operation.get('event_id')))
+                 and operation.get('idempotency_key')=='jarvis-crm:'+str(operation.get('event_id'))
+                 and approved)
         return PolicyDecision('dispatch' if allowed else 'reconcile',
-                              'crm_operation_valid' if allowed else 'crm_operation_integrity')
+                              'crm_operation_approved' if allowed else 'crm_operation_integrity_or_approval')
 
     def crm_delivery_failure(self,error,operation):
         if isinstance(error,DeliveryError):

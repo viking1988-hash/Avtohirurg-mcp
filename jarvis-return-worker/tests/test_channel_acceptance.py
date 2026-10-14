@@ -48,9 +48,27 @@ class ContractSink:
             raise DeliveryError(Classification.UNKNOWN,"accepted_response_lost")
         return result
 
+class SmsContractSink(ContractSink):
+    """SMS-only synthetic sink: memory only, and never accepts a phone number."""
+    def __init__(self,outcome="success"):
+        super().__init__("sms",outcome)
+    def send(self,task,key):
+        assert task["destination_key"]=="sandbox:contract:sms"
+        assert task["payload"].get("recipient_key")=="sms-synthetic:fixture"
+        assert not any(char.isdigit() for char in task["payload"]["recipient_key"])
+        return super().send(task,key)
+
+
+def contract_sink(channel,outcome="success"):
+    return SmsContractSink(outcome) if channel=="sms" else ContractSink(channel,outcome)
+
+
 def prepare(repo,channel):
     task_id="matrix-"+uuid.uuid4().hex
-    row=repo.enqueue(task_id,"sandbox:contract:"+channel,{"synthetic":True,"channel":channel},task_id)
+    payload={"synthetic":True,"channel":channel}
+    if channel=="sms":
+        payload["recipient_key"]="sms-synthetic:fixture"
+    row=repo.enqueue(task_id,"sandbox:contract:"+channel,payload,task_id)
     assert route(channel,"draft",confidence=.99,synthetic=True).mode == "AUTO"
     assert row["state"]=="READY"
     assert repo.claim("before-approval") is None
@@ -85,7 +103,7 @@ def test_approval_duplicate_enqueue_and_two_workers_have_one_effect(repo,channel
         results=list(pool.map(repo.claim,("one","two")))
     claims=[t for t in results if t]
     assert len(claims)==1
-    task=claims[0]; sink=ContractSink(channel); service=core(repo,sink)
+    task=claims[0]; sink=contract_sink(channel); service=core(repo,sink)
     process(service,task,sink,task["lease_owner"])
     # An accidentally redelivered stale task must be fenced before a second send.
     process(service,dict(task),sink,task["lease_owner"])
@@ -96,7 +114,7 @@ def test_approval_duplicate_enqueue_and_two_workers_have_one_effect(repo,channel
 @pytest.mark.parametrize("channel",CHANNELS)
 def test_confirmed_rejection_retry_preserves_key_and_has_one_effect(repo,channel):
     row=prepare(repo,channel); approve(repo,row)
-    sink=ContractSink(channel,"rejected"); service=core(repo,sink)
+    sink=contract_sink(channel,"rejected"); service=core(repo,sink)
     process(service,repo.claim("one"),sink,"one")
     assert repo.get(row["task_id"])["state"]=="APPROVED"
     assert not sink.effects
@@ -109,7 +127,7 @@ def test_confirmed_rejection_retry_preserves_key_and_has_one_effect(repo,channel
 @pytest.mark.parametrize("channel",CHANNELS)
 def test_lost_response_is_retained_for_human_and_never_resent(repo,channel):
     row=prepare(repo,channel); approve(repo,row)
-    sink=ContractSink(channel,"lost_response"); service=core(repo,sink)
+    sink=contract_sink(channel,"lost_response"); service=core(repo,sink)
     process(service,repo.claim("one"),sink,"one")
     held=repo.get(row["task_id"])
     assert held["state"]=="RECONCILIATION_REQUIRED"
@@ -129,7 +147,7 @@ def test_crash_before_send_recovers_and_old_worker_is_fenced(repo,channel):
     expire(repo,row["task_id"]); repo.recover("recovery")
     with repo.connection() as c:
         c.execute("UPDATE jarvis_return_actions SET next_attempt_at=now() WHERE task_id=%s",(row["task_id"],))
-    sink=ContractSink(channel); service=core(repo,sink)
+    sink=contract_sink(channel); service=core(repo,sink)
     process(service,old,sink,"one")
     assert not sink.calls
     new=repo.claim("two"); assert new["attempt_count"]==2

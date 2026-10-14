@@ -340,6 +340,10 @@ class QueueRepository:
                 from .metrics import crm_reconciliation_required
                 for _ in expired: crm_reconciliation_required()
             row=c.execute("""SELECT * FROM jarvis_crm_operations WHERE state='PENDING'
+                AND operation_fingerprint IS NOT NULL
+                AND approved_fingerprint=operation_fingerprint
+                AND approved_by IS NOT NULL
+                AND approval_expires_at>clock_timestamp()
                 AND next_attempt_at<=clock_timestamp() ORDER BY created_at,event_id
                 FOR UPDATE SKIP LOCKED LIMIT 1""").fetchone()
             if not row:
@@ -405,9 +409,42 @@ class QueueRepository:
                 crm_reconciliation_required()
             return saved
 
-    def get_crm_operation(self,event_id):
+    def approve_crm_operation(self,event_id,actor,expected_version,fingerprint,expires_at):
+        """Approve one unchanged CRM intent for a bounded interval."""
+        from .crm import crm_operation_fingerprint
+        if not actor or not expires_at or expires_at.tzinfo is None:
+            raise Conflict('authenticated operator and timezone-aware expiry required')
         with self.connection() as c:
-            return c.execute("SELECT * FROM jarvis_crm_operations WHERE event_id=%s",(event_id,)).fetchone()
+            row=c.execute("SELECT * FROM jarvis_crm_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
+            now=c.execute("SELECT clock_timestamp() AS now").fetchone()['now']
+            if not row or row['state']!='PENDING':
+                raise Conflict('CRM operation is not pending approval')
+            if row['version']!=expected_version:
+                raise Conflict('stale CRM operation version')
+            computed=crm_operation_fingerprint(row['event_id'],row['booking_id'],row['operation'],row['payload'])
+            if (not fingerprint or fingerprint!=computed
+                    or (row['operation_fingerprint'] and row['operation_fingerprint']!=computed)):
+                raise Conflict('CRM operation fingerprint mismatch')
+            if not now < expires_at <= now + __import__('datetime').timedelta(hours=24):
+                raise Conflict('CRM approval expiry must be within 24 hours')
+            saved=c.execute("""UPDATE jarvis_crm_operations SET operation_fingerprint=%s,
+                approved_fingerprint=%s,approved_by=%s,approved_at=clock_timestamp(),
+                approval_expires_at=%s,version=version+1,updated_at=clock_timestamp()
+                WHERE event_id=%s RETURNING *""",
+                (computed,computed,actor,expires_at,event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_crm_operation_events(event_id,action,actor,reason)
+                VALUES (%s,'approved',%s,%s)""",
+                (event_id,actor,'fingerprint='+computed+'; expires_at='+expires_at.isoformat()))
+            return saved
+
+    def get_crm_operation(self,event_id):
+        from .crm import crm_operation_fingerprint
+        with self.connection() as c:
+            row=c.execute("SELECT * FROM jarvis_crm_operations WHERE event_id=%s",(event_id,)).fetchone()
+        if row and not row.get('operation_fingerprint'):
+            row['operation_fingerprint']=crm_operation_fingerprint(
+                row['event_id'],row['booking_id'],row['operation'],row['payload'])
+        return row
 
     def resolve_crm_reconciliation(self,event_id,actor,result,reason,expected_version):
         if not actor:
