@@ -288,3 +288,46 @@ CREATE TABLE IF NOT EXISTS jarvis_email_operation_events (
  PRIMARY KEY(event_id,event_sequence)
 );
 
+
+-- Webhook operation rows are created only by the outbox subscriber. An expired
+-- delivery lease is ambiguous and goes to reconciliation, never back to PENDING.
+CREATE TABLE IF NOT EXISTS jarvis_webhook_operations (
+ event_id text PRIMARY KEY REFERENCES jarvis_outbox_events(event_id),
+ idempotency_key text NOT NULL UNIQUE,
+ method text NOT NULL CHECK(method IN ('GET','POST','PUT','PATCH','DELETE')),
+ path text NOT NULL,
+ request_body jsonb,
+ correlation_id text,
+ state text NOT NULL DEFAULT 'PENDING'
+   CHECK(state IN ('PENDING','PROCESSING','DONE','FAILED','CANCELLED','RECONCILIATION_REQUIRED')),
+ version bigint NOT NULL DEFAULT 0 CHECK(version>=0),
+ attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ lease_owner text,
+ lease_until timestamptz,
+ request_id text,
+ response_id text,
+ provider_status text,
+ http_status integer,
+ receipt jsonb,
+ duration_ms double precision,
+ retry_count integer NOT NULL DEFAULT 0 CHECK(retry_count>=0),
+ reconciliation_reason text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL),
+ CHECK(state <> 'DONE' OR (request_id IS NOT NULL AND http_status BETWEEN 200 AND 299 AND receipt IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS jarvis_webhook_pending_idx
+ ON jarvis_webhook_operations(state,next_attempt_at,created_at,event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS jarvis_webhook_response_unique
+ ON jarvis_webhook_operations(response_id) WHERE response_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS jarvis_webhook_operation_events (
+ event_id text NOT NULL REFERENCES jarvis_webhook_operations(event_id),
+ event_sequence bigint GENERATED ALWAYS AS IDENTITY,
+ action text NOT NULL,
+ actor text NOT NULL,
+ reason text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(event_id,event_sequence)
+);

@@ -15,11 +15,12 @@ class Classification(str, Enum):
 
 
 class DeliveryError(RuntimeError):
-    def __init__(self, classification, code, retry_after=None):
+    def __init__(self, classification, code, retry_after=None, details=None):
         super().__init__(code)
         self.classification = Classification(classification)
         self.code = code
         self.retry_after = retry_after
+        self.details = dict(details or {})
 
 
 def _telegram_result(kind, elapsed):

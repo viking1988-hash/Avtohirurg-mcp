@@ -576,3 +576,124 @@ class QueueRepository:
         with self.connection() as c:
             return c.execute("SELECT * FROM jarvis_email_operations WHERE event_id=%s",(event_id,)).fetchone()
 
+
+
+    def claim_webhook_operation(self,owner):
+        if not owner: raise ValueError('Webhook lease owner required')
+        with self.connection() as c:
+            expired=c.execute("""UPDATE jarvis_webhook_operations SET state='RECONCILIATION_REQUIRED',
+              reconciliation_reason='lease_expired_after_http_attempt',lease_owner=NULL,lease_until=NULL,
+              version=version+1,updated_at=clock_timestamp() WHERE state='PROCESSING'
+              AND lease_until<clock_timestamp() RETURNING event_id""").fetchall()
+            for x in expired:
+                c.execute("""INSERT INTO jarvis_webhook_operation_events(event_id,action,actor,reason)
+                  VALUES (%s,'reconciliation_required',%s,'lease_expired_after_http_attempt')""",(x['event_id'],owner))
+            if expired:
+                from .metrics import observe_webhook
+                for _ in expired: observe_webhook('unknown',0)
+            row=c.execute("""SELECT * FROM jarvis_webhook_operations WHERE state='PENDING'
+              AND next_attempt_at<=clock_timestamp() ORDER BY created_at,event_id
+              FOR UPDATE SKIP LOCKED LIMIT 1""").fetchone()
+            if not row:return None
+            saved=c.execute("""UPDATE jarvis_webhook_operations SET state='PROCESSING',lease_owner=%s,
+              lease_until=clock_timestamp()+(%s*interval '1 second'),attempt_count=attempt_count+1,
+              version=version+1,updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",
+              (owner,self.config.lease_seconds,row['event_id'])).fetchone()
+            c.execute("""INSERT INTO jarvis_webhook_operation_events(event_id,action,actor)
+              VALUES (%s,'claimed',%s)""",(row['event_id'],owner))
+            return saved
+
+    def _webhook_owned(self,c,event_id,owner,attempt,version):
+        row=c.execute("SELECT * FROM jarvis_webhook_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
+        now=c.execute("SELECT clock_timestamp() AS now").fetchone()['now']
+        if (not row or row['state']!='PROCESSING' or row['lease_owner']!=owner
+          or row['attempt_count']!=attempt or row['version']!=version or row['lease_until']<=now):
+            raise Conflict('stale Webhook lease or fencing token')
+        return row
+
+    def finish_webhook_operation(self,event_id,owner,attempt,version,result):
+        from psycopg.types.json import Jsonb
+        request_id=result.get('request_id'); status=int(result.get('http_status') or 0)
+        if not request_id or not 200<=status<300 or result.get('receipt') is None:
+            raise Conflict('Webhook receipt and successful HTTP status required')
+        with self.connection() as c:
+            row=self._webhook_owned(c,event_id,owner,attempt,version)
+            response_id=result.get('response_id')
+            duplicate=(c.execute("""SELECT event_id FROM jarvis_webhook_operations
+                WHERE response_id=%s AND event_id<>%s""",(response_id,event_id)).fetchone() if response_id else None)
+            if duplicate:
+                from .metrics import prevent_webhook_duplicate, observe_webhook
+                prevent_webhook_duplicate()
+                observe_webhook('unknown',0)
+                duplicate_receipt=dict(result['receipt']) if isinstance(result.get('receipt'),dict) else {'value':result.get('receipt')}
+                duplicate_receipt['duplicate_response_id']=response_id
+                saved=c.execute("""UPDATE jarvis_webhook_operations SET state='RECONCILIATION_REQUIRED',
+                  reconciliation_reason='duplicate_provider_response_id',request_id=%s,response_id=NULL,
+                  http_status=%s,provider_status=%s,receipt=%s,duration_ms=%s,retry_count=%s,
+                  lease_owner=NULL,lease_until=NULL,version=version+1,updated_at=clock_timestamp()
+                  WHERE event_id=%s RETURNING *""",(request_id,status,
+                  str(result.get('provider_status','unknown'))[:80],Jsonb(duplicate_receipt),
+                  float(result.get('duration_ms') or 0),int(result.get('retry_count') or 0),event_id)).fetchone()
+                c.execute("""INSERT INTO jarvis_webhook_operation_events(event_id,action,actor,reason)
+                  VALUES (%s,'reconciliation_required',%s,'duplicate_provider_response_id')""",(event_id,owner))
+                return saved
+            saved=c.execute("""UPDATE jarvis_webhook_operations SET state='DONE',request_id=%s,response_id=%s,
+              http_status=%s,provider_status=%s,receipt=%s,duration_ms=%s,retry_count=%s,
+              reconciliation_reason=NULL,lease_owner=NULL,lease_until=NULL,version=version+1,
+              updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",
+              (request_id,response_id,status,str(result.get('provider_status','success'))[:80],
+               Jsonb(result['receipt']),float(result.get('duration_ms') or 0),
+               int(result.get('retry_count') or 0),event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_webhook_operation_events(event_id,action,actor)
+              VALUES (%s,'completed',%s)""",(event_id,owner))
+            return saved
+
+    def fail_webhook_operation(self,event_id,owner,attempt,version,classification,reason,retry_after=None,details=None):
+        from .transport import Classification
+        kind=Classification(classification); details=details or {}
+        delay=max(1,min(int(retry_after or 1),3600))
+        state='PENDING' if kind==Classification.RETRYABLE else ('FAILED' if kind==Classification.PERMANENT else 'RECONCILIATION_REQUIRED')
+        why=None if state!='RECONCILIATION_REQUIRED' else str(reason or 'webhook_outcome_unknown')[:200]
+        with self.connection() as c:
+            row=self._webhook_owned(c,event_id,owner,attempt,version)
+            if state=='PENDING' and row['attempt_count']>=self.config.max_attempts: state='FAILED'
+            saved=c.execute("""UPDATE jarvis_webhook_operations SET state=%s,reconciliation_reason=%s,
+              request_id=coalesce(%s,request_id),http_status=coalesce(%s,http_status),
+              retry_count=coalesce(%s,retry_count),duration_ms=coalesce(%s,duration_ms),
+              lease_owner=NULL,lease_until=NULL,next_attempt_at=clock_timestamp()+(%s*interval '1 second'),
+              version=version+1,updated_at=clock_timestamp() WHERE event_id=%s RETURNING *""",
+              (state,why,details.get('request_id'),details.get('http_status'),details.get('retry_count'),
+               details.get('duration_ms'),delay,event_id)).fetchone()
+            action='reconciliation_required' if state=='RECONCILIATION_REQUIRED' else state.lower()
+            c.execute("""INSERT INTO jarvis_webhook_operation_events(event_id,action,actor,reason)
+              VALUES (%s,%s,%s,%s)""",(event_id,action,owner,str(reason)[:200]))
+            if state=='RECONCILIATION_REQUIRED' and not details.get('request_id'):
+                from .metrics import observe_webhook
+                observe_webhook('unknown',0)
+            return saved
+
+    def get_webhook_operation(self,event_id):
+        with self.connection() as c:
+            return c.execute("SELECT * FROM jarvis_webhook_operations WHERE event_id=%s",(event_id,)).fetchone()
+
+    def resolve_webhook_reconciliation(self,event_id,actor,expected_version,outcome,evidence):
+        if not actor or outcome not in ('delivered','not_delivered'):
+            raise Conflict('authenticated operator and valid outcome required')
+        evidence=evidence or {}
+        if outcome=='delivered' and not (evidence.get('receipt') or evidence.get('response_id')):
+            raise Conflict('delivery evidence required')
+        from psycopg.types.json import Jsonb
+        with self.connection() as c:
+            row=c.execute("SELECT * FROM jarvis_webhook_operations WHERE event_id=%s FOR UPDATE",(event_id,)).fetchone()
+            if not row or row['state']!='RECONCILIATION_REQUIRED': raise Conflict('Webhook is not awaiting reconciliation')
+            if row['version']!=expected_version: raise Conflict('stale Webhook operation version')
+            state='DONE' if outcome=='delivered' else 'FAILED'
+            receipt=evidence.get('receipt')
+            saved=c.execute("""UPDATE jarvis_webhook_operations SET state=%s,
+              response_id=coalesce(%s,response_id),receipt=coalesce(%s,receipt),
+              reconciliation_reason=NULL,version=version+1,updated_at=clock_timestamp()
+              WHERE event_id=%s RETURNING *""",
+              (state,evidence.get('response_id'),Jsonb(receipt) if receipt is not None else None,event_id)).fetchone()
+            c.execute("""INSERT INTO jarvis_webhook_operation_events(event_id,action,actor,reason)
+              VALUES (%s,%s,%s,%s)""",(event_id,'reconciled_'+outcome,actor,str(evidence.get('reason',''))[:200]))
+            return saved

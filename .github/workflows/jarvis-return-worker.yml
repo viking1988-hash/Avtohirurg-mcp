@@ -1,7 +1,7 @@
 name: Jarvis Return Worker
 on:
   push:
-    branches: ['feat/jarvis-return-worker-*', 'feat/jarvis-telegram-transport-*']
+    branches: ['feat/jarvis-return-worker-*', 'feat/jarvis-telegram-transport-*', 'feat/jarvis-webhook-provider-*']
   pull_request:
     paths: ['jarvis-return-worker/**', '.github/workflows/jarvis-return-worker.yml']
 jobs:
@@ -95,6 +95,29 @@ jobs:
               assert conn.execute("""SELECT count(*) AS n FROM jarvis_processed_events
                   WHERE event_id=%s AND subscriber_name='jarvis.email-adapter'""",
                   (email_event_id,)).fetchone()['n'] == 1
+          from jarvis_return_worker.outbox import append_event
+          from jarvis_return_worker.webhook_adapter import WebhookAdapter
+          webhook_cause='webhook-pg-restart-causation'
+          with repo.connection() as conn:
+              webhook_event_id=append_event(conn,aggregate_id=webhook_cause,aggregate_type='webhook',
+                  event_type='WebhookRequested',event_version=1,
+                  payload={'method':'POST','path':'/synthetic','body':{'synthetic':True}},
+                  correlation_id='webhook-pg-restart-corr',causation_id=webhook_cause)
+          webhook_registry=EventBus()
+          WebhookAdapter().register(webhook_registry)
+          webhook_replay=OutboxReplay(repo,webhook_registry,owner='postgres-restart-webhook-ci')
+          webhook_replay.register_subscribers()
+          for _ in range(100):
+              if repo.get_webhook_operation(webhook_event_id): break
+              assert webhook_replay.replay_one()
+          webhook_op=repo.claim_webhook_operation('postgres-restart-webhook-ci')
+          webhook_receipt={'request_id':'webhook-request-ci','response_id':'webhook-response-ci',
+              'http_status':202,'provider_status':'accepted','receipt':{'receipt_id':'webhook-receipt-ci'},
+              'duration_ms':2.0,'retry_count':0}
+          webhook_done=repo.finish_webhook_operation(webhook_event_id,'postgres-restart-webhook-ci',
+              webhook_op['attempt_count'],webhook_op['version'],webhook_receipt)
+          assert webhook_done['state']=='DONE'
+          pathlib.Path('/tmp/jarvis-webhook-restart-event-id').write_text(webhook_event_id)
           PY
           container_id="$(docker ps -q --filter ancestor=postgres:18 | head -n1)"
           test -n "$container_id"
@@ -133,6 +156,20 @@ jobs:
                   (email_event_id,)).fetchone()['n']
           assert email_row['state'] == 'PENDING' and email_row['receipt'] is None
           assert email_processed == 1
+          webhook_event_id=pathlib.Path('/tmp/jarvis-webhook-restart-event-id').read_text()
+          from jarvis_return_worker.events import EventBus
+          webhook_row=repo.get_webhook_operation(webhook_event_id)
+          assert webhook_row['state']=='DONE'
+          assert webhook_row['request_id']=='webhook-request-ci'
+          assert webhook_row['response_id']=='webhook-response-ci'
+          assert webhook_row['receipt']=={'receipt_id':'webhook-receipt-ci'}
+          webhook_registry=EventBus()
+          from jarvis_return_worker.webhook_adapter import WebhookAdapter
+          from jarvis_return_worker.outbox import OutboxReplay
+          WebhookAdapter().register(webhook_registry)
+          webhook_replay=OutboxReplay(repo,webhook_registry,owner='postgres-restart-webhook-after')
+          webhook_replay.register_subscribers()
+          assert webhook_replay.replay_one() is False
           from jarvis_return_worker.email_adapter import EmailAdapter
           from jarvis_return_worker.events import EventBus
           from jarvis_return_worker.outbox import OutboxReplay
