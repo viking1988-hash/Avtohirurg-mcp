@@ -134,3 +134,29 @@ def test_http_500_delivery_reconciliation_persists_evidence(repo):
  assert saved["state"]=="DONE" and saved["http_status"]==500
  assert saved["reconciled_at"] and saved["reconciliation_evidence"]["receipt"]=={"receipt_id":"evidence-receipt"}
  assert repo.claim_webhook_operation("worker-after-reconciliation") is None
+
+
+def test_orchestrator_checks_provider_status_only_for_unknown_operation(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-status-check")
+ repo.fail_webhook_operation(eid,"worker-status-check",claim["attempt_count"],claim["version"],
+   Classification.UNKNOWN,"ambiguous write",details={"request_id":claim["request_id"]})
+ class Provider:
+  provider="webhook"
+  def __init__(self):self.calls=[]
+  def send(self,task,key):
+   raise AssertionError("status-only test must not dispatch a delivery")
+  def reconcile(self,task):
+   self.calls.append(task)
+   return {"request_id":task["request_id"],"response_id":"status-response",
+     "http_status":200,"provider_status":"accepted","receipt":{"receipt_id":"status-receipt"}}
+ provider=Provider()
+ from jarvis_return_worker.dispatcher import TransportDispatcher
+ from jarvis_return_worker.orchestrator import Orchestrator
+ dispatcher=TransportDispatcher();dispatcher.register("webhook",provider)
+ service=Orchestrator(repo,dispatcher)
+ result=service.check_webhook_status(eid)
+ assert result["provider_status"]=="accepted" and result["receipt"]["receipt_id"]=="status-receipt"
+ assert provider.calls==[{"method":"POST","path":"/events","correlation_id":repo.get_webhook_operation(eid)["correlation_id"],
+   "request_id":claim["request_id"],"idempotency_key":"jarvis-webhook:"+eid}]
+ assert repo.get_webhook_operation(eid)["state"]=="RECONCILIATION_REQUIRED"
