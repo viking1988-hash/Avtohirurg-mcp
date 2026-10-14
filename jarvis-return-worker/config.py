@@ -18,6 +18,9 @@ class Config:
     shutdown_seconds: int = 20
     telegram_bot_token: str = field(default='', repr=False)
     telegram_test_chat_id: str = field(default='', repr=False)
+    http_sandbox_url: str = field(default='', repr=False)
+    http_sandbox_token: str = field(default='', repr=False)
+    http_timeout_seconds: int = 8
 
     @classmethod
     def from_env(cls):
@@ -26,7 +29,7 @@ class Config:
             or os.environ.get('RAILWAY_ENVIRONMENT_ID') != os.environ['JARVIS_SANDBOX_ENVIRONMENT_ID']):
             raise ValueError('worker requires the exact Railway Sandbox project and environment')
         transport = os.environ.get('JARVIS_TRANSPORT', 'fake')
-        if transport not in ('fake', 'telegram'):
+        if transport not in ('fake', 'telegram', 'http'):
             raise ValueError('unsupported transport')
         c = cls(os.environ.get('JARVIS_SANDBOX_DATABASE_URL', ''),
                 os.environ.get('JARVIS_READ_TOKEN', ''), os.environ.get('JARVIS_APPROVAL_TOKEN', ''),
@@ -38,7 +41,10 @@ class Config:
                 int(os.environ.get('JARVIS_MAX_ATTEMPTS', '5')),
                 int(os.environ.get('JARVIS_SHUTDOWN_SECONDS', '20')),
                 os.environ.get('JARVIS_TELEGRAM_BOT_TOKEN', ''),
-                os.environ.get('JARVIS_TELEGRAM_TEST_CHAT_ID', ''))
+                os.environ.get('JARVIS_TELEGRAM_TEST_CHAT_ID', ''),
+                os.environ.get('JARVIS_HTTP_SANDBOX_URL', ''),
+                os.environ.get('JARVIS_HTTP_SANDBOX_TOKEN', ''),
+                int(os.environ.get('JARVIS_HTTP_TIMEOUT_SECONDS', '8')))
         c.validate()
         return c
 
@@ -52,6 +58,10 @@ class Config:
             raise ValueError('distinct strong read and human approval credentials required')
         if os.environ.get('JARVIS_TRANSPORT', 'fake') == 'telegram' and (not self.telegram_bot_token or not self.telegram_test_chat_id):
             raise ValueError('Telegram Sandbox transport requires a bot token and explicit test chat allowlist')
+        if os.environ.get('JARVIS_TRANSPORT', 'fake') == 'http' and (not self.http_sandbox_url or not self.http_sandbox_token):
+            raise ValueError('HTTP Sandbox transport requires an explicit Sandbox endpoint and token')
+        if not 1 <= self.http_timeout_seconds <= 30:
+            raise ValueError('invalid HTTP provider timeout')
         if not (5 <= self.lease_seconds <= 300 and 1 <= self.heartbeat_seconds < self.lease_seconds / 2
                 and 1 <= self.recovery_seconds <= 300 and 0.1 <= self.poll_seconds <= 60
                 and 1 <= self.max_attempts <= 20 and 5 <= self.shutdown_seconds <= 60):
