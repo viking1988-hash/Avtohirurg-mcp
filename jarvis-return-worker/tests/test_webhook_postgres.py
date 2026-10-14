@@ -116,3 +116,21 @@ def test_orchestrator_is_only_provider_entrypoint(repo):
  saved=service.read_webhook_operation(eid)
  assert saved["state"]=="DONE" and provider.calls==1
  assert not hasattr(provider,"repository")
+
+
+def test_http_500_delivery_reconciliation_persists_evidence(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-http-500")
+ assert claim["request_id"]
+ repo.fail_webhook_operation(eid,"worker-http-500",claim["attempt_count"],claim["version"],
+   Classification.UNKNOWN,"server outcome ambiguous",
+   details={"request_id":claim["request_id"],"http_status":500,"retry_count":0})
+ pending=repo.get_webhook_operation(eid)
+ assert pending["state"]=="RECONCILIATION_REQUIRED" and pending["http_status"]==500
+ saved=repo.resolve_webhook_reconciliation(eid,"operator",pending["version"],"delivered",
+   {"request_id":pending["request_id"],"response_id":"evidence-response",
+    "provider_status":"accepted","receipt":{"receipt_id":"evidence-receipt"},
+    "reason":"synthetic provider status confirms delivery","source":"sandbox_sink_status"})
+ assert saved["state"]=="DONE" and saved["http_status"]==500
+ assert saved["reconciled_at"] and saved["reconciliation_evidence"]["receipt"]=={"receipt_id":"evidence-receipt"}
+ assert repo.claim_webhook_operation("worker-after-reconciliation") is None
