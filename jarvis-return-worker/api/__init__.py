@@ -2,7 +2,7 @@ import asyncio
 import secrets
 from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from ..metrics import render_metrics
 from ..queue import Conflict
 from ..reconciliation import read_task, log_rejected
@@ -26,6 +26,39 @@ class Reconciliation(TaskID):
     outcome: str=Field(pattern=r'^(delivered|not_delivered)$')
     receipt_id: str|None=Field(default=None,max_length=512)
     message_id: str|None=Field(default=None,max_length=512)
+
+class CRMReconciliation(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+
+class EmailCancel(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+
+class EmailRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    to: str=Field(min_length=9,max_length=320)
+    subject: str=Field(min_length=1,max_length=998)
+    body: str=Field(min_length=1,max_length=100000)
+    correlation_id: str=Field(min_length=1,max_length=128)
+    causation_id: str=Field(min_length=1,max_length=128)
+
+    @field_validator('to')
+    @classmethod
+    def sandbox_recipient_only(cls,value):
+        from ..email_provider import EmailProvider
+        if not EmailProvider._valid_recipient(value):
+            raise ValueError('only Sandbox test-domain recipients are permitted')
+        return value
+
+
+class EmailReconciliation(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+    outcome: str=Field(pattern=r'^(delivered|not_delivered)$')
+    provider_message_id: str|None=Field(default=None,max_length=256)
+    receipt: str|None=Field(default=None,max_length=512)
+    reason: str=Field(min_length=3,max_length=500)
 
 def auth(role):
     def check(request:Request,authorization:str=Header(default='')):
@@ -86,5 +119,51 @@ async def reconcile(body:Reconciliation,request:Request,actor:str=Depends(human)
 async def metrics(request:Request):
     return Response(await call(render_metrics,request.app.state.repository),media_type='text/plain; version=0.0.4')
 
+@router.get('/crm/operations/{event_id}')
+async def crm_operation(event_id:str,request:Request,actor:str=Depends(read)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid CRM event ID')
+    result=await call(request.app.state.orchestrator.read_crm_operation,event_id)
+    if not result:
+        raise HTTPException(404,'CRM operation not found')
+    return result
+
+@router.post('/crm/operations/{event_id}/reconcile')
+async def reconcile_crm_operation(event_id:str,body:CRMReconciliation,request:Request,actor:str=Depends(human)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid CRM event ID')
+    return await call(request.app.state.orchestrator.reconcile_crm_operation,
+                      event_id,actor,body.expected_version)
+
+@router.post('/email/requests')
+async def request_email(body:EmailRequest,request:Request,actor:str=Depends(human)):
+    return await call(request.app.state.orchestrator.request_email,
+                      body.to,body.subject,body.body,body.correlation_id,body.causation_id)
+
+@router.get('/email/operations/{event_id}')
+async def email_operation(event_id:str,request:Request,actor:str=Depends(read)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid email event ID')
+    result=await call(request.app.state.orchestrator.read_email_operation,event_id)
+    if not result:
+        raise HTTPException(404,'email operation not found')
+    return result
+
+@router.post('/email/operations/{event_id}/cancel')
+async def cancel_email_operation(event_id:str,body:EmailCancel,request:Request,actor:str=Depends(human)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid email event ID')
+    return await call(request.app.state.orchestrator.cancel_email_operation,
+                      event_id,actor,body.expected_version)
+
+@router.post('/email/operations/{event_id}/reconcile')
+async def reconcile_email_operation(event_id:str,body:EmailReconciliation,request:Request,actor:str=Depends(human)):
+    if not __import__('re').fullmatch(r'[0-9a-fA-F-]{36}',event_id):
+        raise HTTPException(422,'invalid email event ID')
+    evidence={'provider_message_id':body.provider_message_id,'receipt':body.receipt,'reason':body.reason}
+    return await call(request.app.state.orchestrator.reconcile_email_operation,
+        event_id,actor,body.expected_version,body.outcome,evidence)
+
 from .reconciliation import router as reconciliation_router
 router.include_router(reconciliation_router,prefix='/queue')
+

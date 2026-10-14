@@ -201,3 +201,90 @@ CREATE TABLE IF NOT EXISTS jarvis_event_projection (
  projected_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(event_id,subscriber_name)
 );
+
+-- CRM operations are materialized only by the outbox subscriber. The unique
+-- event/idempotency keys fence repeated replay; provider delivery is a separate
+-- Orchestrator-controlled step and is never performed inside replay's DB txn.
+CREATE TABLE IF NOT EXISTS jarvis_crm_operations (
+ event_id text PRIMARY KEY REFERENCES jarvis_outbox_events(event_id),
+ idempotency_key text NOT NULL UNIQUE,
+ booking_id text NOT NULL,
+ operation text NOT NULL CHECK(operation IN ('send','update','cancel')),
+ crm_status text NOT NULL,
+ external_booking_id text,
+ provider_receipt text,
+ reconciliation_reason text,
+ payload jsonb NOT NULL,
+ correlation_id text,
+ state text NOT NULL DEFAULT 'PENDING'
+   CHECK(state IN ('PENDING','PROCESSING','DONE','FAILED','RECONCILIATION_REQUIRED')),
+ version bigint NOT NULL DEFAULT 0 CHECK(version>=0),
+ attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ lease_owner text,
+ lease_until timestamptz,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL)
+);
+ALTER TABLE jarvis_crm_operations ADD COLUMN IF NOT EXISTS version bigint NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS jarvis_crm_pending_idx
+ ON jarvis_crm_operations(state,next_attempt_at,created_at,event_id);
+
+CREATE TABLE IF NOT EXISTS jarvis_crm_operation_events (
+ event_id text NOT NULL REFERENCES jarvis_crm_operations(event_id),
+ event_sequence bigint GENERATED ALWAYS AS IDENTITY,
+ action text NOT NULL,
+ actor text NOT NULL,
+ reason text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(event_id,event_sequence)
+);
+
+-- Email intents are created by the outbox adapter. SMTP acceptance is QUEUED,
+-- not proof of final delivery; ambiguous results are held for reconciliation.
+CREATE TABLE IF NOT EXISTS jarvis_email_operations (
+ event_id text PRIMARY KEY REFERENCES jarvis_outbox_events(event_id),
+ idempotency_key text NOT NULL UNIQUE,
+ recipient text NOT NULL,
+ payload jsonb NOT NULL,
+ correlation_id text,
+ state text NOT NULL DEFAULT 'PENDING'
+   CHECK(state IN ('PENDING','PROCESSING','QUEUED','SENT','FAILED','CANCELLED','RECONCILIATION_REQUIRED')),
+ version bigint NOT NULL DEFAULT 0 CHECK(version>=0),
+ attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ lease_owner text,
+ lease_until timestamptz,
+ provider_message_id text,
+ smtp_message_id text,
+ receipt text,
+ provider_status text,
+ delivery_time timestamptz,
+ reconciliation_reason text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL),
+ CHECK(state <> 'QUEUED' OR (smtp_message_id IS NOT NULL AND receipt IS NOT NULL)),
+ CHECK(state <> 'SENT' OR (provider_message_id IS NOT NULL OR receipt IS NOT NULL))
+);
+ALTER TABLE jarvis_email_operations ADD COLUMN IF NOT EXISTS version bigint NOT NULL DEFAULT 0;
+ALTER TABLE jarvis_email_operations ADD COLUMN IF NOT EXISTS provider_message_id text;
+ALTER TABLE jarvis_email_operations ADD COLUMN IF NOT EXISTS smtp_message_id text;
+ALTER TABLE jarvis_email_operations ADD COLUMN IF NOT EXISTS receipt text;
+ALTER TABLE jarvis_email_operations ADD COLUMN IF NOT EXISTS provider_status text;
+ALTER TABLE jarvis_email_operations ADD COLUMN IF NOT EXISTS delivery_time timestamptz;
+ALTER TABLE jarvis_email_operations ADD COLUMN IF NOT EXISTS reconciliation_reason text;
+CREATE INDEX IF NOT EXISTS jarvis_email_pending_idx
+ ON jarvis_email_operations(state,next_attempt_at,created_at,event_id);
+
+CREATE TABLE IF NOT EXISTS jarvis_email_operation_events (
+ event_id text NOT NULL REFERENCES jarvis_email_operations(event_id),
+ event_sequence bigint GENERATED ALWAYS AS IDENTITY,
+ action text NOT NULL,
+ actor text NOT NULL,
+ reason text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(event_id,event_sequence)
+);
+

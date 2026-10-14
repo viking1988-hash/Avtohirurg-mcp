@@ -44,12 +44,19 @@ TransportDispatcher.register(name, provider, enabled=...) adds a provider withou
 The provider contract is:
 
 - send(task, idempotency_key) -> receipt
+- update(task, idempotency_key) -> receipt
 - get_receipt(provider_message_id)
-- check_status(provider_message_id)
+- checkStatus(task)
 - reconcile(task)
-- cancel(provider_message_id)
+- cancel(task, idempotency_key)
 
 ProviderAdapter allows legacy protocol clients to be wrapped while the interfaces migrate. It provides conservative defaults for unavailable status, reconcile, and cancel operations. It does not claim a delivery outcome based on absence of support.
+
+`CRMProvider` implements the same registry contract. `CRMAdapter` is an outbox
+subscriber: it maps booking lifecycle events and inserts unique CRM operation
+intents using the replay transaction. It never calls a provider and never talks to
+the Queue. The external CRM operation executor is intentionally not activated in
+this change; see [CRM transport](crm-transport.md) for the Sandbox-only boundary.
 
 ### Add a transport
 
@@ -91,3 +98,4 @@ Provider-neutral reconciliation counters from PR #35 remain available alongside 
 
 
 The durable outbox metrics are documented in the [API Reference](api-reference.md).
+

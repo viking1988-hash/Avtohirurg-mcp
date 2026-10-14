@@ -61,3 +61,64 @@ class Worker:
                 await asyncio.wait_for(self.stop.wait(),self.repository.config.poll_seconds)
             except TimeoutError:
                 pass
+
+
+class CRMOperationWorker:
+    """Claims replay-created CRM intents; provider calls remain Orchestrator-only."""
+    def __init__(self, orchestrator, stop):
+        self.orchestrator=orchestrator
+        self.repository=orchestrator.repository
+        self.stop=stop
+        self.owner=self.repository.config.worker_id+":crm"
+
+    async def run(self):
+        while not self.stop.is_set():
+            try:
+                operation=await asyncio.to_thread(self.orchestrator.claim_crm_operation,self.owner)
+                if operation:
+                    started=time.monotonic()
+                    await self.orchestrator.process_crm_operation(operation,self.owner)
+                    saved=await asyncio.to_thread(self.orchestrator.read_crm_operation,operation['event_id']) or {}
+                    record={'task_id':operation['event_id'],'correlation_id':operation.get('correlation_id'),
+                            'attempt':operation.get('attempt_count'),'lease_owner':self.owner,
+                            'provider':'crm','provider_message_id':saved.get('external_booking_id'),
+                            'state':saved.get('state'),'duration_ms':round((time.monotonic()-started)*1000,2)}
+                    logging.getLogger(__name__).info(json.dumps(record,separators=(',',':'),sort_keys=True))
+                    continue
+            except Exception:
+                logging.getLogger(__name__).warning('CRM operation worker unavailable')
+            try:
+                await asyncio.wait_for(self.stop.wait(),self.repository.config.poll_seconds)
+            except TimeoutError:
+                pass
+
+
+class EmailOperationWorker:
+    """Claims replay-created email intents; SMTP calls stay inside Orchestrator."""
+    def __init__(self, orchestrator, stop):
+        self.orchestrator=orchestrator
+        self.repository=orchestrator.repository
+        self.stop=stop
+        self.owner=self.repository.config.worker_id+":email"
+
+    async def run(self):
+        while not self.stop.is_set():
+            try:
+                operation=await asyncio.to_thread(self.orchestrator.claim_email_operation,self.owner)
+                if operation:
+                    started=time.monotonic()
+                    await self.orchestrator.process_email_operation(operation,self.owner)
+                    saved=await asyncio.to_thread(self.orchestrator.read_email_operation,operation['event_id']) or {}
+                    record={'task_id':operation['event_id'],'correlation_id':operation.get('correlation_id'),
+                            'attempt':operation.get('attempt_count'),'lease_owner':self.owner,
+                            'provider':'email','provider_message_id':saved.get('provider_message_id'),
+                            'state':saved.get('state'),'duration_ms':round((time.monotonic()-started)*1000,2)}
+                    logging.getLogger(__name__).info(json.dumps(record,separators=(',',':'),sort_keys=True))
+                    continue
+            except Exception:
+                logging.getLogger(__name__).warning('Email operation worker unavailable')
+            try:
+                await asyncio.wait_for(self.stop.wait(),self.repository.config.poll_seconds)
+            except TimeoutError:
+                pass
+

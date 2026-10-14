@@ -55,6 +55,32 @@ Queue and reconciliation transitions insert their outbox event atomically with t
 
 Authenticated /metrics includes outbox_events_total, outbox_pending_total, outbox_replayed_total, outbox_failed_total, subscriber_errors_total, replay_latency_seconds and replay_queue_size. Durable totals are reconstructed from PostgreSQL after restart.
 
+## CRM Booking integration (Sandbox)
+
+`CRMAdapter` maps version-1 `BookingCreated`, `BookingUpdated`, `BookingCancelled`,
+`BookingConfirmed` and `BookingCompleted` outbox events into deduplicated rows in
+`jarvis_crm_operations`. It runs as a PostgreSQL outbox subscriber and makes no
+network calls. `CRMProvider` is registered with the same provider registry as other
+transports only when both `JARVIS_CRM_SANDBOX_URL` and
+`JARVIS_CRM_SANDBOX_TOKEN` are set. The endpoint must use HTTPS and identify itself
+as a Railway Sandbox hostname. Staging and Production endpoints are rejected. Never
+configure Production credentials here.
+
+The provider uses stable idempotency keys, minimizes stored responses to booking
+IDs/status/receipt, and classifies ambiguous network/5xx responses as UNKNOWN;
+Orchestrator policy sends UNKNOWN outcomes to reconciliation and never retries them.
+Metrics include `crm_requests_total`, `crm_success_total`, `crm_failed_total`,
+`crm_unknown_total`, `crm_reconciliation_total`,
+`crm_duplicate_prevented_total`, and `crm_latency_seconds`. See
+[CRM transport and recovery](docs/crm-transport.md).
+
+When a dedicated Railway Sandbox CRM endpoint is configured, a separate CRM
+operation worker sends outbox-created intents through the Orchestrator and Policy
+Engine. Inspect an operation with `GET /crm/operations/{event_id}`; an authorized
+operator can trigger a read-only lookup with
+`POST /crm/operations/{event_id}/reconcile`. This Sandbox has no CRM endpoint or
+token configured by this change, so no CRM request is sent.
+
 ## Audit and metrics
 
 The append-only event journal includes task ID, actor, provider, action, previous and new state, reason, event time, correlation ID, and action metadata. It supports a replay of state changes and operator decisions.
@@ -66,3 +92,47 @@ Authenticated /metrics includes queue gauges, the existing Telegram-specific cou
 PostgreSQL integration tests use only the disposable CI database configured via JARVIS_WORKER_CI_DATABASE_URL. They cover delivered and undelivered confirmation, stale versions, concurrent operators, restart during review, missing provider identifiers/receipt and post-reconciliation recovery. Telegram integration may use only a dedicated test bot and test chat.
 
 Rollback only the Sandbox worker. Keep the additive schema and audit history; never delete delivery evidence or restore an older database snapshot.
+
+
+## Email Provider (isolated test sink only)
+
+`EmailRequested` is recorded through the Orchestrator and transactional outbox.
+Replay materializes one email intent; the Email Operation Worker obtains a
+Policy Engine decision and sends only through the generic Dispatcher. The Email
+Provider is registered only when `JARVIS_EMAIL_SANDBOX_SMTP_HOST` points to a
+private test sink. Recipients and sender are restricted to `.test`/`.invalid`.
+The Railway Sandbox uses a private Mailpit SMTP sink for synthetic `@example.test`
+checks only; it is not a public or real mail service. No external recipients or
+working SMTP services are configured. SMTP acceptance is stored as `QUEUED`; SMTP acceptance is stored as `QUEUED`; it is not proof of final
+mailbox delivery. A timeout after DATA becomes `RECONCILIATION_REQUIRED` and is
+never automatically resent. See the [Email Provider Guide](docs/email-provider-guide.md),
+[Adapter Guide](docs/email-adapter-guide.md), [Recovery Guide](docs/email-recovery-guide.md),
+and [Email metrics](docs/email-metrics.md).
+
+~~~mermaid
+sequenceDiagram
+    participant API as Orchestrator API
+    participant Policy as Policy Engine
+    participant DB as PostgreSQL Outbox
+    participant Replay as Replay Worker
+    participant Disp as Dispatcher
+    participant SMTP as Sandbox SMTP sink
+    API->>Policy: authorize EmailRequested
+    Policy->>DB: transaction: request and outbox event
+    Replay->>DB: claim event and materialize intent once
+    Replay->>Policy: evaluate send policy
+    Policy->>Disp: authorize provider route
+    Disp->>SMTP: one bounded SMTP submission
+    SMTP-->>Disp: accepted or ambiguous outcome
+    Disp->>DB: persist receipt or reconciliation state
+~~~
+
+Provider integration example (never wire a provider directly to Queue):
+
+~~~python
+provider = SandboxProvider(config)
+dispatcher.register("sandbox-mail", provider, enabled=True)
+adapter = SandboxMailAdapter()
+adapter.register(event_bus)
+# The operation worker calls Orchestrator.process_email_operation(...).
+~~~
