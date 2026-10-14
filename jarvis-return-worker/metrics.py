@@ -32,6 +32,13 @@ _crm_unknown=Counter('crm_unknown_total','CRM requests with unknown outcome',reg
 _crm_reconciliation=Counter('crm_reconciliation_total','CRM operations requiring reconciliation',registry=_registry)
 _crm_duplicates=Counter('crm_duplicate_prevented_total','Duplicate CRM operations prevented',registry=_registry)
 _crm_latency=Histogram('crm_latency_seconds','CRM provider request latency',registry=_registry)
+_email_send=Counter('email_send_total','Sandbox SMTP submission attempts',registry=_registry)
+_email_success=Counter('email_success_total','Emails accepted by the isolated SMTP sink',registry=_registry)
+_email_failed=Counter('email_failed_total','Definitively failed email submissions',registry=_registry)
+_email_unknown=Counter('email_unknown_total','Email submissions with an ambiguous SMTP result',registry=_registry)
+_email_duplicates=Counter('email_duplicate_prevented_total','Duplicate email intents prevented',registry=_registry)
+_email_reconciliation=Counter('email_reconciliation_total','Email operations requiring reconciliation',registry=_registry)
+_email_latency=Histogram('email_latency_seconds','Sandbox SMTP submission latency',registry=_registry)
 _outbox_last={'events':0,'replayed':0,'failed':0,'errors':0}
 
 _reconciliation_metrics={
@@ -69,13 +76,22 @@ def observe_crm(outcome, elapsed):
  _crm_requests.inc()
  _crm_latency.observe(max(0,elapsed))
  if outcome=='success': _crm_success.inc()
- elif outcome=='unknown':
-  _crm_unknown.inc()
-  _crm_reconciliation.inc()
+ elif outcome=='unknown': _crm_unknown.inc()
  else: _crm_failed.inc()
 
 def prevent_crm_duplicate(): _crm_duplicates.inc()
 def crm_reconciliation_required(): _crm_reconciliation.inc()
+
+def observe_email(outcome,elapsed):
+ _email_send.inc()
+ _email_latency.observe(max(0,elapsed))
+ if outcome=='success': _email_success.inc()
+ elif outcome=='unknown': _email_unknown.inc()
+ elif outcome=='retryable': _email_failed.inc()
+ else: _email_failed.inc()
+
+def prevent_email_duplicate(): _email_duplicates.inc()
+def email_reconciliation_required(): _email_reconciliation.inc()
 
 def _sync_outbox(repo):
  if not hasattr(repo,'connection'):

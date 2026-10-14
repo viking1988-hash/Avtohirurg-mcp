@@ -9,13 +9,15 @@ from .queue import QueueRepository
 from .transport import FakeTransport, TelegramTransport
 from .dispatcher import TransportDispatcher
 from .orchestrator import Orchestrator
-from .worker import Worker, CRMOperationWorker
+from .worker import Worker, CRMOperationWorker, EmailOperationWorker
 from .lease import RecoveryWorker
 from .api import router
 from .health import ready
 from .events import EventBus
 from .outbox import OutboxReplay, ReplayWorker
 from .crm import CRMAdapter, CRMProvider
+from .email_adapter import EmailAdapter
+from .email_provider import EmailProvider
 
 
 def _project_event(conn,event):
@@ -32,13 +34,16 @@ def _project_event(conn,event):
 def make_dispatcher(config, repository):
     dispatcher=TransportDispatcher()
     selected=os.environ.get('JARVIS_TRANSPORT','fake')
-    if selected=='telegram':
-        # This registration is runtime opt-in only; Sandbox remains configured as fake.
+    # Keep the provider registry composable: selecting the primary transport
+    # does not unregister other Sandbox providers that have credentials.
+    dispatcher.register('fake',FakeTransport(float(os.environ.get('JARVIS_FAKE_DELAY_SECONDS','0'))),enabled=True)
+    if config.telegram_bot_token and config.telegram_test_chat_id:
         dispatcher.register('telegram',TelegramTransport(config.telegram_bot_token,config.telegram_test_chat_id,
             int(os.environ.get('JARVIS_TELEGRAM_TIMEOUT_SECONDS','10'))),enabled=True)
-    elif selected=='fake':
-        dispatcher.register('fake',FakeTransport(float(os.environ.get('JARVIS_FAKE_DELAY_SECONDS','0'))),enabled=True)
-    else:
+    if selected=='telegram':
+        if 'telegram' not in dispatcher.names():
+            raise ValueError('Telegram requires Sandbox bot credentials and a test chat')
+    elif selected!='fake':
         raise ValueError('unknown transport; refusing startup')
     crm_url=os.environ.get('JARVIS_CRM_SANDBOX_URL','')
     crm_token=os.environ.get('JARVIS_CRM_SANDBOX_TOKEN','')
@@ -47,6 +52,12 @@ def make_dispatcher(config, repository):
             raise ValueError('CRM Sandbox endpoint and token must be configured together')
         dispatcher.register('crm',CRMProvider(crm_url,crm_token,
             int(os.environ.get('JARVIS_CRM_TIMEOUT_SECONDS','8'))),enabled=True)
+    email_host=os.environ.get('JARVIS_EMAIL_SANDBOX_SMTP_HOST','')
+    if email_host:
+        dispatcher.register('email',EmailProvider(email_host,
+            int(os.environ.get('JARVIS_EMAIL_SANDBOX_SMTP_PORT','1025')),
+            os.environ.get('JARVIS_EMAIL_SANDBOX_FROM','jarvis@localhost.test'),
+            int(os.environ.get('JARVIS_EMAIL_TIMEOUT_SECONDS','8'))),enabled=True)
     return dispatcher
 
 
@@ -66,6 +77,7 @@ async def lifespan(app):
     registry=EventBus()
     registry.register("jarvis.lifecycle-projector","*",_project_event,version=1)
     CRMAdapter().register(registry)
+    EmailAdapter().register(registry)
     replay=OutboxReplay(repo,registry,owner=config.worker_id)
     orchestrator=Orchestrator(repo,dispatcher,event_bus=registry)
     transport=dispatcher.dispatch(os.environ.get('JARVIS_TRANSPORT','fake')).client
@@ -76,6 +88,8 @@ async def lifespan(app):
            asyncio.create_task(replay_worker.run())]
     if 'crm' in dispatcher.names():
         loops.append(asyncio.create_task(CRMOperationWorker(orchestrator,stop).run()))
+    if 'email' in dispatcher.names():
+        loops.append(asyncio.create_task(EmailOperationWorker(orchestrator,stop).run()))
     app.state.config,app.state.repository,app.state.stop,app.state.orchestrator=config,repo,stop,orchestrator
     app.state.event_registry,app.state.outbox_replay=registry,replay
     app.state.loops=loops

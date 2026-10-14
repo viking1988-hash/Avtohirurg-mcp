@@ -93,3 +93,46 @@ PostgreSQL integration tests use only the disposable CI database configured via 
 
 Rollback only the Sandbox worker. Keep the additive schema and audit history; never delete delivery evidence or restore an older database snapshot.
 
+
+## Email Provider (isolated test sink only)
+
+`EmailRequested` is recorded through the Orchestrator and transactional outbox.
+Replay materializes one email intent; the Email Operation Worker obtains a
+Policy Engine decision and sends only through the generic Dispatcher. The Email
+Provider is registered only when `JARVIS_EMAIL_SANDBOX_SMTP_HOST` points to a
+private test sink. Recipients and sender are restricted to `.test`/`.invalid`.
+The Railway Sandbox uses a private Mailpit SMTP sink for synthetic `@example.test`
+checks only; it is not a public or real mail service. No external recipients or
+working SMTP services are configured. SMTP acceptance is stored as `QUEUED`; SMTP acceptance is stored as `QUEUED`; it is not proof of final
+mailbox delivery. A timeout after DATA becomes `RECONCILIATION_REQUIRED` and is
+never automatically resent. See the [Email Provider Guide](docs/email-provider-guide.md),
+[Adapter Guide](docs/email-adapter-guide.md), [Recovery Guide](docs/email-recovery-guide.md),
+and [Email metrics](docs/email-metrics.md).
+
+~~~mermaid
+sequenceDiagram
+    participant API as Orchestrator API
+    participant Policy as Policy Engine
+    participant DB as PostgreSQL Outbox
+    participant Replay as Replay Worker
+    participant Disp as Dispatcher
+    participant SMTP as Sandbox SMTP sink
+    API->>Policy: authorize EmailRequested
+    Policy->>DB: transaction: request and outbox event
+    Replay->>DB: claim event and materialize intent once
+    Replay->>Policy: evaluate send policy
+    Policy->>Disp: authorize provider route
+    Disp->>SMTP: one bounded SMTP submission
+    SMTP-->>Disp: accepted or ambiguous outcome
+    Disp->>DB: persist receipt or reconciliation state
+~~~
+
+Provider integration example (never wire a provider directly to Queue):
+
+~~~python
+provider = SandboxProvider(config)
+dispatcher.register("sandbox-mail", provider, enabled=True)
+adapter = SandboxMailAdapter()
+adapter.register(event_bus)
+# The operation worker calls Orchestrator.process_email_operation(...).
+~~~

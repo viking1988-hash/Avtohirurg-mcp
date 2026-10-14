@@ -76,6 +76,25 @@ jobs:
               assert crm_replay.replay_one()
           assert repo.get_crm_operation(crm_event_id)['state'] == 'PENDING'
           assert repo.get_crm_operation(crm_event_id)['provider_receipt'] is None
+          from jarvis_return_worker.email_adapter import EmailAdapter
+          from jarvis_return_worker.events import EventBus
+          from jarvis_return_worker.orchestrator import Orchestrator
+          from jarvis_return_worker.outbox import OutboxReplay
+          email_service = Orchestrator(repo, __import__('jarvis_return_worker.dispatcher', fromlist=['TransportDispatcher']).TransportDispatcher())
+          email_event_id = email_service.request_email('ci@example.test','Restart probe','Synthetic sink only',
+              'email-pg-restart-corr','email-pg-restart-causation')
+          email_registry = EventBus()
+          EmailAdapter().register(email_registry)
+          email_replay = OutboxReplay(repo,email_registry,owner='postgres-restart-email-ci')
+          email_replay.register_subscribers()
+          for _ in range(100):
+              if repo.get_email_operation(email_event_id): break
+              assert email_replay.replay_one()
+          assert repo.get_email_operation(email_event_id)['state'] == 'PENDING'
+          with repo.connection() as conn:
+              assert conn.execute("""SELECT count(*) AS n FROM jarvis_processed_events
+                  WHERE event_id=%s AND subscriber_name='jarvis.email-adapter'""",
+                  (email_event_id,)).fetchone()['n'] == 1
           PY
           container_id="$(docker ps -q --filter ancestor=postgres:18 | head -n1)"
           test -n "$container_id"
@@ -103,6 +122,28 @@ jobs:
           assert row['state'] == 'DONE'
           assert row['external_message_id'] == 'restart-probe-message'
           assert repo.claim('after-restart') is None
+
+          with repo.connection() as conn:
+              email_event_id = conn.execute("""SELECT event_id FROM jarvis_outbox_events
+                  WHERE causation_id='email-pg-restart-causation'""").fetchone()['event_id']
+              email_row = conn.execute("SELECT state,receipt FROM jarvis_email_operations WHERE event_id=%s",
+                  (email_event_id,)).fetchone()
+              email_processed = conn.execute("""SELECT count(*) AS n FROM jarvis_processed_events
+                  WHERE event_id=%s AND subscriber_name='jarvis.email-adapter'""",
+                  (email_event_id,)).fetchone()['n']
+          assert email_row['state'] == 'PENDING' and email_row['receipt'] is None
+          assert email_processed == 1
+          from jarvis_return_worker.email_adapter import EmailAdapter
+          from jarvis_return_worker.events import EventBus
+          from jarvis_return_worker.outbox import OutboxReplay
+          email_registry = EventBus()
+          EmailAdapter().register(email_registry)
+          email_replay = OutboxReplay(repo,email_registry,owner='postgres-restart-email-after')
+          email_replay.register_subscribers()
+          assert email_replay.replay_one() is False
+          with repo.connection() as conn:
+              assert conn.execute("SELECT count(*) AS n FROM jarvis_email_operations WHERE event_id=%s",
+                  (email_event_id,)).fetchone()['n'] == 1
 
           from jarvis_return_worker.outbox import OutboxReplay, SubscriberRegistry
           from psycopg.types.json import Jsonb
