@@ -288,3 +288,30 @@ CREATE TABLE IF NOT EXISTS jarvis_email_operation_events (
  PRIMARY KEY(event_id,event_sequence)
 );
 
+-- Sandboxed token/cost ledger. Store no prompt, model output, customer data, or secret values.
+DO $$ BEGIN
+ IF current_database() <> 'jarvis_return_queue_test' OR current_user <> 'jarvis_sandbox' THEN
+  RAISE EXCEPTION 'Refusing AI usage ledger outside Jarvis Sandbox database/role';
+ END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS jarvis_ai_usage_events (
+ request_id text PRIMARY KEY CHECK(length(request_id) BETWEEN 1 AND 120),
+ correlation_id text NOT NULL CHECK(length(correlation_id) BETWEEN 1 AND 120),
+ provider text NOT NULL CHECK(length(provider) BETWEEN 1 AND 120),
+ model text NOT NULL CHECK(length(model) BETWEEN 1 AND 120),
+ input_tokens integer NOT NULL CHECK(input_tokens BETWEEN 0 AND 2147483647),
+ output_tokens integer NOT NULL CHECK(output_tokens BETWEEN 0 AND 2147483647),
+ input_rate_micro_usd_per_million bigint NOT NULL CHECK(input_rate_micro_usd_per_million BETWEEN 0 AND 9223372036854775807),
+ output_rate_micro_usd_per_million bigint NOT NULL CHECK(output_rate_micro_usd_per_million BETWEEN 0 AND 9223372036854775807),
+ cost_micro_usd bigint NOT NULL CHECK(cost_micro_usd BETWEEN 0 AND 9223372036854775807),
+ latency_ms integer NOT NULL CHECK(latency_ms BETWEEN 0 AND 2147483647),
+ outcome text NOT NULL CHECK(outcome IN ('SUCCESS','RETRYABLE','PERMANENT','UNKNOWN')),
+ booking_success boolean NOT NULL DEFAULT false CHECK(NOT booking_success OR outcome='SUCCESS'),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS jarvis_ai_one_successful_booking_per_correlation
+ ON jarvis_ai_usage_events(correlation_id) WHERE booking_success;
+CREATE INDEX IF NOT EXISTS jarvis_ai_usage_created_model_idx
+ ON jarvis_ai_usage_events(created_at,provider,model);
+
+
