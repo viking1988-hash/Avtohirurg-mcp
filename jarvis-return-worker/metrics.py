@@ -39,6 +39,11 @@ _email_unknown=Counter('email_unknown_total','Email submissions with an ambiguou
 _email_duplicates=Counter('email_duplicate_prevented_total','Duplicate email intents prevented',registry=_registry)
 _email_reconciliation=Counter('email_reconciliation_total','Email operations requiring reconciliation',registry=_registry)
 _email_latency=Histogram('email_latency_seconds','Sandbox SMTP submission latency',registry=_registry)
+_http_requests=Counter('http_provider_requests_total','Generic HTTP provider requests',registry=_registry)
+_http_success=Counter('http_provider_success_total','Successful generic HTTP provider requests',registry=_registry)
+_http_failed=Counter('http_provider_failed_total','Definitively failed generic HTTP provider requests',registry=_registry)
+_http_unknown=Counter('http_provider_unknown_total','Generic HTTP requests requiring reconciliation',registry=_registry)
+_http_latency=Histogram('http_provider_latency_seconds','Generic HTTP provider request latency',registry=_registry)
 _outbox_last={'events':0,'replayed':0,'failed':0,'errors':0}
 
 _reconciliation_metrics={
@@ -92,6 +97,13 @@ def observe_email(outcome,elapsed):
 
 def prevent_email_duplicate(): _email_duplicates.inc()
 def email_reconciliation_required(): _email_reconciliation.inc()
+
+def observe_http_provider(outcome,elapsed):
+ _http_requests.inc()
+ _http_latency.observe(max(0,elapsed))
+ if outcome=='success': _http_success.inc()
+ elif outcome=='unknown': _http_unknown.inc()
+ else: _http_failed.inc()
 
 def _sync_outbox(repo):
  if not hasattr(repo,'connection'):

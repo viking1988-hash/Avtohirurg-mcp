@@ -18,6 +18,7 @@ from .outbox import OutboxReplay, ReplayWorker
 from .crm import CRMAdapter, CRMProvider
 from .email_adapter import EmailAdapter
 from .email_provider import EmailProvider
+from .http_provider import HTTPProvider
 
 
 def _project_event(conn,event):
@@ -58,6 +59,13 @@ def make_dispatcher(config, repository):
             int(os.environ.get('JARVIS_EMAIL_SANDBOX_SMTP_PORT','1025')),
             os.environ.get('JARVIS_EMAIL_SANDBOX_FROM','jarvis@localhost.test'),
             int(os.environ.get('JARVIS_EMAIL_TIMEOUT_SECONDS','8'))),enabled=True)
+    http_url=os.environ.get('JARVIS_HTTP_SANDBOX_URL','')
+    http_token=os.environ.get('JARVIS_HTTP_SANDBOX_TOKEN','')
+    if http_url or http_token:
+        if not http_url or not http_token:
+            raise ValueError('HTTP Sandbox endpoint and token must be configured together')
+        dispatcher.register('http',HTTPProvider(http_url,http_token,
+            int(os.environ.get('JARVIS_HTTP_TIMEOUT_SECONDS','8'))),enabled=True)
     return dispatcher
 
 

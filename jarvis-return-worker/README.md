@@ -103,7 +103,7 @@ Provider is registered only when `JARVIS_EMAIL_SANDBOX_SMTP_HOST` points to a
 private test sink. Recipients and sender are restricted to `.test`/`.invalid`.
 The Railway Sandbox uses a private Mailpit SMTP sink for synthetic `@example.test`
 checks only; it is not a public or real mail service. No external recipients or
-working SMTP services are configured. SMTP acceptance is stored as `QUEUED`; SMTP acceptance is stored as `QUEUED`; it is not proof of final
+working SMTP services are configured. SMTP acceptance is stored as `QUEUED`; it is not proof of final
 mailbox delivery. A timeout after DATA becomes `RECONCILIATION_REQUIRED` and is
 never automatically resent. See the [Email Provider Guide](docs/email-provider-guide.md),
 [Adapter Guide](docs/email-adapter-guide.md), [Recovery Guide](docs/email-recovery-guide.md),
@@ -143,3 +143,24 @@ Provider-reported token counts, model ID, rate snapshot, micro-USD cost, latency
 
 The 100-case fixture is synthetic and the checked-in baseline is offline keyword classification. It does not test or compare live AI models. At the current Sandbox revision no model API is configured, so model availability, AI accuracy, and actual provider pricing remain unverified.
 
+## Generic HTTP Provider (Sandbox only)
+
+`HTTPProvider` is optional and is registered through the existing Dispatcher
+when both `JARVIS_HTTP_SANDBOX_URL` and `JARVIS_HTTP_SANDBOX_TOKEN` are present.
+The URL must identify an HTTPS Railway Sandbox/Staging service. It supports
+send, update, cancel, status, reconciliation, and receipt lookup, while keeping
+business decisions in the Orchestrator and Policy Engine. Mutations forward the
+stable idempotency key; ambiguous network/5xx/incomplete-receipt outcomes enter
+`RECONCILIATION_REQUIRED` and are never resent automatically. Redirects are
+blocked and only minimal provider IDs/receipt/status fields are retained. Tasks
+addressed to the `sandbox:http:` destination namespace are routed by the
+Orchestrator and remain covered by the human approval fingerprint.
+
+The Sandbox currently has no generic HTTP endpoint or token configured, so the
+provider is disabled there and no external HTTP request has been made. Contract
+tests use an injected synthetic response handler. See the
+[HTTP Provider Guide](docs/http-provider-guide.md).
+
+Metrics are `http_provider_requests_total`, `http_provider_success_total`,
+`http_provider_failed_total`, `http_provider_unknown_total`, and
+`http_provider_latency_seconds`.
