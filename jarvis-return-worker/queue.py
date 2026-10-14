@@ -576,3 +576,31 @@ class QueueRepository:
         with self.connection() as c:
             return c.execute("SELECT * FROM jarvis_email_operations WHERE event_id=%s",(event_id,)).fetchone()
 
+    def record_ai_usage(self, usage):
+        """Persist usage metadata only; request and response content are never accepted."""
+        from .ai_cost import normalize_usage
+        row=normalize_usage(usage)
+        with self.connection() as c:
+            inserted=c.execute("""INSERT INTO jarvis_ai_usage_events
+                (request_id,correlation_id,provider,model,input_tokens,output_tokens,
+                 input_rate_micro_usd_per_million,output_rate_micro_usd_per_million,
+                 cost_micro_usd,latency_ms,outcome,booking_success)
+                VALUES (%(request_id)s,%(correlation_id)s,%(provider)s,%(model)s,
+                 %(input_tokens)s,%(output_tokens)s,%(input_rate_micro_usd_per_million)s,
+                 %(output_rate_micro_usd_per_million)s,%(cost_micro_usd)s,%(latency_ms)s,
+                 %(outcome)s,%(booking_success)s)
+                ON CONFLICT DO NOTHING RETURNING request_id""",row).fetchone()
+            return inserted is not None
+
+    def ai_cost_summary(self):
+        from .ai_cost import summarize_totals
+        with self.connection() as c:
+            row=c.execute("""SELECT count(*) AS request_count,
+                count(*) FILTER (WHERE outcome='SUCCESS') AS successful_calls,
+                count(*) FILTER (WHERE booking_success) AS successful_bookings,
+                coalesce(sum(cost_micro_usd),0) AS total_cost_micro_usd
+                FROM jarvis_ai_usage_events""").fetchone()
+        return summarize_totals(int(row['request_count']),int(row['successful_calls']),
+            int(row['successful_bookings']),int(row['total_cost_micro_usd']))
+
+

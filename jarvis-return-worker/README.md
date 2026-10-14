@@ -136,3 +136,10 @@ adapter = SandboxMailAdapter()
 adapter.register(event_bus)
 # The operation worker calls Orchestrator.process_email_operation(...).
 ~~~
+
+## AI usage and cost control
+
+Provider-reported token counts, model ID, rate snapshot, micro-USD cost, latency, and outcome can be recorded through the Orchestrator into the sandbox-only `jarvis_ai_usage_events` ledger. Prompt/response text and secrets are rejected and never persisted. See [the AI cost control guide](docs/ai-cost-control.md).
+
+The 100-case fixture is synthetic and the checked-in baseline is offline keyword classification. It does not test or compare live AI models. At the current Sandbox revision no model API is configured, so model availability, AI accuracy, and actual provider pricing remain unverified.
+
