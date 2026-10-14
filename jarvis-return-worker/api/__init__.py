@@ -2,7 +2,7 @@ import asyncio
 import secrets
 from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from ..metrics import render_metrics
 from ..queue import Conflict
 from ..reconciliation import read_task, log_rejected
@@ -34,6 +34,23 @@ class CRMReconciliation(BaseModel):
 class EmailCancel(BaseModel):
     model_config=ConfigDict(extra='forbid')
     expected_version: int=Field(ge=0)
+
+class EmailRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    to: str=Field(min_length=9,max_length=320)
+    subject: str=Field(min_length=1,max_length=998)
+    body: str=Field(min_length=1,max_length=100000)
+    correlation_id: str=Field(min_length=1,max_length=128)
+    causation_id: str=Field(min_length=1,max_length=128)
+
+    @field_validator('to')
+    @classmethod
+    def sandbox_recipient_only(cls,value):
+        from ..email_provider import EmailProvider
+        if not EmailProvider._valid_recipient(value):
+            raise ValueError('only Sandbox test-domain recipients are permitted')
+        return value
+
 
 class EmailReconciliation(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -117,6 +134,11 @@ async def reconcile_crm_operation(event_id:str,body:CRMReconciliation,request:Re
         raise HTTPException(422,'invalid CRM event ID')
     return await call(request.app.state.orchestrator.reconcile_crm_operation,
                       event_id,actor,body.expected_version)
+
+@router.post('/email/requests')
+async def request_email(body:EmailRequest,request:Request,actor:str=Depends(human)):
+    return await call(request.app.state.orchestrator.request_email,
+                      body.to,body.subject,body.body,body.correlation_id,body.causation_id)
 
 @router.get('/email/operations/{event_id}')
 async def email_operation(event_id:str,request:Request,actor:str=Depends(read)):
