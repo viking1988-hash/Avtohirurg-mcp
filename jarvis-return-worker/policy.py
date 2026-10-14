@@ -104,3 +104,16 @@ class PolicyEngine:
         return PolicyDecision('cancel' if allowed else 'reject',
                               'email_unsent_cancellation_allowed' if allowed else 'email_already_attempted')
 
+
+    def webhook_operation(self,operation):
+        allowed=(operation.get('state')=='PROCESSING' and operation.get('event_id')
+            and operation.get('method') in ('GET','POST','PUT','PATCH','DELETE')
+            and operation.get('path','').startswith('/')
+            and operation.get('idempotency_key')=='jarvis-webhook:'+str(operation.get('event_id')))
+        return PolicyDecision('dispatch' if allowed else 'reconcile',
+            'webhook_operation_valid' if allowed else 'webhook_operation_integrity')
+
+    def webhook_reconciliation(self,operation):
+        allowed=operation.get('state')=='RECONCILIATION_REQUIRED' and bool(operation.get('idempotency_key'))
+        return PolicyDecision('reconcile' if allowed else 'reject',
+            'webhook_reconciliation_allowed' if allowed else 'webhook_not_awaiting_reconciliation')
