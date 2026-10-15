@@ -28,6 +28,24 @@ def _project_event(conn,event):
     )
 
 
+def _create_dispatch_intent(conn,event):
+    """Project an approved event into a durable, version-bound delivery intent."""
+    payload=event["payload"]
+    if (event["event_type"]!="TaskApproved" or payload.get("new_state")!="APPROVED"
+        or not payload.get("approved_at") or not payload.get("approved_fingerprint")):
+        raise ValueError("approved event is missing its approval binding")
+    provider=payload.get("provider") or "fake"
+    conn.execute("""INSERT INTO jarvis_provider_dispatch_intents
+        (event_id,task_id,approved_at,approved_fingerprint,provider)
+        SELECT %s,a.task_id,a.approved_at,a.approved_fingerprint,%s
+        FROM jarvis_return_actions a
+        WHERE a.task_id=%s AND a.state='APPROVED'
+          AND a.approved_at=%s AND a.approved_fingerprint=%s
+        ON CONFLICT DO NOTHING""",
+        (event["event_id"],provider,event["aggregate_id"],payload["approved_at"],
+         payload["approved_fingerprint"]))
+
+
 def make_dispatcher(config, repository):
     dispatcher=TransportDispatcher()
     selected=os.environ.get('JARVIS_TRANSPORT','fake')
@@ -57,6 +75,7 @@ async def lifespan(app):
     dispatcher=make_dispatcher(config,repo)
     registry=EventBus()
     registry.register("jarvis.lifecycle-projector","*",_project_event,version=1)
+    registry.register("jarvis.dispatcher-intent","TaskApproved",_create_dispatch_intent,version=1)
     replay=OutboxReplay(repo,registry,owner=config.worker_id)
     orchestrator=Orchestrator(repo,dispatcher,event_bus=registry)
     transport=dispatcher.dispatch(os.environ.get('JARVIS_TRANSPORT','fake')).client

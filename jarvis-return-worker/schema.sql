@@ -201,3 +201,17 @@ CREATE TABLE IF NOT EXISTS jarvis_event_projection (
  projected_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(event_id,subscriber_name)
 );
+
+-- A TaskApproved event must be durably replayed into this intent before the
+-- delivery worker may claim it. This is a DB-only outbox subscriber effect.
+CREATE TABLE IF NOT EXISTS jarvis_provider_dispatch_intents (
+ event_id text PRIMARY KEY REFERENCES jarvis_outbox_events(event_id),
+ task_id text NOT NULL REFERENCES jarvis_return_actions(task_id),
+ approved_at timestamptz NOT NULL,
+ approved_fingerprint text NOT NULL,
+ provider text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(task_id,approved_at)
+);
+CREATE INDEX IF NOT EXISTS jarvis_provider_dispatch_task_idx
+ ON jarvis_provider_dispatch_intents(task_id,approved_at,approved_fingerprint);

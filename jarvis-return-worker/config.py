@@ -18,6 +18,7 @@ class Config:
     shutdown_seconds: int = 20
     telegram_bot_token: str = field(default='', repr=False)
     telegram_test_chat_id: str = field(default='', repr=False)
+    require_outbox_dispatch: bool = True
 
     @classmethod
     def from_env(cls):

@@ -83,11 +83,17 @@ class QueueRepository:
         if not owner:
             raise ValueError('lease owner required')
         with self.connection() as c:
+            outbox_gate = """
+                AND EXISTS (SELECT 1 FROM jarvis_provider_dispatch_intents i
+                    WHERE i.task_id=jarvis_return_actions.task_id
+                      AND i.approved_at=jarvis_return_actions.approved_at
+                      AND i.approved_fingerprint=jarvis_return_actions.approved_fingerprint)
+            """ if getattr(self.config,'require_outbox_dispatch',False) else ""
             b = c.execute('''SELECT * FROM jarvis_return_actions WHERE state='APPROVED'
                 AND payload IS NOT NULL AND correlation_id IS NOT NULL
                 AND destination_key LIKE 'sandbox:%%' AND approval_expires_at>clock_timestamp()
                 AND approved_fingerprint=action_fingerprint AND next_attempt_at<=clock_timestamp()
-                AND attempt_count<%s ORDER BY created_at,task_id FOR UPDATE SKIP LOCKED LIMIT 1''',
+                AND attempt_count<%s ''' + outbox_gate + ''' ORDER BY created_at,task_id FOR UPDATE SKIP LOCKED LIMIT 1''',
                 (self.config.max_attempts,)).fetchone()
             if not b:
                 return None
