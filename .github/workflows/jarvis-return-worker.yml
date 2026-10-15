@@ -73,7 +73,7 @@ jobs:
           crm_replay.register_subscribers()
           for _ in range(100):
               if repo.get_crm_operation(crm_event_id): break
-              assert crm_replay.replay_one()
+              assert crm_replay.replay_one(event_id=crm_event_id)
           assert repo.get_crm_operation(crm_event_id)['state'] == 'PENDING'
           assert repo.get_crm_operation(crm_event_id)['provider_receipt'] is None
           from jarvis_return_worker.email_adapter import EmailAdapter
@@ -89,7 +89,7 @@ jobs:
           email_replay.register_subscribers()
           for _ in range(100):
               if repo.get_email_operation(email_event_id): break
-              assert email_replay.replay_one()
+              assert email_replay.replay_one(event_id=email_event_id)
           assert repo.get_email_operation(email_event_id)['state'] == 'PENDING'
           with repo.connection() as conn:
               assert conn.execute("""SELECT count(*) AS n FROM jarvis_processed_events
@@ -109,7 +109,7 @@ jobs:
           webhook_replay.register_subscribers()
           for _ in range(100):
               if repo.get_webhook_operation(webhook_event_id): break
-              assert webhook_replay.replay_one()
+              assert webhook_replay.replay_one(event_id=webhook_event_id)
           webhook_op=repo.claim_webhook_operation('postgres-restart-webhook-ci')
           webhook_receipt={'request_id':'webhook-request-ci','response_id':'webhook-response-ci',
               'http_status':202,'provider_status':'accepted','receipt':{'receipt_id':'webhook-receipt-ci'},
@@ -169,7 +169,7 @@ jobs:
           WebhookAdapter().register(webhook_registry)
           webhook_replay=OutboxReplay(repo,webhook_registry,owner='postgres-restart-webhook-after')
           webhook_replay.register_subscribers()
-          assert webhook_replay.replay_one() is False
+          assert webhook_replay.replay_one(event_id=webhook_event_id) is False
           from jarvis_return_worker.email_adapter import EmailAdapter
           from jarvis_return_worker.events import EventBus
           from jarvis_return_worker.outbox import OutboxReplay
@@ -177,7 +177,7 @@ jobs:
           EmailAdapter().register(email_registry)
           email_replay = OutboxReplay(repo,email_registry,owner='postgres-restart-email-after')
           email_replay.register_subscribers()
-          assert email_replay.replay_one() is False
+          assert email_replay.replay_one(event_id=email_event_id) is False
           with repo.connection() as conn:
               assert conn.execute("SELECT count(*) AS n FROM jarvis_email_operations WHERE event_id=%s",
                   (email_event_id,)).fetchone()['n'] == 1
@@ -216,6 +216,7 @@ jobs:
           from jarvis_return_worker.events import EventBus
           from jarvis_return_worker.outbox import OutboxReplay
           with repo.connection() as conn:
+              crm_event_id = conn.execute("SELECT event_id FROM jarvis_outbox_events WHERE causation_id='pg-restart-crm-probe'").fetchone()['event_id']
               crm_row = conn.execute("""SELECT o.state,o.provider_receipt,count(p.event_id) AS processed
                   FROM jarvis_crm_operations o LEFT JOIN jarvis_processed_events p
                     ON p.event_id=o.event_id AND p.subscriber_name='jarvis.crm-adapter'
@@ -227,7 +228,7 @@ jobs:
           CRMAdapter().register(registry)
           replay = OutboxReplay(repo,registry,owner='postgres-restart-crm-after')
           replay.register_subscribers()
-          assert replay.replay_one() is False
+          assert replay.replay_one(event_id=crm_event_id) is False
           print('PostgreSQL restart recovery check: task receipt, CRM intent and outbox marker survived; replay exactly once; no external CRM request')
           PY
       - uses: actions/upload-artifact@v4
