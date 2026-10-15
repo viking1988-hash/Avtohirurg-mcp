@@ -32,7 +32,7 @@ def materialize(r):
    correlation_id="corr-"+cause,causation_id=cause)
  bus=EventBus();WebhookAdapter().register(bus)
  replay=OutboxReplay(r,bus,owner="webhook-replay-ci");replay.register_subscribers()
- assert replay.replay_one()
+ assert replay.replay_one(event_id=eid)
  return eid,replay
 
 def receipt(eid,response="response"):
@@ -41,7 +41,7 @@ def receipt(eid,response="response"):
 
 def test_webhook_outbox_dedup_receipt_and_version_fencing(repo):
  eid,replay=materialize(repo)
- assert replay.replay_one() is False
+ assert replay.replay_one(event_id=eid) is False
  op=repo.get_webhook_operation(eid)
  assert op["state"]=="PENDING" and op["idempotency_key"]=="jarvis-webhook:"+eid
  claim=repo.claim_webhook_operation("worker-a")
@@ -60,7 +60,7 @@ def test_expired_webhook_lease_and_unknown_never_resend(repo):
  saved=repo.get_webhook_operation(eid)
  assert saved["state"]=="RECONCILIATION_REQUIRED"
  assert saved["reconciliation_reason"]=="lease_expired_after_http_attempt"
- assert replay.replay_one() is False
+ assert replay.replay_one(event_id=eid) is False
  with pytest.raises(Conflict):repo.finish_webhook_operation(eid,"worker-before-restart",claim["attempt_count"],claim["version"],receipt(eid))
  assert repo.claim_webhook_operation("worker-after-restart") is None
 
@@ -110,7 +110,7 @@ def test_orchestrator_is_only_provider_entrypoint(repo):
    "corr-webhook-e2e-"+str(uuid.uuid4()),"webhook-ci-e2e-"+str(uuid.uuid4()))
  registry=EventBus();WebhookAdapter().register(registry)
  replay=OutboxReplay(repo,registry,owner="webhook-e2e-replay");replay.register_subscribers()
- assert replay.replay_one()
+ assert replay.replay_one(event_id=eid)
  op=service.claim_webhook_operation("webhook-e2e-worker")
  asyncio.run(service.process_webhook_operation(op,"webhook-e2e-worker"))
  saved=service.read_webhook_operation(eid)
