@@ -87,6 +87,7 @@ jobs:
           assert repo.claim('after-restart') is None
 
           from jarvis_return_worker.outbox import OutboxReplay, SubscriberRegistry
+          from jarvis_return_worker.app import _create_dispatch_intent
           from psycopg.types.json import Jsonb
           def project(conn, event):
               conn.execute("""INSERT INTO jarvis_event_projection
@@ -97,6 +98,7 @@ jobs:
                    event['event_version'],Jsonb(event['payload'])))
           registry = SubscriberRegistry()
           registry.register('jarvis.ci.restart-projection','*',project)
+          registry.register('jarvis.dispatcher-intent','TaskApproved',_create_dispatch_intent)
           replay = OutboxReplay(repo,registry,owner='postgres-restart-ci')
           replay.register_subscribers()
           replayed = 0

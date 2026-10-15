@@ -17,6 +17,7 @@ def repo():
     r.migrate()
     # Each integration scenario gets an isolated fixture inside the disposable CI database.
     with r.connection() as c:
+        c.execute('DELETE FROM jarvis_provider_dispatch_intents')
         c.execute('DELETE FROM jarvis_return_action_events')
         c.execute('DELETE FROM jarvis_fake_receipts')
         c.execute('DELETE FROM jarvis_return_actions')

@@ -83,11 +83,17 @@ class QueueRepository:
         if not owner:
             raise ValueError('lease owner required')
         with self.connection() as c:
+            outbox_gate = """
+                AND EXISTS (SELECT 1 FROM jarvis_provider_dispatch_intents i
+                    WHERE i.task_id=jarvis_return_actions.task_id
+                      AND i.approved_at=jarvis_return_actions.approved_at
+                      AND i.approved_fingerprint=jarvis_return_actions.approved_fingerprint)
+            """ if getattr(self.config,'require_outbox_dispatch',False) else ""
             b = c.execute('''SELECT * FROM jarvis_return_actions WHERE state='APPROVED'
                 AND payload IS NOT NULL AND correlation_id IS NOT NULL
                 AND destination_key LIKE 'sandbox:%%' AND approval_expires_at>clock_timestamp()
                 AND approved_fingerprint=action_fingerprint AND next_attempt_at<=clock_timestamp()
-                AND attempt_count<%s ORDER BY created_at,task_id FOR UPDATE SKIP LOCKED LIMIT 1''',
+                AND attempt_count<%s ''' + outbox_gate + ''' ORDER BY created_at,task_id FOR UPDATE SKIP LOCKED LIMIT 1''',
                 (self.config.max_attempts,)).fetchone()
             if not b:
                 return None
@@ -226,7 +232,14 @@ class QueueRepository:
             completed=bool(b['delivery_receipt'])
             state='DONE' if completed else 'RECONCILIATION_REQUIRED' if uncertain else 'FAILED'
             error=None if completed else 'delivery_outcome_unknown' if uncertain else 'worker_failure'
-            r=c.execute("UPDATE jarvis_return_actions SET state=%s,last_error=%s,lease_owner=NULL,lease_until=NULL,version=version+1,updated_at=now() WHERE task_id=%s RETURNING *",(state,error,task_id)).fetchone()
+            r=c.execute("""UPDATE jarvis_return_actions SET state=%s,last_error=%s,
+                delivery_status=CASE WHEN %s THEN 'UNKNOWN' ELSE delivery_status END,
+                reconciliation_status=CASE WHEN %s THEN 'REQUIRED' ELSE reconciliation_status END,
+                reconciliation_reason=CASE WHEN %s THEN %s ELSE reconciliation_reason END,
+                reconciliation_at=CASE WHEN %s THEN clock_timestamp() ELSE reconciliation_at END,
+                lease_owner=NULL,lease_until=NULL,version=version+1,updated_at=now()
+                WHERE task_id=%s RETURNING *""",
+                (state,error,uncertain,uncertain,uncertain,error,uncertain,task_id)).fetchone()
             record(c,b,r,'receipt_recovered' if completed else 'delivery_uncertain' if uncertain else 'fail',owner)
             return r
 

@@ -55,6 +55,14 @@ Queue and reconciliation transitions insert their outbox event atomically with t
 
 Authenticated /metrics includes outbox_events_total, outbox_pending_total, outbox_replayed_total, outbox_failed_total, subscriber_errors_total, replay_latency_seconds and replay_queue_size. Durable totals are reconstructed from PostgreSQL after restart.
 
+With `require_outbox_dispatch` enabled (the Sandbox runtime default), an
+approved task is not claimable until Replay Worker has committed its
+version-bound provider dispatch intent from the `TaskApproved` event. Replay
+does not send messages; the Return Worker applies Policy and invokes the
+registered provider through Dispatcher. See
+[`docs/outbox-dispatch-gate.md`](docs/outbox-dispatch-gate.md) for the recovery
+contract and rollback steps.
+
 ## Audit and metrics
 
 The append-only event journal includes task ID, actor, provider, action, previous and new state, reason, event time, correlation ID, and action metadata. It supports a replay of state changes and operator decisions.
