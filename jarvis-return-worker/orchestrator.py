@@ -318,3 +318,71 @@ class Orchestrator:
             raise
 
 
+
+    def request_webhook(self,method,path,body,correlation_id,causation_id):
+        from .webhook_adapter import _ALLOWED
+        if str(method).upper() not in _ALLOWED or not isinstance(path,str) or not path.startswith('/') or path.startswith('//') or '\\' in path or '?' in path or '#' in path or any(part=='..' for part in path.split('/')):
+            raise ValueError('invalid Webhook request')
+        if not correlation_id or not causation_id:
+            raise ValueError('Webhook correlation and causation IDs are required')
+        from .outbox import append_event
+        with self.repository.connection() as conn:
+            return append_event(conn,aggregate_id=causation_id,aggregate_type='webhook',
+              event_type='WebhookRequested',event_version=1,
+              payload={'method':str(method).upper(),'path':path,'body':body},
+              correlation_id=correlation_id,causation_id=causation_id)
+
+    def claim_webhook_operation(self,owner):
+        return self.repository.claim_webhook_operation(owner)
+
+    def read_webhook_operation(self,event_id):
+        return self.repository.get_webhook_operation(event_id)
+
+    def check_webhook_status(self,event_id):
+        """Read provider status only for a fenced operation awaiting reconciliation."""
+        operation=self.repository.get_webhook_operation(event_id) or {}
+        decision=self.policy.webhook_reconciliation(operation)
+        if decision.action!='reconcile': raise Conflict(decision.reason)
+        provider=self.dispatcher.dispatch('webhook')
+        task={'method':operation['method'],'path':operation['path'],
+              'correlation_id':operation.get('correlation_id'),
+              'request_id':operation.get('request_id'),
+              'idempotency_key':operation['idempotency_key']}
+        return provider.reconcile(task)
+
+    def reconcile_webhook_operation(self,event_id,actor,expected_version,outcome,evidence=None):
+        operation=self.repository.get_webhook_operation(event_id) or {}
+        decision=self.policy.webhook_reconciliation(operation)
+        if decision.action!='reconcile': raise Conflict(decision.reason)
+        return self.repository.resolve_webhook_reconciliation(event_id,actor,expected_version,outcome,evidence or {})
+
+    async def process_webhook_operation(self,operation,owner):
+        from .metrics import provider_call,transport_dispatch
+        try:
+            decision=self.policy.webhook_operation(operation)
+            if decision.action!='dispatch':
+                await asyncio.to_thread(self.repository.fail_webhook_operation,
+                  operation['event_id'],owner,operation['attempt_count'],operation['version'],
+                  Classification.UNKNOWN,decision.reason)
+                return
+            provider=self.dispatcher.dispatch('webhook')
+            transport_dispatch('webhook');provider_call('webhook','send')
+            payload={'method':operation['method'],'path':operation['path'],
+              'body':operation.get('request_body'),'correlation_id':operation.get('correlation_id'),
+              'request_id':operation.get('request_id')}
+            result=await asyncio.to_thread(provider.send,payload,operation['idempotency_key'])
+            await asyncio.to_thread(self.repository.finish_webhook_operation,
+              operation['event_id'],owner,operation['attempt_count'],operation['version'],result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            classification=exc.classification if isinstance(exc,DeliveryError) else Classification.UNKNOWN
+            reason=exc.code if isinstance(exc,DeliveryError) else 'webhook_outcome_unknown'
+            try:
+                await asyncio.to_thread(self.repository.fail_webhook_operation,
+                  operation['event_id'],owner,operation['attempt_count'],operation['version'],
+                  classification,reason,getattr(exc,'retry_after',None),getattr(exc,'details',None))
+            except Conflict:
+                logging.getLogger(__name__).warning('Webhook operation fenced')
+            except Exception:
+                logging.getLogger(__name__).warning('Webhook operation state unavailable')

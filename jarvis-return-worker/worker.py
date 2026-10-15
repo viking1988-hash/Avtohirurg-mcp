@@ -122,3 +122,24 @@ class EmailOperationWorker:
             except TimeoutError:
                 pass
 
+
+class WebhookOperationWorker:
+    """Claims outbox-created intents; delivery calls stay in Orchestrator."""
+    def __init__(self,orchestrator,stop):
+        self.orchestrator=orchestrator
+        self.repository=orchestrator.repository
+        self.stop=stop
+        self.owner=self.repository.config.worker_id+":webhook"
+    async def run(self):
+        while not self.stop.is_set():
+            try:
+                operation=await asyncio.to_thread(self.orchestrator.claim_webhook_operation,self.owner)
+                if operation:
+                    await self.orchestrator.process_webhook_operation(operation,self.owner)
+                    continue
+            except Exception:
+                logging.getLogger(__name__).warning("Webhook operation worker unavailable")
+            try:
+                await asyncio.wait_for(self.stop.wait(),self.repository.config.poll_seconds)
+            except TimeoutError:
+                pass
