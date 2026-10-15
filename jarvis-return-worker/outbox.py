@@ -162,7 +162,7 @@ class OutboxReplay:
                            SELECT 1 FROM jarvis_processed_events p
                            WHERE p.event_id=e.event_id AND p.subscriber_name=s.subscriber_name
                              AND p.event_version=s.event_version)
-                         AND (%s IS NULL OR e.event_id=%s)
+                         AND (%s::text IS NULL OR e.event_id=%s)
                        ORDER BY e.created_at,e.event_id,s.subscriber_name
                        FOR UPDATE OF e SKIP LOCKED LIMIT 1"""
                     , (event_id, event_id)
