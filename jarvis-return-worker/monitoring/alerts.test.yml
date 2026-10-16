@@ -112,3 +112,20 @@ tests:
       - eval_time: 20m
         alertname: JarvisReconciliationRequired
         exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: outbox_failed_total
+        values: '0 1+0x14'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: JarvisOutboxReplayFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Outbox replay failures detected
+      - eval_time: 15m
+        alertname: JarvisOutboxReplayFailures
+        exp_alerts: []
