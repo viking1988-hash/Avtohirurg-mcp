@@ -17,7 +17,11 @@ class HTTPClient:
   if corr:h["X-Correlation-ID"]=corr
   if idempotency_key:h["Idempotency-Key"]=str(idempotency_key)
   if encoded is not None:h["Content-Type"]="application/json"
-  h.update(headers or {})
+  custom=headers or {}
+  reserved={"host","content-length","connection","transfer-encoding","idempotency-key","x-request-id","x-correlation-id"}
+  if any(str(name).strip().lower() in reserved for name in custom):
+   raise ValueError("custom headers cannot override HTTP request identity or framing")
+  h.update(custom)
   started=time.monotonic();retries=0;safe=method=="GET"
   while True:
    from .metrics import webhook_request_attempt
