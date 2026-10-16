@@ -10,9 +10,17 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-# Worker metrics intentionally not connected until the isolated
-# read-only scrape endpoint and authorization are verified.
-# Never connect to Production or customer-facing endpoints.
+  - job_name: jarvis-sandbox-worker
+    scrape_interval: 30s
+    scrape_timeout: 5s
+    metrics_path: /metrics
+    authorization:
+      credentials_file: /etc/prometheus/worker-metrics-token
+    static_configs:
+      - targets: ['jarvis-worker-metrics-sandbox.railway.internal:8080']
+
+# Isolated Sandbox worker only. Authorization token is mounted from a
+# Railway secret at runtime; never store it in this repository.
 
   - job_name: jarvis-synthetic-fixture
     scrape_interval: 15s
