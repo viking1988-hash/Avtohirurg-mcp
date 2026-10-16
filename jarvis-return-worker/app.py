@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -33,6 +34,28 @@ def _project_event(conn,event):
     )
 
 
+
+_WEBHOOK_CONTROL_HEADERS={"host","content-length","connection","transfer-encoding","idempotency-key","x-request-id","x-correlation-id"}
+
+
+def _webhook_headers_from_env():
+    raw=os.environ.get('JARVIS_WEBHOOK_HEADERS_JSON','{}')
+    try:
+        headers=json.loads(raw)
+    except (TypeError,ValueError):
+        raise ValueError('invalid JARVIS_WEBHOOK_HEADERS_JSON') from None
+    if not isinstance(headers,dict) or any(not isinstance(k,str) or not isinstance(v,str) for k,v in headers.items()):
+        raise ValueError('JARVIS_WEBHOOK_HEADERS_JSON must be an object of string values')
+    if any(k.strip().lower() in _WEBHOOK_CONTROL_HEADERS for k in headers):
+        raise ValueError('Webhook headers cannot override request context headers')
+    token=os.environ.get('JARVIS_WEBHOOK_TOKEN','')
+    if token and any(k.strip().lower()=='authorization' for k in headers):
+        raise ValueError('Configure either JARVIS_WEBHOOK_TOKEN or Authorization in JARVIS_WEBHOOK_HEADERS_JSON')
+    if token:
+        headers['Authorization']='Bearer '+token
+    return headers
+
+
 def make_dispatcher(config, repository):
     dispatcher=TransportDispatcher()
     selected=os.environ.get('JARVIS_TRANSPORT','fake')
@@ -62,10 +85,10 @@ def make_dispatcher(config, repository):
             int(os.environ.get('JARVIS_EMAIL_TIMEOUT_SECONDS','8'))),enabled=True)
     webhook_url=os.environ.get('JARVIS_WEBHOOK_BASE_URL','')
     webhook_token=os.environ.get('JARVIS_WEBHOOK_TOKEN','')
-    if webhook_url or webhook_token:
+    headers=_webhook_headers_from_env()
+    if webhook_url or webhook_token or headers:
         if not webhook_url:
-            raise ValueError('Webhook endpoint is required when a Webhook token is configured')
-        headers={'Authorization':'Bearer '+webhook_token} if webhook_token else {}
+            raise ValueError('Webhook endpoint is required when Webhook credentials or headers are configured')
         dispatcher.register('webhook',WebhookProvider(webhook_url,
             int(os.environ.get('JARVIS_WEBHOOK_TIMEOUT_SECONDS','8')),
             int(os.environ.get('JARVIS_WEBHOOK_MAX_RETRIES','2')),headers=headers),enabled=True)
