@@ -14,3 +14,5 @@ Before connecting Worker metrics:
 - Configure a read-only scrape and verify target health in the isolated project.
 - Verify alert pending/firing/resolved in Sandbox and a safe rollback.
 - Never configure automatic retry/replay or customer notifications.
+
+Railway initial deployment incident (2026-10-16): the first build used the repository default Dockerfile and crashed because it started the MCP server without MCP_TOKEN. The isolated monitoring service has since been configured with Dockerfile.monitoring-sandbox. A fresh build from that Dockerfile is required; redeploying the original image is insufficient. Do not add MCP_TOKEN to the monitoring service.
