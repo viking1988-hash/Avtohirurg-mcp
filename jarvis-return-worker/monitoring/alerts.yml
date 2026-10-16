@@ -1,41 +1,33 @@
 groups:
-- name: jarvis-sandbox
+- name: jarvis-sandbox-synthetic
   rules:
-  - alert: JarvisWorkerUnavailable
-    expr: up{job="jarvis-sandbox-worker"} == 0
-    for: 5m
-    labels:
-      severity: warning
-      environment: staging
-    annotations:
-      summary: Sandbox worker metrics unavailable
   - alert: JarvisOutboxPending
     expr: outbox_pending_total > 0
-    for: 10m
+    for: 30s
     labels:
       severity: warning
       environment: staging
     annotations:
-      summary: Pending outbox events require investigation
+      summary: Synthetic pending outbox events require investigation
   - alert: JarvisReconciliationRequired
     expr: reconciliation_required_queue > 0
-    for: 15m
+    for: 30s
     labels:
       severity: warning
       environment: staging
     annotations:
-      summary: Manual reconciliation required
+      summary: Synthetic reconciliation backlog detected
   - alert: JarvisOutboxReplayFailures
-    expr: increase(outbox_failed_total[10m]) > 0
-    for: 2m
+    expr: increase(outbox_failed_total[2m]) > 0
+    for: 30s
     labels:
       severity: warning
       environment: staging
     annotations:
-      summary: Outbox replay failures detected
+      summary: Synthetic outbox replay failures detected
   - alert: JarvisSyntheticFixtureUnavailable
     expr: up{job="jarvis-synthetic-fixture"} == 0
-    for: 2m
+    for: 30s
     labels:
       severity: warning
       environment: staging
