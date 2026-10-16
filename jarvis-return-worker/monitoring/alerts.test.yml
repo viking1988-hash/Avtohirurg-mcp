@@ -41,9 +41,9 @@ tests:
   - interval: 1m
     input_series:
       - series: outbox_failed_total
-        values: '0 1+0x8'
+        values: '0 1 2 3+0x8'
     alert_rule_test:
-      - eval_time: 2m
+      - eval_time: 3m
         alertname: JarvisOutboxReplayFailures
         exp_alerts:
           - exp_labels:
@@ -51,7 +51,7 @@ tests:
               environment: staging
             exp_annotations:
               summary: Synthetic outbox replay failures detected
-      - eval_time: 5m
+      - eval_time: 6m
         alertname: JarvisOutboxReplayFailures
         exp_alerts: []
 
