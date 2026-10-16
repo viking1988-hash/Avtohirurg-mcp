@@ -23,6 +23,7 @@ class AlertContractTests(unittest.TestCase):
             "JarvisOutboxPending",
             "JarvisReconciliationRequired",
             "JarvisOutboxReplayFailures",
+            "JarvisSyntheticFixtureUnavailable",
         }
         self.assertEqual(set(self.blocks), expected)
         self.assertEqual(self.rules.count("  - alert: "), len(expected))
