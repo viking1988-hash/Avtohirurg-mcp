@@ -2,6 +2,11 @@ global:
   scrape_interval: 30s
   evaluation_interval: 1m
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['jarvis-sandbox-alertmanager.railway.internal:9093']
+
 rule_files:
   - /etc/prometheus/alerts.yml
 
