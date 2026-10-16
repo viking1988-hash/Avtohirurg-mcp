@@ -7,5 +7,5 @@ route:
 receivers:
   - name: synthetic-test-sink
     webhook_configs:
-      - url: http://jarvis-synthetic-prometheus-probe.railway.internal:9102/alert
+      - url: http://jarvis-synthetic-prometheus-prob.railway.internal:9102/alert
         send_resolved: true
