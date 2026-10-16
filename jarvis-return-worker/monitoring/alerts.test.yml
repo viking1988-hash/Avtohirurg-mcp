@@ -178,3 +178,21 @@ tests:
       - eval_time: 15m
         alertname: JarvisOutboxReplayFailures
         exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="jarvis-synthetic-fixture"}'
+        values: '0+0x4 1+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: JarvisSyntheticFixtureUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: jarvis-synthetic-fixture
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Isolated synthetic metrics fixture cannot be scraped
+      - eval_time: 6m
+        alertname: JarvisSyntheticFixtureUnavailable
+        exp_alerts: []
