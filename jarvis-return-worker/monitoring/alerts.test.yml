@@ -1,0 +1,62 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="jarvis-sandbox-worker"}'
+        values: '0+0x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: JarvisWorkerUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: jarvis-sandbox-worker
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Sandbox worker metrics unavailable
+
+  - interval: 1m
+    input_series:
+      - series: outbox_pending_total
+        values: '1+0x12'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: JarvisOutboxPending
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Pending outbox events require investigation
+
+  - interval: 1m
+    input_series:
+      - series: reconciliation_required_queue
+        values: '1+0x18'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: JarvisReconciliationRequired
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Manual reconciliation required
+
+  - interval: 1m
+    input_series:
+      - series: outbox_failed_total
+        values: '0 1+0x8'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: JarvisOutboxReplayFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Outbox replay failures detected
