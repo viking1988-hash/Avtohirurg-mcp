@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 1m
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus-sandbox-self
+    static_configs:
+      - targets: ['localhost:9090']
+
+# Worker metrics intentionally not connected until the isolated
+# read-only scrape endpoint and authorization are verified.
+# Never connect to Production or customer-facing endpoints.
