@@ -15,7 +15,7 @@ scrape_configs:
     scrape_timeout: 5s
     metrics_path: /metrics
     authorization:
-      credentials_file: /etc/prometheus/worker-metrics-token
+      credentials_file: /tmp/worker-metrics-token
     static_configs:
       - targets: ['jarvis-worker-metrics-sandbox.railway.internal:8080']
 
