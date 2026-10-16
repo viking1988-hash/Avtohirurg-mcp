@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from app import app
+from jarvis_return_worker.app import app
 
 class Repo:
     def stats(self):
@@ -17,7 +17,7 @@ def test_metrics_rejects_unauthenticated(client):
     assert client.get('/metrics').status_code == 401
 
 def test_metrics_is_read_only_prometheus_text(client, monkeypatch):
-    monkeypatch.setattr('app.render_metrics', lambda repo: b'outbox_pending_total 0\nreconciliation_required_queue 0\noutbox_failed_total 0\n')
+    monkeypatch.setattr('jarvis_return_worker.app.render_metrics', lambda repo: b'outbox_pending_total 0\nreconciliation_required_queue 0\noutbox_failed_total 0\n')
     r=client.get('/metrics',headers={'Authorization':'Bearer metrics-test-token'})
     assert r.status_code == 200
     assert 'outbox_pending_total 0' in r.text
