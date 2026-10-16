@@ -1,0 +1,4 @@
+FROM prom/prometheus:v3.5.0
+COPY jarvis-return-worker/monitoring/prometheus.sandbox.yml /etc/prometheus/prometheus.yml
+COPY jarvis-return-worker/monitoring/alerts.yml /etc/prometheus/alerts.yml
+EXPOSE 9090
