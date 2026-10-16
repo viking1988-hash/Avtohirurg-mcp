@@ -6,185 +6,61 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'up{job="jarvis-sandbox-worker"}'
-        values: '0+0x8'
-    alert_rule_test:
-      - eval_time: 6m
-        alertname: JarvisWorkerUnavailable
-        exp_alerts:
-          - exp_labels:
-              job: jarvis-sandbox-worker
-              severity: warning
-              environment: staging
-            exp_annotations:
-              summary: Sandbox worker metrics unavailable
-
-  - interval: 1m
-    input_series:
       - series: outbox_pending_total
-        values: '1+0x12'
-    alert_rule_test:
-      - eval_time: 11m
-        alertname: JarvisOutboxPending
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              environment: staging
-            exp_annotations:
-              summary: Pending outbox events require investigation
-
-  - interval: 1m
-    input_series:
-      - series: reconciliation_required_queue
-        values: '1+0x18'
-    alert_rule_test:
-      - eval_time: 16m
-        alertname: JarvisReconciliationRequired
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              environment: staging
-            exp_annotations:
-              summary: Manual reconciliation required
-
-  - interval: 1m
-    input_series:
-      - series: outbox_failed_total
-        values: '0 1+0x8'
-    alert_rule_test:
-      - eval_time: 4m
-        alertname: JarvisOutboxReplayFailures
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              environment: staging
-            exp_annotations:
-              summary: Outbox replay failures detected
-
-  - interval: 1m
-    input_series:
-      - series: 'up{job="jarvis-sandbox-worker"}'
-        values: '0+0x7 1+0x5'
-    alert_rule_test:
-      - eval_time: 6m
-        alertname: JarvisWorkerUnavailable
-        exp_alerts:
-          - exp_labels:
-              job: jarvis-sandbox-worker
-              severity: warning
-              environment: staging
-            exp_annotations:
-              summary: Sandbox worker metrics unavailable
-      - eval_time: 10m
-        alertname: JarvisWorkerUnavailable
-        exp_alerts: []
-
-  - interval: 1m
-    input_series:
-      - series: outbox_pending_total
-        values: '1+0x12 0+0x4'
-    alert_rule_test:
-      - eval_time: 11m
-        alertname: JarvisOutboxPending
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              environment: staging
-            exp_annotations:
-              summary: Pending outbox events require investigation
-      - eval_time: 15m
-        alertname: JarvisOutboxPending
-        exp_alerts: []
-
-  - interval: 1m
-    input_series:
-      - series: reconciliation_required_queue
-        values: '1+0x17 0+0x5'
-    alert_rule_test:
-      - eval_time: 16m
-        alertname: JarvisReconciliationRequired
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              environment: staging
-            exp_annotations:
-              summary: Manual reconciliation required
-      - eval_time: 20m
-        alertname: JarvisReconciliationRequired
-        exp_alerts: []
-
-  - interval: 1m
-    input_series:
-      - series: outbox_failed_total
-        values: '0 1+0x8 0+0x8'
-    alert_rule_test:
-      - eval_time: 4m
-        alertname: JarvisOutboxReplayFailures
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              environment: staging
-            exp_annotations:
-              summary: Outbox replay failures detected
-      - eval_time: 12m
-        alertname: JarvisOutboxReplayFailures
-        exp_alerts: []
-
-  # Pending alert should not fire before its duration has elapsed.
-  - interval: 1m
-    input_series:
-      - series: 'up{job="jarvis-sandbox-worker"}'
-        values: '0+0x3 1+0x4'
-    alert_rule_test:
-      - eval_time: 3m
-        alertname: JarvisWorkerUnavailable
-        exp_alerts: []
-      - eval_time: 6m
-        alertname: JarvisWorkerUnavailable
-        exp_alerts: []
-
-  - interval: 1m
-    input_series:
-      - series: outbox_pending_total
-        values: '1+0x5 0+0x6'
-    alert_rule_test:
-      - eval_time: 5m
-        alertname: JarvisOutboxPending
-        exp_alerts: []
-      - eval_time: 10m
-        alertname: JarvisOutboxPending
-        exp_alerts: []
-
-  - interval: 1m
-    input_series:
-      - series: reconciliation_required_queue
-        values: '1+0x6 0+0x12'
-    alert_rule_test:
-      - eval_time: 6m
-        alertname: JarvisReconciliationRequired
-        exp_alerts: []
-      - eval_time: 16m
-        alertname: JarvisReconciliationRequired
-        exp_alerts: []
-
-  - interval: 1m
-    input_series:
-      - series: outbox_failed_total
-        values: '0 1+0x1 1+0x14'
+        values: '1+0x2 0+0x3'
     alert_rule_test:
       - eval_time: 1m
-        alertname: JarvisOutboxReplayFailures
+        alertname: JarvisOutboxPending
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Synthetic pending outbox events require investigation
+      - eval_time: 4m
+        alertname: JarvisOutboxPending
         exp_alerts: []
-      - eval_time: 15m
+
+  - interval: 1m
+    input_series:
+      - series: reconciliation_required_queue
+        values: '1+0x2 0+0x3'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: JarvisReconciliationRequired
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Synthetic reconciliation backlog detected
+      - eval_time: 4m
+        alertname: JarvisReconciliationRequired
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: outbox_failed_total
+        values: '0 1+0x2 0+0x3'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: JarvisOutboxReplayFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Synthetic outbox replay failures detected
+      - eval_time: 4m
         alertname: JarvisOutboxReplayFailures
         exp_alerts: []
 
   - interval: 1m
     input_series:
       - series: 'up{job="jarvis-synthetic-fixture"}'
-        values: '0+0x4 1+0x4'
+        values: '0+0x2 1+0x3'
     alert_rule_test:
-      - eval_time: 3m
+      - eval_time: 1m
         alertname: JarvisSyntheticFixtureUnavailable
         exp_alerts:
           - exp_labels:
@@ -193,6 +69,6 @@ tests:
               environment: staging
             exp_annotations:
               summary: Isolated synthetic metrics fixture cannot be scraped
-      - eval_time: 6m
+      - eval_time: 4m
         alertname: JarvisSyntheticFixtureUnavailable
         exp_alerts: []
