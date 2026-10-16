@@ -60,3 +60,21 @@ tests:
               environment: staging
             exp_annotations:
               summary: Outbox replay failures detected
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="jarvis-sandbox-worker"}'
+        values: '0+0x7 1+0x5'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: JarvisWorkerUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: jarvis-sandbox-worker
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Sandbox worker metrics unavailable
+      - eval_time: 10m
+        alertname: JarvisWorkerUnavailable
+        exp_alerts: []
