@@ -39,7 +39,7 @@ class AlertContractTests(unittest.TestCase):
                       self.blocks["JarvisOutboxPending"])
         self.assertIn("reconciliation_required_queue > 0",
                       self.blocks["JarvisReconciliationRequired"])
-        self.assertIn("outbox_failed_total > 0",
+        self.assertIn("increase(outbox_failed_total[2m]) > 0",
                       self.blocks["JarvisOutboxReplayFailures"])
         self.assertIn('up{job="jarvis-synthetic-fixture"} == 0',
                       self.blocks["JarvisSyntheticFixtureUnavailable"])
