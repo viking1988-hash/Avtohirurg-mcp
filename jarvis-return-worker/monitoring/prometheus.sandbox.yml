@@ -16,6 +16,7 @@ scrape_configs:
 
   - job_name: jarvis-synthetic-fixture
     scrape_interval: 15s
+    scrape_timeout: 5s
     static_configs:
       - targets: ['jarvis-synthetic-metrics-fixture.railway.internal:9101']
 
