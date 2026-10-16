@@ -1,5 +1,7 @@
 """Read-only synthetic Prometheus API probe. No external endpoints or credentials."""
 import json
+import os
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -48,11 +50,12 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 if __name__ == "__main__":
-    for attempt in range(6):
-        try:
-            print("SYNTHETIC_PROMETHEUS_SNAPSHOT " + json.dumps(snapshot(), sort_keys=True), flush=True)
-            break
-        except Exception as exc:
-            print("PROBE_WAIT " + type(exc).__name__, flush=True)
-            time.sleep(5)
-    ThreadingHTTPServer(("0.0.0.0", 9102), Handler).serve_forever()
+    def poll():
+        while True:
+            try:
+                print("SYNTHETIC_PROMETHEUS_SNAPSHOT " + json.dumps(snapshot(), sort_keys=True), flush=True)
+            except Exception as exc:
+                print("PROBE_WAIT " + type(exc).__name__ + " " + str(getattr(exc, 'reason', '')), flush=True)
+            time.sleep(30)
+    threading.Thread(target=poll, daemon=True).start()
+    ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "9102"))), Handler).serve_forever()
