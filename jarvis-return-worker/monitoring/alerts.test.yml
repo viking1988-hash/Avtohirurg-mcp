@@ -129,3 +129,40 @@ tests:
       - eval_time: 15m
         alertname: JarvisOutboxReplayFailures
         exp_alerts: []
+
+  # Pending alert should not fire before its duration has elapsed.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="jarvis-sandbox-worker"}'
+        values: '0+0x3 1+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: JarvisWorkerUnavailable
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: JarvisWorkerUnavailable
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: outbox_pending_total
+        values: '1+0x5 0+0x6'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: JarvisOutboxPending
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: JarvisOutboxPending
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: reconciliation_required_queue
+        values: '1+0x6 0+0x12'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: JarvisReconciliationRequired
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: JarvisReconciliationRequired
+        exp_alerts: []
