@@ -15,10 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate Prometheus alert rule syntax
+      - name: Validate rules and synthetic alert firing scenarios
         run: |
           docker run --rm \
-            -v "${PWD}/jarvis-return-worker/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
+            -w /etc/prometheus/monitoring \
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
-            check rules /etc/prometheus/alerts.yml
+            check rules alerts.yml
+          docker run --rm \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
+            -w /etc/prometheus/monitoring \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            test rules alerts.test.yml
