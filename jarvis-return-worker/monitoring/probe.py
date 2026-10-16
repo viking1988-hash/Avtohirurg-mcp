@@ -1,5 +1,6 @@
 """Read-only synthetic Prometheus API probe. No external endpoints or credentials."""
 import json
+import threading
 import os
 import threading
 import time
@@ -29,7 +30,30 @@ def snapshot():
         key=lambda item: item["name"] or "")
     return result
 
+ALERT_EVENTS = []
+ALERT_LOCK = threading.Lock()
+
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path != "/alert":
+            self.send_error(404)
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(min(size, 65536)))
+            events = [{"status": a.get("status"), "name": a.get("labels", {}).get("alertname")}
+                      for a in payload.get("alerts", [])]
+            with ALERT_LOCK:
+                ALERT_EVENTS.extend(events)
+            print("SYNTHETIC_ALERT_RECEIVED " + json.dumps(events, sort_keys=True), flush=True)
+            body = b"accepted\\n"
+            self.send_response(202)
+        except Exception:
+            body = b"invalid\\n"
+            self.send_response(400)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
     def do_GET(self):
         if self.path == "/health":
             body = b"ok\n"
