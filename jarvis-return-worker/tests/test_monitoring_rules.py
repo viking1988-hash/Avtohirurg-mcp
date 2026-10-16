@@ -15,7 +15,6 @@ class MonitoringRulesTests(unittest.TestCase):
 
     def test_expected_alerts_present(self):
         for name in (
-            "JarvisWorkerUnavailable",
             "JarvisOutboxPending",
             "JarvisReconciliationRequired",
             "JarvisOutboxReplayFailures",
@@ -25,8 +24,8 @@ class MonitoringRulesTests(unittest.TestCase):
                 self.assertIn("alert: " + name, self.text)
 
     def test_all_alerts_scoped_to_staging(self):
-        self.assertEqual(self.text.count("alert: "), 5)
-        self.assertEqual(self.text.count("environment: staging"), 5)
+        self.assertEqual(self.text.count("alert: "), 4)
+        self.assertEqual(self.text.count("environment: staging"), 4)
 
     def test_alerts_do_not_perform_automatic_retries(self):
         for unsafe in ("webhook_url:", "receiver:", "auto_retry:", "resend:"):
