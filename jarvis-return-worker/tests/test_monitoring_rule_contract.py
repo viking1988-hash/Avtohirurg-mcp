@@ -43,7 +43,7 @@ class AlertContractTests(unittest.TestCase):
                       self.blocks["JarvisOutboxReplayFailures"])
         self.assertIn('up{job="jarvis-synthetic-fixture"} == 0',
                       self.blocks["JarvisSyntheticFixtureUnavailable"])
-        self.assertNotIn("JarvisWorkerUnavailable", self.blocks)
+        self.assertNotIn(self.blocks)
 
     def test_no_external_delivery_or_secret_configuration(self):
         forbidden = ("webhook_url:", "api_key:", "bearer_token:", "receiver:",
