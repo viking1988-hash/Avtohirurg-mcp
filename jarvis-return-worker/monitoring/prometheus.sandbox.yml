@@ -13,3 +13,11 @@ scrape_configs:
 # Worker metrics intentionally not connected until the isolated
 # read-only scrape endpoint and authorization are verified.
 # Never connect to Production or customer-facing endpoints.
+
+  - job_name: jarvis-synthetic-fixture
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['jarvis-synthetic-metrics-fixture.railway.internal:9101']
+
+# This is a synthetic fixture in the same isolated Railway project only.
+# The real Worker is NOT scraped; never add its read token to this file.
