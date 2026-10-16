@@ -15,23 +15,11 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  - job_name: jarvis-sandbox-worker
-    scrape_interval: 30s
-    scrape_timeout: 5s
-    metrics_path: /metrics
-    authorization:
-      credentials_file: /tmp/worker-metrics-token
-    static_configs:
-      - targets: ['jarvis-worker-metrics-sandbox.railway.internal:8080']
-
-# Isolated Sandbox worker only. Authorization token is mounted from a
-# Railway secret at runtime; never store it in this repository.
-
-  - job_name: jarvis-synthetic-fixture
+  - job_name: jarvis-synthetic-fixture/
     scrape_interval: 15s
     scrape_timeout: 5s
     static_configs:
       - targets: ['jarvis-synthetic-metrics-fixture.railway.internal:9101']
 
-# This is a synthetic fixture in the same isolated Railway project only.
-# The real Worker is NOT scraped; never add its read token to this file.
+# Synthetic-only test: real Worker metrics are intentionally not scraped here.
+# Real Worker monitoring requires a separate, authorized same-project design.
