@@ -128,3 +128,25 @@ def test_provider_surface_and_metrics(mock_server):
     rendered=generate_latest(metrics._registry).decode()
     for name in ("webhook_requests_total","webhook_success_total","webhook_failed_total","webhook_unknown_total","webhook_replayed_total","webhook_duplicate_prevented_total","webhook_latency_seconds_bucket"):
         assert name in rendered
+
+
+def test_custom_headers_pass_through_but_cannot_override_request_identity(mock_server):
+    p=WebhookProvider(mock_server,headers={"X-Api-Key":"synthetic-key"},allow_insecure_localhost=True)
+    p.send(task(),"idem-safe")
+    assert MockHandler.headers_seen["x-api-key"]=="synthetic-key"
+    for name in ("Idempotency-Key","X-Request-ID","X-Correlation-ID","Host","Content-Length"):
+        with pytest.raises(ValueError):
+            WebhookProvider(mock_server,headers={name:"spoofed"},allow_insecure_localhost=True).send(task(),"idem-safe")
+
+
+def test_webhook_headers_env_is_parsed_and_validated(monkeypatch):
+    from jarvis_return_worker.app import _webhook_headers_from_env
+    monkeypatch.setenv("JARVIS_WEBHOOK_HEADERS_JSON",'{"X-Api-Key":"synthetic"}')
+    monkeypatch.delenv("JARVIS_WEBHOOK_TOKEN",raising=False)
+    assert _webhook_headers_from_env()=={"X-Api-Key":"synthetic"}
+    monkeypatch.setenv("JARVIS_WEBHOOK_HEADERS_JSON",'{"idempotency-key":"spoofed"}')
+    with pytest.raises(ValueError,match="cannot override"):
+        _webhook_headers_from_env()
+    monkeypatch.setenv("JARVIS_WEBHOOK_HEADERS_JSON","[]")
+    with pytest.raises(ValueError,match="must be an object"):
+        _webhook_headers_from_env()
