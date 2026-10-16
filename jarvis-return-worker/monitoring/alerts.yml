@@ -18,7 +18,7 @@ groups:
     annotations:
       summary: Synthetic reconciliation backlog detected
   - alert: JarvisOutboxReplayFailures
-    expr: increase(outbox_failed_total[2m]) > 0
+    expr: increase(outbox_failed_total[3m]) > 0
     for: 30s
     labels:
       severity: warning
