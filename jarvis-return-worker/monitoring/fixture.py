@@ -17,7 +17,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             elapsed = int(time.monotonic() - START)
             # Controlled synthetic transitions: normal -> incident -> recovery.
-            incident = 1 if 120 <= elapsed < 1200 else 0
+            incident = 1 if 120 <= elapsed < 420 else 0
             failed = 1 if elapsed >= 120 else 0
             body = (
                 "# HELP outbox_pending_total Synthetic pending deliveries\n"
