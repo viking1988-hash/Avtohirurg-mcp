@@ -78,3 +78,37 @@ tests:
       - eval_time: 10m
         alertname: JarvisWorkerUnavailable
         exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: outbox_pending_total
+        values: '1+0x12 0+0x4'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: JarvisOutboxPending
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Pending outbox events require investigation
+      - eval_time: 15m
+        alertname: JarvisOutboxPending
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: reconciliation_required_queue
+        values: '1+0x17 0+0x5'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: JarvisReconciliationRequired
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Manual reconciliation required
+      - eval_time: 20m
+        alertname: JarvisReconciliationRequired
+        exp_alerts: []
