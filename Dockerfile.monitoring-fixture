@@ -1,0 +1,4 @@
+FROM python:3.12-alpine
+COPY jarvis-return-worker/monitoring/fixture.py /app/fixture.py
+EXPOSE 9101
+CMD ["python", "/app/fixture.py"]
