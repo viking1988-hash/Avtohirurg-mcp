@@ -2,6 +2,11 @@ global:
   scrape_interval: 30s
   evaluation_interval: 30s
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['jarvis-worker-alertmanager-e2e.railway.internal:9093']
+
 rule_files:
   - /etc/prometheus/worker-alerts.yml
 
