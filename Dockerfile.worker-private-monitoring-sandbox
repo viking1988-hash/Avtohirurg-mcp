@@ -1,0 +1,9 @@
+FROM prom/prometheus:v3.5.0
+COPY jarvis-return-worker/monitoring/prometheus.worker-private.sandbox.yml /etc/prometheus/prometheus.yml
+COPY jarvis-return-worker/monitoring/worker-alerts.sandbox.yml /etc/prometheus/worker-alerts.yml
+COPY jarvis-return-worker/monitoring/start-prometheus.sh /usr/local/bin/start-prometheus
+USER root
+RUN chmod 0755 /usr/local/bin/start-prometheus
+USER nobody
+EXPOSE 9090
+ENTRYPOINT ["/usr/local/bin/start-prometheus"]
