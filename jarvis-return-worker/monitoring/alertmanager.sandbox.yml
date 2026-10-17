@@ -9,5 +9,3 @@ receivers:
     webhook_configs:
       - url: http://jarvis-synthetic-prometheus-probe.railway.internal:9102/alert
         send_resolved: true
-        # Retry delivery on 5xx; receiver must remain internal to Sandbox.
-        max_alerts: 0
