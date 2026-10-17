@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -9,7 +10,7 @@ from .queue import QueueRepository
 from .transport import FakeTransport, TelegramTransport
 from .dispatcher import TransportDispatcher
 from .orchestrator import Orchestrator
-from .worker import Worker, CRMOperationWorker, EmailOperationWorker
+from .worker import Worker, CRMOperationWorker, EmailOperationWorker, WebhookOperationWorker
 from .lease import RecoveryWorker
 from .api import router
 from .health import ready
@@ -18,6 +19,8 @@ from .outbox import OutboxReplay, ReplayWorker
 from .crm import CRMAdapter, CRMProvider
 from .email_adapter import EmailAdapter
 from .email_provider import EmailProvider
+from .webhook_provider import WebhookProvider
+from .webhook_adapter import WebhookAdapter
 
 
 def _project_event(conn,event):
@@ -29,6 +32,28 @@ def _project_event(conn,event):
         (event["event_id"],event["aggregate_id"],event["event_type"],
          event["event_version"],Jsonb(event["payload"])),
     )
+
+
+
+_WEBHOOK_CONTROL_HEADERS={"host","content-length","connection","transfer-encoding","idempotency-key","x-request-id","x-correlation-id"}
+
+
+def _webhook_headers_from_env():
+    raw=os.environ.get('JARVIS_WEBHOOK_HEADERS_JSON','{}')
+    try:
+        headers=json.loads(raw)
+    except (TypeError,ValueError):
+        raise ValueError('invalid JARVIS_WEBHOOK_HEADERS_JSON') from None
+    if not isinstance(headers,dict) or any(not isinstance(k,str) or not isinstance(v,str) for k,v in headers.items()):
+        raise ValueError('JARVIS_WEBHOOK_HEADERS_JSON must be an object of string values')
+    if any(k.strip().lower() in _WEBHOOK_CONTROL_HEADERS for k in headers):
+        raise ValueError('Webhook headers cannot override request context headers')
+    token=os.environ.get('JARVIS_WEBHOOK_TOKEN','')
+    if token and any(k.strip().lower()=='authorization' for k in headers):
+        raise ValueError('Configure either JARVIS_WEBHOOK_TOKEN or Authorization in JARVIS_WEBHOOK_HEADERS_JSON')
+    if token:
+        headers['Authorization']='Bearer '+token
+    return headers
 
 
 def make_dispatcher(config, repository):
@@ -58,6 +83,15 @@ def make_dispatcher(config, repository):
             int(os.environ.get('JARVIS_EMAIL_SANDBOX_SMTP_PORT','1025')),
             os.environ.get('JARVIS_EMAIL_SANDBOX_FROM','jarvis@localhost.test'),
             int(os.environ.get('JARVIS_EMAIL_TIMEOUT_SECONDS','8'))),enabled=True)
+    webhook_url=os.environ.get('JARVIS_WEBHOOK_BASE_URL','')
+    webhook_token=os.environ.get('JARVIS_WEBHOOK_TOKEN','')
+    headers=_webhook_headers_from_env()
+    if webhook_url or webhook_token or headers:
+        if not webhook_url:
+            raise ValueError('Webhook endpoint is required when Webhook credentials or headers are configured')
+        dispatcher.register('webhook',WebhookProvider(webhook_url,
+            int(os.environ.get('JARVIS_WEBHOOK_TIMEOUT_SECONDS','8')),
+            int(os.environ.get('JARVIS_WEBHOOK_MAX_RETRIES','2')),headers=headers),enabled=True)
     return dispatcher
 
 
@@ -78,6 +112,7 @@ async def lifespan(app):
     registry.register("jarvis.lifecycle-projector","*",_project_event,version=1)
     CRMAdapter().register(registry)
     EmailAdapter().register(registry)
+    WebhookAdapter().register(registry)
     replay=OutboxReplay(repo,registry,owner=config.worker_id)
     orchestrator=Orchestrator(repo,dispatcher,event_bus=registry)
     transport=dispatcher.dispatch(os.environ.get('JARVIS_TRANSPORT','fake')).client
@@ -90,6 +125,8 @@ async def lifespan(app):
         loops.append(asyncio.create_task(CRMOperationWorker(orchestrator,stop).run()))
     if 'email' in dispatcher.names():
         loops.append(asyncio.create_task(EmailOperationWorker(orchestrator,stop).run()))
+    if 'webhook' in dispatcher.names():
+        loops.append(asyncio.create_task(WebhookOperationWorker(orchestrator,stop).run()))
     app.state.config,app.state.repository,app.state.stop,app.state.orchestrator=config,repo,stop,orchestrator
     app.state.event_registry,app.state.outbox_replay=registry,replay
     app.state.loops=loops
