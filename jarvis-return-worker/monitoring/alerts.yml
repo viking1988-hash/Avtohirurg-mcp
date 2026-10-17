@@ -33,3 +33,11 @@ groups:
       environment: staging
     annotations:
       summary: Outbox replay failures detected
+  - alert: JarvisSyntheticFixtureUnavailable
+    expr: up{job="jarvis-synthetic-fixture"} == 0
+    for: 5m
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Synthetic metrics fixture unavailable
