@@ -11,7 +11,7 @@ class WebhookProvider:
   except ValueError:ip=None
   if p.scheme!=("http" if local else "https") or not host or p.username or p.password or p.query or p.fragment or (ip and not local) or (host=="localhost" and not local):raise ValueError("Webhook requires HTTPS base URL without credentials or query")
   if not .01<=float(timeout_seconds)<=30:raise ValueError("invalid webhook timeout")
-  self.__base_url=base_url.rstrip("/");self.__headers=dict(headers or {});self.http=http_client or HTTPClient(timeout_seconds,max_retries)
+  self.__base_url=base_url.rstrip("/");self.__headers=dict(headers or {});self.http=http_client or HTTPClient(timeout_seconds,max_retries,allow_localhost=local)
  @staticmethod
  def _path(task):
   p=task.get("path")
