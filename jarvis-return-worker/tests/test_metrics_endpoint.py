@@ -1,5 +1,4 @@
 import asyncio
-import pytest
 import jarvis_return_worker.app as worker_app
 
 
