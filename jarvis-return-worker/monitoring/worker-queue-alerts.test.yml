@@ -1,0 +1,34 @@
+# promtool test rules jarvis-return-worker/monitoring/worker-queue-alerts.test.yml
+rule_files:
+  - jarvis-return-worker/monitoring/worker-queue-alerts.proposed.sandbox.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'queue_size{job="jarvis-sandbox-worker",instance="synthetic:8080"}'
+        values: '0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0'
+      - series: 'outbox_pending_total{job="jarvis-sandbox-worker",instance="synthetic:8080"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'replay_queue_size{job="jarvis-sandbox-worker",instance="synthetic:8080"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'reconciliation_required_queue{job="jarvis-sandbox-worker",instance="synthetic:8080"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'outbox_failed_total{job="jarvis-sandbox-worker",instance="synthetic:8080"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: JarvisReturnQueueBacklog
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: JarvisReturnQueueBacklog
+        exp_alerts:
+          - exp_labels:
+              job: jarvis-sandbox-worker
+              instance: synthetic:8080
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Jarvis staging queue has remained nonempty for 15 minutes
+      - eval_time: 17m
+        alertname: JarvisReturnQueueBacklog
+        exp_alerts: []
