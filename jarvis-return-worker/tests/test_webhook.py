@@ -92,7 +92,7 @@ def test_conflict_is_unknown_for_side_effecting_request(mock_server):
 
 def test_get_retries_with_bounded_backoff(mock_server):
     MockHandler.statuses=[429,200]
-    client=HTTPClient(timeout_seconds=1,max_retries=1,opener=None,sleep=lambda _:None,random_fn=lambda:0)
+    client=HTTPClient(timeout_seconds=1,max_retries=1,opener=None,sleep=lambda _:None,random_fn=lambda:0,allow_localhost=True)
     webhook=WebhookProvider(mock_server,http_client=client,allow_insecure_localhost=True)
     from jarvis_return_worker.metrics import _webhook_requests
     before=_webhook_requests._value.get()
@@ -150,3 +150,33 @@ def test_webhook_headers_env_is_parsed_and_validated(monkeypatch):
     monkeypatch.setenv("JARVIS_WEBHOOK_HEADERS_JSON","[]")
     with pytest.raises(ValueError,match="must be an object"):
         _webhook_headers_from_env()
+
+
+@pytest.mark.parametrize("address,family,sockaddr", [
+    ("127.0.0.1", socket.AF_INET, lambda port: ("127.0.0.1", port)),
+    ("10.20.30.40", socket.AF_INET, lambda port: ("10.20.30.40", port)),
+    ("169.254.169.254", socket.AF_INET, lambda port: ("169.254.169.254", port)),
+    ("::1", socket.AF_INET6, lambda port: ("::1", port, 0, 0)),
+])
+def test_dns_private_and_loopback_addresses_are_blocked_before_connect(mock_server,address,family,sockaddr):
+    def resolver(host, port, **kwargs):
+        return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr(port))]
+    client=HTTPClient(timeout_seconds=.5,max_retries=0,resolver=resolver)
+    webhook=WebhookProvider("https://hooks.example.test",http_client=client)
+    with pytest.raises(DeliveryError) as error:
+        webhook.send(task(),"idem")
+    assert error.value.classification==Classification.UNKNOWN
+    assert MockHandler.calls==0
+
+def test_mixed_public_and_private_dns_answers_are_all_rejected(mock_server):
+    def resolver(host,port,**kwargs):
+        return [
+            (socket.AF_INET,socket.SOCK_STREAM,socket.IPPROTO_TCP,"",("93.184.216.34",port)),
+            (socket.AF_INET,socket.SOCK_STREAM,socket.IPPROTO_TCP,"",("192.168.1.10",port)),
+        ]
+    client=HTTPClient(timeout_seconds=.5,max_retries=0,resolver=resolver)
+    webhook=WebhookProvider("https://hooks.example.test",http_client=client)
+    with pytest.raises(DeliveryError) as error:
+        webhook.send(task(),"idem")
+    assert error.value.classification==Classification.UNKNOWN
+    assert MockHandler.calls==0
