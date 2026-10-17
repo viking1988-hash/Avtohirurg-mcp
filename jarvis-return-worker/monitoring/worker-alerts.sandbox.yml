@@ -9,3 +9,12 @@ groups:
           environment: staging
         annotations:
           summary: Sandbox Worker metrics scrape unavailable
+      - alert: JarvisPrivateAlertPipelineE2E
+        expr: vector(1)
+        for: 0s
+        labels:
+          severity: info
+          environment: staging
+          test: isolated-e2e
+        annotations:
+          summary: Temporary isolated alert delivery verification; no Worker disruption
