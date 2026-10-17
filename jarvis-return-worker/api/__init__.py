@@ -3,7 +3,6 @@ import secrets
 from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, ConfigDict
-from ..metrics import render_metrics
 from ..queue import Conflict
 from ..reconciliation import read_task, log_rejected
 
@@ -98,9 +97,6 @@ async def reconcile(body:Reconciliation,request:Request,actor:str=Depends(human)
                'use the versioned /queue/{task_id}/ reconciliation API')
     raise HTTPException(410,'use the versioned /queue/{task_id}/ reconciliation API')
 
-@router.get('/metrics',dependencies=[Depends(read)])
-async def metrics(request:Request):
-    return Response(await call(render_metrics,request.app.state.repository),media_type='text/plain; version=0.0.4')
 
 @router.get('/crm/operations/{event_id}')
 async def crm_operation(event_id:str,request:Request,actor:str=Depends(read)):

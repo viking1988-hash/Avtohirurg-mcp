@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from psycopg.types.json import Jsonb
 from .config import Config
 from .queue import QueueRepository
@@ -20,6 +20,7 @@ from .email_adapter import EmailAdapter
 from .email_provider import EmailProvider
 from .webhook_provider import WebhookProvider
 from .webhook_adapter import WebhookAdapter
+from .metrics import render_metrics
 
 
 def _project_event(conn,event):
@@ -131,3 +132,12 @@ async def health():
 async def readiness(request:Request):
     return await ready(request)
 
+
+@app.get('/metrics', include_in_schema=False)
+async def metrics(request: Request):
+    token=os.environ.get('JARVIS_METRICS_TOKEN','')
+    supplied=request.headers.get('authorization','')
+    if not token or supplied != 'Bearer '+token:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401,detail='metrics authentication required')
+    return Response(content=await asyncio.to_thread(render_metrics,request.app.state.repository),media_type='text/plain; version=0.0.4; charset=utf-8')
