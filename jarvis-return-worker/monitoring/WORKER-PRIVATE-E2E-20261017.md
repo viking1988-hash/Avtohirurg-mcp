@@ -40,3 +40,7 @@ wget -qO- 'http://127.0.0.1:9090/api/v1/rules'
 wget -qO- 'http://127.0.0.1:9090/api/v1/alertmanagers'
 wget -qO- 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22jarvis-sandbox-worker%22%7D'
 ```
+
+## Metrics inventory confirmed from live Prometheus (2026-10-17)
+
+The operator ran `/api/v1/label/__name__/values` and confirmed these metric names are present: `outbox_pending_total`, `outbox_failed_total`, `outbox_replayed_total`, `queue_size`, `replay_queue_size`, `oldest_task`, `reconciliation_required_queue`, `reconciliation_required_total`, `retry_count`, `replay_latency_seconds_bucket`, `replay_latency_seconds_count`, `replay_latency_seconds_sum`, `up`. Names alone do not establish current values, metric types, units, or thresholds. Follow up with instant-vector queries and inspect HELP/TYPE at authenticated Worker /metrics before setting alert thresholds. 
