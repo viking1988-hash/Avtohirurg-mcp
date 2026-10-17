@@ -2,7 +2,6 @@
 import json
 import threading
 import os
-import threading
 import time
 import urllib.parse
 import urllib.request
@@ -32,11 +31,25 @@ def snapshot():
 
 ALERT_EVENTS = []
 ALERT_LOCK = threading.Lock()
+# Disabled by default. Set only on an isolated Sandbox probe deployment.
+REJECT_FIRST = max(0, min(20, int(os.environ.get("SYNTHETIC_REJECT_FIRST", "0"))))
+POST_ATTEMPTS = 0
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/alert":
             self.send_error(404)
+            return
+        global POST_ATTEMPTS
+        with ALERT_LOCK:
+            POST_ATTEMPTS += 1
+            reject = POST_ATTEMPTS <= REJECT_FIRST
+            attempt = POST_ATTEMPTS
+        if reject:
+            print("SYNTHETIC_ALERT_REJECTED_503 " + json.dumps({"attempt": attempt}), flush=True)
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
         try:
             size = int(self.headers.get("Content-Length", "0"))
