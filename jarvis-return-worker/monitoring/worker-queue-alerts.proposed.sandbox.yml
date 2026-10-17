@@ -1,0 +1,45 @@
+# Proposed staging-only rules. NOT DEPLOYED. Validate with promtool first.
+# Expressions use confirmed metric names and baseline; thresholds are provisional.
+groups:
+  - name: jarvis-return-queue-staging-proposed
+    rules:
+      - alert: JarvisReturnQueueBacklog
+        expr: queue_size{job="jarvis-sandbox-worker"} > 0
+        for: 15m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: Jarvis staging queue has remained nonempty for 15 minutes
+      - alert: JarvisReturnOutboxBacklog
+        expr: outbox_pending_total{job="jarvis-sandbox-worker"} > 0
+        for: 15m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: Jarvis staging outbox has remained pending for 15 minutes
+      - alert: JarvisReturnReplayBacklog
+        expr: replay_queue_size{job="jarvis-sandbox-worker"} > 0
+        for: 15m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: Jarvis staging replay queue has remained nonempty for 15 minutes
+      - alert: JarvisReturnReconciliationPending
+        expr: reconciliation_required_queue{job="jarvis-sandbox-worker"} > 0
+        for: 15m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: Jarvis staging reconciliation queue has remained nonempty for 15 minutes
+      - alert: JarvisReturnOutboxFailureIncrease
+        expr: increase(outbox_failed_total{job="jarvis-sandbox-worker"}[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: Jarvis staging outbox failure count increased within 15 minutes
