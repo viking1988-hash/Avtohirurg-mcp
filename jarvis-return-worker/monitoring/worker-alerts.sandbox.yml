@@ -1,0 +1,11 @@
+groups:
+  - name: jarvis-worker-private-sandbox
+    rules:
+      - alert: JarvisWorkerUnavailable
+        expr: up{job="jarvis-sandbox-worker"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: Sandbox Worker metrics scrape unavailable
