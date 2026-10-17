@@ -44,3 +44,7 @@ wget -qO- 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22jarvis-sandbox
 ## Metrics inventory confirmed from live Prometheus (2026-10-17)
 
 The operator ran `/api/v1/label/__name__/values` and confirmed these metric names are present: `outbox_pending_total`, `outbox_failed_total`, `outbox_replayed_total`, `queue_size`, `replay_queue_size`, `oldest_task`, `reconciliation_required_queue`, `reconciliation_required_total`, `retry_count`, `replay_latency_seconds_bucket`, `replay_latency_seconds_count`, `replay_latency_seconds_sum`, `up`. Names alone do not establish current values, metric types, units, or thresholds. Follow up with instant-vector queries and inspect HELP/TYPE at authenticated Worker /metrics before setting alert thresholds. 
+
+## Live baseline (Prometheus instant-vector, 2026-10-17)
+
+All from job `jarvis-sandbox-worker`: `queue_size=0`, `oldest_task=0`, `reconciliation_required_queue=0`, `outbox_pending_total=0`, `replay_queue_size=0`. These are a point-in-time observation only, not proof of continuous health or queue draining. `oldest_task` unit/type still unknown.
