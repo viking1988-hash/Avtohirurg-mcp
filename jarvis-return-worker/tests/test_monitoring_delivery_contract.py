@@ -31,10 +31,12 @@ class DeliveryContractTests(unittest.TestCase):
         self.assertIn("self.send_response(400)", self.probe)
         self.assertIn("SYNTHETIC_ALERT_RECEIVED", self.probe)
 
-    def test_no_failure_injection_claim(self):
-        # A real retry test needs an isolated receiver that deliberately
-        # returns HTTP 503, then recovers, with observed Alertmanager logs.
-        self.assertNotIn("SYNTHETIC_ALERT_REJECTED_503", self.probe)
+    def test_fault_injection_is_opt_in_and_bounded(self):
+        self.assertIn('os.environ.get("SYNTHETIC_REJECT_FIRST", "0")', self.probe)
+        self.assertIn("min(20,", self.probe)
+        self.assertIn("SYNTHETIC_ALERT_REJECTED_503", self.probe)
+        self.assertIn("self.send_response(503)", self.probe)
+        self.assertIn("POST_ATTEMPTS <= REJECT_FIRST", self.probe)
 
 
 if __name__ == "__main__":
