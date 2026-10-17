@@ -21,3 +21,5 @@ Providers do not call Queue or write storage. Registration uses the same Dispatc
 Set `JARVIS_WEBHOOK_BASE_URL` to an HTTPS origin/prefix. Optional settings: `JARVIS_WEBHOOK_TIMEOUT_SECONDS`, `JARVIS_WEBHOOK_MAX_RETRIES`, and `JARVIS_WEBHOOK_HEADERS_JSON`. Tests use only a local mock server.
 
 Supported methods: GET, POST, PUT, PATCH, DELETE. 2xx responses are receipts; HTTP 202 is accepted. Missing provider response IDs stay null; Jarvis request ID is always recorded.
+
+The HTTP client resolves DNS at connection time, rejects an entire answer set that contains any non-public address, and connects to the validated socket address while preserving the original host for TLS SNI and certificate checks. Redirects are disabled. The endpoint must resolve only to public IP addresses. Local loopback is supported only through the explicit test-only constructor option.
