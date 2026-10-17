@@ -1,0 +1,35 @@
+groups:
+- name: jarvis-sandbox-synthetic
+  rules:
+  - alert: JarvisOutboxPending
+    expr: outbox_pending_total > 0
+    for: 30s
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Synthetic pending outbox events require investigation
+  - alert: JarvisReconciliationRequired
+    expr: reconciliation_required_queue > 0
+    for: 30s
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Synthetic reconciliation backlog detected
+  - alert: JarvisOutboxReplayFailures
+    expr: increase(outbox_failed_total[3m]) > 0
+    for: 30s
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Synthetic outbox replay failures detected
+  - alert: JarvisSyntheticFixtureUnavailable
+    expr: up{job="jarvis-synthetic-fixture"} == 0
+    for: 30s
+    labels:
+      severity: warning
+      environment: staging
+    annotations:
+      summary: Isolated synthetic metrics fixture cannot be scraped

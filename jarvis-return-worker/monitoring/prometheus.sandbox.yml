@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 1m
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['jarvis-sandbox-alertmanager.railway.internal:9093']
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: jarvis-synthetic-fixture
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ['jarvis-synthetic-metrics-fixture.railway.internal:9101']
+
+# Synthetic-only test: real Worker metrics are intentionally not scraped here.
+# Real Worker monitoring requires a separate, authorized same-project design.

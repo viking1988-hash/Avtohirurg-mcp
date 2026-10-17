@@ -1,0 +1,11 @@
+route:
+  receiver: isolated-retry-test-sink
+  group_by: ['alertname', 'environment', 'run_id']
+  group_wait: 1s
+  group_interval: 5s
+  repeat_interval: 1h
+receivers:
+  - name: isolated-retry-test-sink
+    webhook_configs:
+      - url: http://jarvis-retry-e2e-receiver.railway.internal:9102/alert
+        send_resolved: true

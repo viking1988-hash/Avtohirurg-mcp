@@ -1,0 +1,4 @@
+FROM prom/alertmanager:v0.28.1
+COPY jarvis-return-worker/monitoring/alertmanager.sandbox.yml /etc/alertmanager/alertmanager.yml
+EXPOSE 9093
+ENTRYPOINT ["/bin/alertmanager", "--config.file=/etc/alertmanager/alertmanager.yml", "--web.listen-address=0.0.0.0:9093"]

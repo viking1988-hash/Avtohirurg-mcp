@@ -1,0 +1,11 @@
+route:
+  receiver: synthetic-test-sink
+  group_by: ['alertname', 'environment']
+  group_wait: 2s
+  group_interval: 10s
+  repeat_interval: 1h
+receivers:
+  - name: synthetic-test-sink
+    webhook_configs:
+      - url: http://jarvis-synthetic-prometheus-probe.railway.internal:9102/alert
+        send_resolved: true
