@@ -1,0 +1,26 @@
+# Run: promtool test rules jarvis-return-worker/monitoring/worker-alerts.test.yml
+rule_files:
+  - jarvis-return-worker/monitoring/worker-alerts.sandbox.yml
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'up{job="jarvis-sandbox-worker",instance="synthetic-worker:8080"}'
+        values: '1 1 0 0 0 0 0 0 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: JarvisWorkerUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: JarvisWorkerUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: jarvis-sandbox-worker
+              instance: synthetic-worker:8080
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Sandbox Worker metrics scrape unavailable
+      - eval_time: 4m
+        alertname: JarvisWorkerUnavailable
+        exp_alerts: []
