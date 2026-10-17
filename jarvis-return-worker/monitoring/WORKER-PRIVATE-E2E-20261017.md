@@ -48,3 +48,7 @@ The operator ran `/api/v1/label/__name__/values` and confirmed these metric name
 ## Live baseline (Prometheus instant-vector, 2026-10-17)
 
 All from job `jarvis-sandbox-worker`: `queue_size=0`, `oldest_task=0`, `reconciliation_required_queue=0`, `outbox_pending_total=0`, `replay_queue_size=0`. These are a point-in-time observation only, not proof of continuous health or queue draining. `oldest_task` unit/type still unknown.
+
+## Additional observed counters (2026-10-17)
+
+Prometheus instant-vector from `jarvis-sandbox-worker`: `retry_count=1`, `outbox_replayed_total=16`, `outbox_failed_total=0`, `reconciliation_required_total=0`. These are observed absolute samples, not verified rate/counter semantics; do not alert on historical nonzero values alone. Verify metric HELP/TYPE before using `increase()`.
