@@ -1,0 +1,4 @@
+FROM python:3.12-alpine
+COPY jarvis-return-worker/monitoring/private-alert-sink.py /app.py
+EXPOSE 8080
+CMD ["python", "-u", "/app.py"]
