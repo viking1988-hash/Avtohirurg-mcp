@@ -1,0 +1,3 @@
+FROM python:3.12-alpine
+COPY jarvis-return-worker/monitoring/retry_e2e_sender.py /app/sender.py
+CMD ["python", "-u", "/app/sender.py"]

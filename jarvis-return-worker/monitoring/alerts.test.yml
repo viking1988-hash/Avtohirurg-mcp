@@ -1,0 +1,86 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: outbox_pending_total
+        values: '1+0x2 0+0x3'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: JarvisOutboxPending
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Synthetic pending outbox events require investigation
+      - eval_time: 4m
+        alertname: JarvisOutboxPending
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: reconciliation_required_queue
+        values: '1+0x2 0+0x3'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: JarvisReconciliationRequired
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Synthetic reconciliation backlog detected
+      - eval_time: 4m
+        alertname: JarvisReconciliationRequired
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: outbox_failed_total
+        values: '0 1 2 3+0x8'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: JarvisOutboxReplayFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Synthetic outbox replay failures detected
+      - eval_time: 6m
+        alertname: JarvisOutboxReplayFailures
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: outbox_failed_total
+        values: '0 1+0x1 1+0x4'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: JarvisOutboxReplayFailures
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: JarvisOutboxReplayFailures
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="jarvis-synthetic-fixture"}'
+        values: '0+0x2 1+0x3'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: JarvisSyntheticFixtureUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: jarvis-synthetic-fixture
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Isolated synthetic metrics fixture cannot be scraped
+      - eval_time: 4m
+        alertname: JarvisSyntheticFixtureUnavailable
+        exp_alerts: []

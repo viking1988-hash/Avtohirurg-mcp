@@ -1,0 +1,4 @@
+FROM python:3.12-alpine
+COPY jarvis-return-worker/monitoring/probe.py /app/probe.py
+EXPOSE 9102
+CMD ["python", "/app/probe.py"]
