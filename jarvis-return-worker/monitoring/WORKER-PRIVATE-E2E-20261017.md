@@ -68,3 +68,5 @@ Prometheus instant-vector from `jarvis-sandbox-worker`: `retry_count=1`, `outbox
 - Deployment log 10:20:57Z: `TSDB started`, `Completed loading of configuration file`, `Server is ready to receive web requests.`.
 - TSDB replayed WAL segment 0, but **no attached persistent Railway volume** is configured; WAL replay is NOT proof of pre-restart history retention. Previous samples may be lost. No post-restart Prometheus API query yet; scrape and alertmanager connection must be rechecked.
 - Alertmanager and synthetic sink latest deployments also `SUCCESS`, neither has an attached volume.
+
+- Operator verified after redeploy: Prometheus API `up{job="jarvis-sandbox-worker"}` returned `1` (sample timestamp 1792319296.852). Worker scrape recovery PASS; alert rule and Alertmanager discovery post-redeploy still need independent verification.
