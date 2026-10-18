@@ -59,3 +59,5 @@ Prometheus instant-vector from `jarvis-sandbox-worker`: `retry_count=1`, `outbox
 - `promtool check rules /etc/prometheus/worker-alerts.yml`: `SUCCESS: 1 rules found`.
 - `promtool test rules /tmp/jarvis-worker-alert.test.yml`: `SUCCESS`. Test simulates Worker `up` 1 -> 0 -> 1 and checks firing after 2-minute hold and resolution after recovery.
 - This is rule-level simulation only; Prometheus-originated live Alertmanager delivery remains unverified.
+
+- `promtool test rules /tmp/jarvis-queue-alerts.test.yml`: `SUCCESS` (operator output). Synthetic `queue_size` 0 -> 1 -> 0; alert pending at 15m, firing at 16m, resolved at 17m. This validates the 15m backlog rule at unit-test level, not a live Railway incident.
