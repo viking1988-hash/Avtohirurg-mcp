@@ -61,3 +61,10 @@ Prometheus instant-vector from `jarvis-sandbox-worker`: `retry_count=1`, `outbox
 - This is rule-level simulation only; Prometheus-originated live Alertmanager delivery remains unverified.
 
 - `promtool test rules /tmp/jarvis-queue-alerts.test.yml`: `SUCCESS` (operator output). Synthetic `queue_size` 0 -> 1 -> 0; alert pending at 15m, firing at 16m, resolved at 17m. This validates the 15m backlog rule at unit-test level, not a live Railway incident.
+
+## Real isolated Prometheus redeployment (2026-10-18)
+
+- Railway service `jarvis-worker-private-prometheus-e2e`, staging only, deployment `58e79386-5e1d-4963-a519-aa36e4ae8ba3`: `SUCCESS`.
+- Deployment log 10:20:57Z: `TSDB started`, `Completed loading of configuration file`, `Server is ready to receive web requests.`.
+- TSDB replayed WAL segment 0, but **no attached persistent Railway volume** is configured; WAL replay is NOT proof of pre-restart history retention. Previous samples may be lost. No post-restart Prometheus API query yet; scrape and alertmanager connection must be rechecked.
+- Alertmanager and synthetic sink latest deployments also `SUCCESS`, neither has an attached volume.
