@@ -52,3 +52,10 @@ All from job `jarvis-sandbox-worker`: `queue_size=0`, `oldest_task=0`, `reconcil
 ## Additional observed counters (2026-10-17)
 
 Prometheus instant-vector from `jarvis-sandbox-worker`: `retry_count=1`, `outbox_replayed_total=16`, `outbox_failed_total=0`, `reconciliation_required_total=0`. These are observed absolute samples, not verified rate/counter semantics; do not alert on historical nonzero values alone. Verify metric HELP/TYPE before using `increase()`.
+
+## Operator-verified promtool tests (2026-10-18)
+
+- `promtool --version`: Prometheus promtool 3.5.0.
+- `promtool check rules /etc/prometheus/worker-alerts.yml`: `SUCCESS: 1 rules found`.
+- `promtool test rules /tmp/jarvis-worker-alert.test.yml`: `SUCCESS`. Test simulates Worker `up` 1 -> 0 -> 1 and checks firing after 2-minute hold and resolution after recovery.
+- This is rule-level simulation only; Prometheus-originated live Alertmanager delivery remains unverified.
