@@ -1,0 +1,31 @@
+name: Jarvis Sandbox Alert Rules
+
+on:
+  pull_request:
+    paths:
+      - 'jarvis-return-worker/monitoring/**'
+      - '.github/workflows/jarvis-sandbox-alert-rules.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  promtool-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate rules and synthetic alert firing scenarios
+        run: |
+          docker run --rm \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
+            -w /etc/prometheus/monitoring \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            check rules alerts.yml
+          docker run --rm \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
+            -w /etc/prometheus/monitoring \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            test rules alerts.test.yml
