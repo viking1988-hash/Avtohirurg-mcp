@@ -70,3 +70,11 @@ Prometheus instant-vector from `jarvis-sandbox-worker`: `retry_count=1`, `outbox
 - Alertmanager and synthetic sink latest deployments also `SUCCESS`, neither has an attached volume.
 
 - Operator verified after redeploy: Prometheus API `up{job="jarvis-sandbox-worker"}` returned `1` (sample timestamp 1792319296.852). Worker scrape recovery PASS; alert rule and Alertmanager discovery post-redeploy still need independent verification.
+
+## Post-redeploy API verification (2026-10-18)
+
+Operator confirmed on restarted isolated Prometheus:
+- `/api/v1/query?query=up{job="jarvis-sandbox-worker"}`: `up=1`.
+- `/api/v1/rules`: `JarvisWorkerUnavailable` loaded from `/etc/prometheus/worker-alerts.yml`, `health=ok`, `state=inactive`, `duration=120s`, group interval 30s, last evaluation 2026-10-18T10:33:29Z.
+- `/api/v1/alertmanagers`: one active `jarvis-worker-alertmanager-e2e.railway.internal:9093`, zero dropped.
+- Conclusion: Prometheus service restart and live functional recovery PASS. Persistence of historical time series across redeploy NOT VERIFIED; no attached Railway volumes.
