@@ -3,7 +3,7 @@ COPY jarvis-return-worker/monitoring/prometheus.worker-private.sandbox.yml /etc/
 COPY jarvis-return-worker/monitoring/worker-alerts.sandbox.yml /etc/prometheus/worker-alerts.yml
 COPY jarvis-return-worker/monitoring/start-prometheus.sh /usr/local/bin/start-prometheus
 USER root
-RUN chmod 0755 /usr/local/bin/start-prometheus
+RUN sed -i 's/\r$//' /usr/local/bin/start-prometheus && chmod 0755 /usr/local/bin/start-prometheus
 USER root
 EXPOSE 9090
 ENTRYPOINT ["/usr/local/bin/start-prometheus"]
