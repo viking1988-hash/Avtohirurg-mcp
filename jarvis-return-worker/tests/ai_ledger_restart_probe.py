@@ -3,13 +3,20 @@
 Invoked before and after the existing CI PostgreSQL container restart.
 No provider API or production connection is used.
 """
+import importlib.util
 import os
 import sys
-import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+package = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location(
+    "jarvis_return_worker", package / "__init__.py",
+    submodule_search_locations=[str(package)],
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules["jarvis_return_worker"] = module
+spec.loader.exec_module(module)
 from jarvis_return_worker.queue import QueueRepository
 
 dsn = os.environ["JARVIS_WORKER_CI_DATABASE_URL"]
