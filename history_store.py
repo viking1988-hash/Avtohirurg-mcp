@@ -172,9 +172,16 @@ def list_open_return_tasks(limit=100):
             rows=cur.fetchall()
     return [{"task_id":r[0],"client_key":r[1],"task_type":r[2],"due_date":r[3],"status":r[4],"payload":r[5],"created_at":r[6].isoformat() if r[6] else None} for r in rows]
 
+# This legacy endpoint may prepare or cancel a task, but it must never be able
+# to mark delivery complete. DONE is reserved for the receipt-backed worker flow.
+_ALLOWED_RETURN_TASK_STATUS_UPDATES = frozenset({"OPEN", "READY", "CANCELLED"})
+
+def is_return_task_status_allowed(status):
+    return str(status or "").strip().upper() in _ALLOWED_RETURN_TASK_STATUS_UPDATES
+
 def update_return_task_status(task_id, status):
     status = str(status or "").strip().upper()
-    if status not in {"OPEN", "READY", "DONE", "CANCELLED"}:
+    if not is_return_task_status_allowed(status):
         raise ValueError("invalid task status")
     with _connect() as conn:
         with conn.cursor() as cur:
