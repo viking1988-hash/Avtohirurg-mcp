@@ -16,6 +16,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 import wordpress_client as wp
 import history_store
 import n8n_client
+from write_approval import require_human_approval
 
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "").strip()
 if not MCP_TOKEN:
@@ -243,20 +244,22 @@ def wordpress_get_page(page_id: int) -> str:
 
 @mcp.tool()
 def wordpress_update_page(page_id: int, fields_json: str) -> str:
-    """Обновляет разрешённые поля страницы WordPress. fields_json должен быть JSON-объектом."""
+    """Запись отключена до появления серверного human-approval gate."""
     fields = json.loads(fields_json)
     if not isinstance(fields, dict):
         raise ValueError("fields_json must decode to a JSON object")
+    require_human_approval()
     _log_tool("wordpress_update_page", page_id=page_id, fields=list(fields.keys()))
     return json.dumps(wp.update_page(page_id, fields), ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
 def wordpress_cf7_feedback(form_id: int, fields_json: str) -> str:
-    """Отправляет тестовый payload в Contact Form 7 REST endpoint. Не логирует секреты."""
+    """Отправка отключена до появления серверного human-approval gate."""
     fields = json.loads(fields_json)
     if not isinstance(fields, dict):
         raise ValueError("fields_json must decode to a JSON object")
+    require_human_approval()
     _log_tool("wordpress_cf7_feedback", form_id=form_id, field_names=list(fields.keys()))
     return json.dumps(wp.cf7_feedback(form_id, fields), ensure_ascii=False, indent=2)
 
