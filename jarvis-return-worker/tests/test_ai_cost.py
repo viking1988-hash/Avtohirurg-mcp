@@ -119,3 +119,9 @@ def test_schema_is_sandbox_guarded_and_does_not_store_content():
     assert "current_user <> 'jarvis_sandbox'" in schema
     assert "prompt" not in ledger.lower()
     assert "response" not in ledger.lower()
+
+def test_cost_overflow_is_rejected():
+    with pytest.raises(ValueError, match="invalid_cost_micro_usd"):
+        calculate_cost_micro_usd(
+            2_147_483_647, 0, 9_223_372_036_854_775_807, 0,
+        )
