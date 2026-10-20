@@ -20,8 +20,15 @@ class HistoryStoreTests(unittest.TestCase):
                 history_store._connect()
 
     def test_return_task_status_validation(self):
-        with self.assertRaises(ValueError):
-            history_store.update_return_task_status(1, "BAD")
+        for status in ("BAD", "DONE", "APPROVED", "PROCESSING"):
+            with self.subTest(status=status):
+                with self.assertRaises(ValueError):
+                    history_store.update_return_task_status(1, status)
+
+    def test_return_task_status_allows_nonterminal_queue_updates(self):
+        for status in ("OPEN", "READY", "CANCELLED"):
+            with self.subTest(status=status):
+                self.assertTrue(history_store.is_return_task_status_allowed(status))
 
     def test_idempotency_key_normalization(self):
         self.assertEqual(history_store._normalize_idempotency_key("  task-1  "), "task-1")
