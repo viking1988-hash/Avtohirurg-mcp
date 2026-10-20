@@ -25,3 +25,41 @@ At this branch's current Sandbox state, the Worker environment contains only que
 The schema refuses to create the ledger unless the connected database is `jarvis_return_queue_test` and the role is `jarvis_sandbox`; the repository independently verifies the same identity. The ledger uses an idempotent insert and never overwrites an existing request. On retry, submit the same request ID; `False` means the usage event already exists. Never replay an AI request just to reconstruct missing accounting data. If provider usage is unknown, record an `UNKNOWN` result and reconcile from provider-side usage data before estimating or backfilling costs.
 
 Application rollback can remove the reporting integration while keeping the additive ledger for audit. Do not delete usage history as part of rollback. The existing delivery state machine and AUTO → APPROVAL → HUMAN rules remain authoritative for all customer-facing actions.
+
+
+## Cached-input calculation — opt-in only
+
+`ai_tiered_cost.calculate_tiered_cost_micro_usd()` is an isolated, pure
+calculator with explicit standard input, cached input and output rates. Cached
+tokens are a subset of total input tokens, not an additional quantity. It
+rejects missing cached-input pricing, impossible token counts and BIGINT
+overflow. The calculator has CI unit tests.
+
+**Important:** this helper is not connected to `normalize_usage()`,
+`Orchestrator.record_ai_usage()` or the PostgreSQL ledger. The existing
+ledger still records two rate snapshots and calculates its cost from ordinary
+input/output totals. Do not represent its historical or current rows as
+cache-aware, and do not send cached provider usage into that two-rate path
+unless a separate, reviewed accounting contract is implemented. This is a
+known functional limitation, not a verified model-cost comparison.
+
+Before enabling cache-aware production reporting, design an additive schema
+that preserves the provider-reported token categories and their immutable
+rates, validate the provider's category semantics, and test migration,
+idempotency, PostgreSQL restart and mixed legacy/new reporting in an isolated
+Sandbox. Do not rewrite existing historical cost rows.
+
+## Verification evidence and remaining blockers
+
+GitHub Actions at commit `7edbb8cc46266ed841547912d105159e896fd7e3`
+reported 136 Worker tests passed and 54 MCP tests passed (11 MCP skips).
+The Worker workflow also printed
+`AI usage ledger PostgreSQL restart recovery: PASS` after restarting the
+ephemeral PostgreSQL container. This verifies ledger persistence and
+idempotency in CI, not a Railway deployment or real model inference.
+
+Real candidate API access, official account-specific model availability,
+actual latency/accuracy on 100 synthetic examples per candidate, token
+category metadata, and provider-billed cost reconciliation remain NOT RUN.
+The baseline's `model_tested=false` must remain unchanged until an
+actual, budget-authorized model benchmark has run.
