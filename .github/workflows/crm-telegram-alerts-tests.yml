@@ -17,3 +17,29 @@ jobs:
         run: node --check crm-telegram-alerts/index.mjs
       - name: Test with mocked database and Telegram
         run: node crm-telegram-alerts/index.test.mjs
+  disposable-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password_local_only
+          POSTGRES_DB: alerts_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d alerts_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify delivery state transitions in disposable PostgreSQL
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: test_user
+          PGPASSWORD: test_password_local_only
+          PGDATABASE: alerts_test
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/test/delivery-v2-disposable.sql
