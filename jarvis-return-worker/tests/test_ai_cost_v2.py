@@ -192,12 +192,12 @@ def test_v2_cache_write_component_is_accounted_once():
 def test_v2_rejects_cost_overflow_without_database_write():
     u = usage()
     parts = [
-        dict(component="standard_input", token_count=1000,
+        dict(component="standard_input", token_count=(1 << 31) - 1,
              rate_micro_usd_per_million=(1 << 63) - 1),
-        dict(component="output", token_count=500,
+        dict(component="output", token_count=0,
              rate_micro_usd_per_million=(1 << 63) - 1),
     ]
     with pytest.raises(ValueError, match="invalid_cost_micro_usd"):
-        normalize_components(parts, input_tokens=u["input_tokens"],
-                             output_tokens=u["output_tokens"],
+        normalize_components(parts, input_tokens=(1 << 31) - 1,
+                             output_tokens=0,
                              expected_cost_micro_usd=u["expected_cost_micro_usd"])
