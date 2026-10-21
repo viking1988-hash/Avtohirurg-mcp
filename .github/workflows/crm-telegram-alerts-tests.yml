@@ -6,17 +6,22 @@ on:
       - '.github/workflows/crm-telegram-alerts-tests.yml'
   workflow_dispatch:
 jobs:
-  mocked-alerts:
+  syntax:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check syntax
-        run: node --check crm-telegram-alerts/index.mjs
-      - name: Test with mocked database and Telegram
-        run: node crm-telegram-alerts/index.test.mjs
+      - name: Install worker dependency
+        working-directory: crm-telegram-alerts
+        run: npm install --no-save --no-package-lock
+      - name: Check worker and test syntax
+        run: |
+          node --check crm-telegram-alerts/index.mjs
+          node --check crm-telegram-alerts/delivery-v2.mjs
+          node --check crm-telegram-alerts/operator.mjs
+          node --check crm-telegram-alerts/test/worker-e2e-postgres.test.mjs
   disposable-postgres:
     runs-on: ubuntu-latest
     services:
@@ -35,14 +40,21 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - name: Verify delivery state transitions in disposable PostgreSQL
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install worker dependency
+        working-directory: crm-telegram-alerts
+        run: npm install --no-save --no-package-lock
+      - name: Apply Delivery v2 schema to disposable PostgreSQL
         env:
           PGHOST: localhost
           PGPORT: '5432'
           PGUSER: test_user
           PGPASSWORD: test_password_local_only
           PGDATABASE: alerts_test
-        run: |
-          psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/migrations/001_delivery_v2.sql
-          psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/test/delivery-v2-disposable.sql
-          node crm-telegram-alerts/test/concurrent-claim.test.mjs
+        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/migrations/001_delivery_v2.sql
+      - name: Run worker E2E against PostgreSQL and local mock Telegram
+        env:
+          DATABASE_URL: postgres://test_user:test_password_local_only@localhost:5432/alerts_test
+        run: node crm-telegram-alerts/test/worker-e2e-postgres.test.mjs
