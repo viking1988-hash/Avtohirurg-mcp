@@ -627,7 +627,7 @@ class QueueRepository:
                     FROM jarvis_ai_usage_events WHERE request_id=%s FOR UPDATE""",
                     (row["request_id"],)).fetchone()
                 if existing is None:
-                    return False  # A different booking-success correlation won the unique index.
+                    raise Conflict("AI usage correlation_id already has a successful booking")
                 expected_fields = ("correlation_id","provider","model","input_tokens",
                     "output_tokens","input_rate_micro_usd_per_million",
                     "output_rate_micro_usd_per_million","cost_micro_usd","latency_ms","outcome","booking_success")
