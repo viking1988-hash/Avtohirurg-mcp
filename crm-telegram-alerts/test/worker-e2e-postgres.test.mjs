@@ -118,6 +118,7 @@ try {
 
   // Process crash before send and expired lease become uncertain, never pending.
   await addLead(990105);
+  await worker.enqueue();
   const claimed = await worker.claimOne();
   assert.equal(claimed.lead_id, 990105);
   await sql`UPDATE crm_telegram_delivery_v2 SET claimed_at=clock_timestamp()-interval '20 minutes'
