@@ -1,64 +1,41 @@
-# Telegram delivery state machine — implementation design (Issue #62)
+# Telegram Delivery v2 — draft implementation and release gates
 
-**Status:** design only. Not deployed. No schema changes have been executed.
+**Status:** implemented in Draft PR #63; schema and worker are exercised only in GitHub Actions disposable PostgreSQL with a local mock Telegram server. Not deployed to Railway or Production. No historical rows are reclassified.
 
-## Invariants
+## Safety invariants
 
-- A unique logical notification is `(lead_id, alert_type)`.
-- A Telegram HTTP success response with `ok:true` is the only confirmed sent outcome.
-- A timeout, connection reset, malformed response or HTTP 5xx is **uncertain**, never automatically retried without an explicit duplicate-risk decision.
-- An explicit API rejection is **rejected**, eligible for bounded retry only after classification (e.g. 429 with `retry_after`, 403 permanent).
-- A process crash during `sending` is uncertain; automatic reclaim must not assume non-delivery.
-- Neither a claim row nor a successful DB commit proves Telegram delivery. Telegram Bot API offers no general caller-supplied idempotency key for `sendMessage`.
+- Logical notification key is unique `(lead_id, alert_type)`.
+- Only Telegram `ok:true` is treated as a confirmed send. `message_id` is stored when confirmed.
+- Network exception, malformed response, HTTP 5xx, or failure to persist a confirmed response never triggers an automatic retry. A stale `sending` lease is moved to `uncertain`.
+- Explicit HTTP/API 4xx rejections are `rejected`; HTTP 403 is permanent. HTTP 429 is retried only with a valid bounded `retry_after` and while under the attempt limit.
+- This is **not exactly-once** delivery. Telegram `sendMessage` provides no general caller-supplied idempotency key. Operator-authorized replay carries explicit duplicate risk.
+- Logs contain lead ID, alert type, attempt and a safe error class. Bot token, chat ID, request URL, message text and response body are not logged.
 
-## Proposed schema (migration plan, NOT executed)
-
-Add fields to a new or carefully migrated delivery table:
-
-```sql
-CREATE TABLE crm_telegram_delivery_v2 (
-  lead_id bigint NOT NULL,
-  alert_type text NOT NULL,
-  state text NOT NULL CHECK (state IN ('pending','sending','sent','rejected','uncertain')),
-  attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-  claimed_at timestamptz,
-  last_attempt_at timestamptz,
-  next_attempt_at timestamptz,
-  sent_at timestamptz,
-  telegram_message_id bigint,
-  last_error_class text,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (lead_id, alert_type)
-);
-```
-
-## Transitions
+## State transitions
 
 | From | Event | To | Action |
 |---|---|---|---|
-| pending | atomic worker claim | sending | Increment attempt count and timestamp |
-| sending | confirmed Telegram success | sent | Persist message ID |
-| sending | definite transient rejection | rejected | Schedule bounded retry after backoff |
-| rejected | retry due, attempts below limit | sending | Atomically reclaim |
-| sending | ambiguous network/API outcome | uncertain | Alert operator; no auto-retry |
-| sending | worker crash / expired lease | uncertain | Alert operator; no auto-retry |
-| uncertain | human verifies receipt | sent | Record evidence and operator |
-| uncertain | human explicitly authorizes resend | pending | Record duplicate risk acceptance |
-| rejected | permanent rejection / exhausted retries | rejected | Alert operator |
+| pending | worker claims atomically | sending | increment attempt, record timestamps |
+| sending | Telegram `ok:true` and DB transaction commits | sent | persist message ID and legacy success log |
+| sending | 429 with valid `retry_after` | rejected | schedule bounded retry |
+| sending | permanent 4xx, including 403 | rejected | no automatic retry |
+| sending | timeout, malformed result, 5xx, or uncommitted success | uncertain | hold from automatic processing |
+| sending | expired lease after worker/process failure | uncertain | hold from automatic processing |
+| uncertain | operator confirms delivered | sent | audit operator, reason and decision |
+| uncertain | operator authorizes resend with explicit acknowledgement | pending | audit duplicate-risk acceptance; next claim is allowed |
 
-## Crash consistency
+## Schema and historical compatibility
 
-Claim the DB row atomically before calling Telegram, but **never** assume that a stale `sending` claim is safe to resend. A sweeper can mark it `uncertain` after a conservative timeout; it must not send messages. An operator queue must show `uncertain` and exhausted `rejected` rows.
+Migration `migrations/001_delivery_v2.sql` is additive and creates v2 delivery and operator-audit tables. The existing `crm_telegram_alert_log` remains intact. The worker avoids enqueueing notifications already present in that legacy table, so historical claims block duplicate sends without being silently marked as confirmed in v2. No bulk backfill, deletion, or reinterpretation is performed.
 
-## Migration and rollback
+Rollback is to stop/disable the v2 worker and preserve both tables and audit history. Do not drop or truncate either table. Production migration, dual-worker cutover, backup, and rollback rehearsal are separate release gates and have not been performed.
 
-1. Back up schema and data; test on disposable PostgreSQL with synthetic leads.
-2. Backfill historical `crm_telegram_alert_log` claims as `sent_unverified` in a separate reconciliation report (not `sent` unless verified); do not silently reinterpret old claims.
-3. Deploy a dual-read/explicit feature-flag approach only after tests and operator workflow are ready. Avoid two concurrent sending workers.
-4. Rollback must disable the new sender first, preserve delivery history, and **never** bulk-delete claims.
+## Operator CLI
 
-## Required isolated tests
+`operator.mjs list-uncertain` lists unresolved records. `confirm-delivered` requires lead ID, alert type, operator identity and reason. `authorize-resend` additionally requires `--accept-duplicate-risk YES`. This is a direct internal CLI using the database connection; no public management API is exposed.
 
-- Fresh/overdue and deduplication; simultaneous workers; explicit 429/403; 5xx; timeout after acceptance; process crash before and after send; failed DB confirmation after Telegram success; lease expiry; operator reconciliation; restart and rollback.
-- Assert **zero external Telegram calls** using a strict mock and disposable PostgreSQL.
-- Require evidence of Railway cron exit codes and alerts before any Production release.
+## Verification
+
+The CI workflow applies the migration to an ephemeral PostgreSQL service and runs the worker against synthetic leads plus a mock HTTP server on loopback. No Telegram credentials or real sends are used. Coverage includes successful delivery/message ID, simultaneous workers, retry_after scheduling, ambiguous timeout, operator resend audit, stale lease recovery, and database confirmation failure. The latest CI result must be read from PR #63 for the tested commit SHA.
+
+Railway Sandbox execution and Production operational monitoring remain separate release gates. Do not deploy this draft until the E2E is green, migration compatibility and rollback are reviewed, and production cutover is separately authorized.
