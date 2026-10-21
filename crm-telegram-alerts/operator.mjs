@@ -12,9 +12,11 @@ function parseArgs(argv) {
 }
 
 export async function runOperatorAction(sql, command, args) {
-  if (command === "list-uncertain") {
-    return sql`SELECT lead_id, alert_type, attempt_count, last_attempt_at, last_error_class, updated_at
-      FROM crm_telegram_delivery_v2 WHERE state = 'uncertain'
+  if (command === "list-uncertain" || command === "list-rejected") {
+    const state = command === "list-uncertain" ? "uncertain" : "rejected";
+    return sql`SELECT lead_id, alert_type, attempt_count, last_attempt_at, next_attempt_at,
+        last_error_class, updated_at
+      FROM crm_telegram_delivery_v2 WHERE state = ${state}
       ORDER BY updated_at ASC`;
   }
 
