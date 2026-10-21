@@ -49,8 +49,8 @@ not call a model or authorize a booking.
 
 ## Evidence and limitations
 
-At commit `251f4b1c54c1be8eebfe6ad80cfac75ff55640ab`, GitHub Actions
-reported 145 Worker tests PASS and 54 MCP tests PASS (11 skipped).
+At commit `82e11f83029d1f5c619269aa2ab93c7d557019dc`, GitHub Actions
+reported 149 Worker tests PASS and 54 MCP tests PASS (11 skipped).
 The Worker workflow confirmed v1 and v2 persistence through a real restart
 of its disposable PostgreSQL container. These are **CI** checks, not a
 Railway Sandbox deployment or an external model-cost reconciliation.
@@ -59,9 +59,16 @@ Still required before production enablement:
 1. Isolated Railway staging E2E using the exact PR HEAD and fake provider.
 2. Provider-specific token/category normalization and independently verified
    tariff snapshots for each candidate.
-3. Approved spending cap, account-specific model availability, and
-   real-model accuracy/latency/cost comparison on synthetic inputs.
-4. Reconciliation of unknown provider usage. Version-separated reporting is\n   implemented via `ai_cost_summary_by_pricing_version()` and covered by a\n   disposable-PostgreSQL test; it is not a production reporting endpoint.
+3. Spending cap approved at USD 5 total for real-model testing; still
+   required: account-specific model availability and real-model
+   accuracy/latency/cost comparison on synthetic inputs. Do not spend
+   without an isolated test environment and explicit cost tracking.
+4. Reconciliation of unknown provider usage. Version-separated reporting is
+   implemented via `ai_cost_summary_by_pricing_version()` with
+   `unknown_usage_requests` and `cost_completeness=INCOMPLETE` when an
+   `UNKNOWN` outcome exists. This is a conservative reporting warning,
+   not proof of missing token usage or provider invoice reconciliation;
+   it is not a production reporting endpoint.
 5. Review whether database-level snapshot immutability is required.
 
 Do not merge or deploy PR #42 to Production based solely on CI evidence.
