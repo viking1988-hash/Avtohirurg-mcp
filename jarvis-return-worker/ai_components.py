@@ -1,5 +1,5 @@
 """Validated v2 component snapshots, without prompt/response data."""
-from .ai_cost import MAX_BIGINT, MAX_PG_INT, _integer
+from .ai_cost import MAX_PG_INT, _integer
 
 COMPONENTS = frozenset(("standard_input", "cached_input", "cache_write_input", "output"))
 
