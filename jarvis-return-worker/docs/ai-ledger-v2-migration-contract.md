@@ -61,7 +61,7 @@ Still required before production enablement:
    tariff snapshots for each candidate.
 3. Approved spending cap, account-specific model availability, and
    real-model accuracy/latency/cost comparison on synthetic inputs.
-4. Mixed v1/v2 reporting separation and reconciliation of unknown usage.
+4. Reconciliation of unknown provider usage. Version-separated reporting is\n   implemented via `ai_cost_summary_by_pricing_version()` and covered by a\n   disposable-PostgreSQL test; it is not a production reporting endpoint.
 5. Review whether database-level snapshot immutability is required.
 
 Do not merge or deploy PR #42 to Production based solely on CI evidence.
