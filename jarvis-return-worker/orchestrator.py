@@ -27,6 +27,12 @@ class Orchestrator:
         from .ai_cost import normalize_usage
         return self.repository.record_ai_usage(normalize_usage(usage))
 
+    def record_ai_usage_v2(self, usage, components):
+        """Opt-in category-priced usage; never routes or sends provider requests."""
+        if not isinstance(usage, dict):
+            raise ValueError("invalid_usage_fields")
+        return self.repository.record_ai_usage_v2(usage, components)
+
     def ai_cost_summary(self):
         return self.repository.ai_cost_summary()
 
