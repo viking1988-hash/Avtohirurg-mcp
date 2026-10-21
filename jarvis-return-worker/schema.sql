@@ -315,3 +315,15 @@ CREATE INDEX IF NOT EXISTS jarvis_ai_usage_created_model_idx
  ON jarvis_ai_usage_events(created_at,provider,model);
 
 
+
+-- Additive v2 breakdown; legacy parent rows remain valid and unchanged.
+-- Parent cost is the authoritative total; v2 components are immutable snapshots.
+CREATE TABLE IF NOT EXISTS jarvis_ai_usage_cost_components (
+ request_id text NOT NULL REFERENCES jarvis_ai_usage_events(request_id) ON DELETE RESTRICT,
+ component text NOT NULL CHECK(component IN ('standard_input','cached_input','cache_write_input','output')),
+ token_count integer NOT NULL CHECK(token_count BETWEEN 0 AND 2147483647),
+ rate_micro_usd_per_million bigint NOT NULL CHECK(rate_micro_usd_per_million BETWEEN 0 AND 9223372036854775807),
+ PRIMARY KEY(request_id,component)
+);
+CREATE INDEX IF NOT EXISTS jarvis_ai_cost_components_request_idx
+ ON jarvis_ai_usage_cost_components(request_id);
