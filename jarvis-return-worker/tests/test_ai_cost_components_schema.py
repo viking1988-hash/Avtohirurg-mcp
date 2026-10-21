@@ -27,7 +27,7 @@ def test_cost_components_migration_preserves_legacy_rows():
     repo.migrate()
     with repo.connection() as conn:
         parent = conn.execute(
-            "SELECT cost_micro_usd FROM jarvis_ai_usage_events WHERE request_id=%s",
+            "SELECT cost_micro_usd, pricing_version FROM jarvis_ai_usage_events WHERE request_id=%s",
             (rid,),
         ).fetchone()
         components = conn.execute(
@@ -35,6 +35,7 @@ def test_cost_components_migration_preserves_legacy_rows():
             (rid,),
         ).fetchone()
     assert parent["cost_micro_usd"] == 6000
+    assert parent["pricing_version"] == 1
     assert components["n"] == 0
 
 
