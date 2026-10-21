@@ -1,35 +1,42 @@
 import postgres from "postgres";
-const token=process.env.TELEGRAM_BOT_TOKEN;
-const chat=process.env.TELEGRAM_CHAT_ID;
-const database=process.env.DATABASE_URL;
-if(!token||!chat||!database){console.error(JSON.stringify({event:"alert_run_failed",ok:false,reason:"missing_configuration"}));process.exit(1)}
-const sql=postgres(database,{max:1,connect_timeout:10,onnotice:()=>{}});
-const runStarted=Date.now();
-console.log(JSON.stringify({event:"alert_run_started",at:new Date().toISOString()}));
-try {
- await sql`CREATE TABLE IF NOT EXISTS crm_telegram_alert_log (lead_id bigint NOT NULL, alert_type text NOT NULL, sent_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(lead_id,alert_type))`;
- const leads=await sql`SELECT id,created_at FROM inbound_leads WHERE status='new' AND created_at > now()-interval '30 days' ORDER BY created_at ASC LIMIT 200`;
- let sent=0,failed=0,claimedCount=0,alreadyClaimed=0;
- for(const lead of leads){
-  const overdue=new Date(lead.created_at).getTime()<Date.now()-30*60000;
-  for(const kind of (overdue?["new","overdue"]:["new"])){
-   const claimed=await sql`INSERT INTO crm_telegram_alert_log(lead_id,alert_type) SELECT ${lead.id},${kind} WHERE EXISTS(SELECT 1 FROM inbound_leads WHERE id=${lead.id} AND status='new') ON CONFLICT DO NOTHING RETURNING lead_id`;
-   if(!claimed.length){alreadyClaimed++;continue;}claimedCount++;
-   try{
-    const text="Автохирург CRM: "+(kind==="new"?"🔔 Новая заявка":"⏰ Заявка без обработки более 30 минут")+" №"+lead.id;
-    const response=await fetch("https://api.telegram.org/bot"+token+"/sendMessage",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chat,text})});
-    if(!response.ok)throw Error("Telegram HTTP "+response.status);
-    const body=await response.json();
-    if(!body.ok)throw Error("Telegram API rejected message");
-    sent++;
-   }catch(error){
-    failed++;
-    await sql`DELETE FROM crm_telegram_alert_log WHERE lead_id=${lead.id} AND alert_type=${kind}`;
-    console.error(JSON.stringify({event:"send_failed",lead_id:lead.id,kind,error:String(error)}));
-   }
+import { createDeliveryWorker } from "./delivery-v2.mjs";
+
+const token = process.env.TELEGRAM_BOT_TOKEN;
+const chatId = process.env.TELEGRAM_CHAT_ID;
+const database = process.env.DATABASE_URL;
+const apiBaseUrl = process.env.TELEGRAM_API_BASE_URL || "https://api.telegram.org";
+
+if (!token || !chatId || !database) {
+  console.error(JSON.stringify({ event: "alert_run_failed", ok: false, reason: "missing_configuration" }));
+  process.exit(1);
+}
+
+if (process.env.TELEGRAM_API_BASE_URL) {
+  let host;
+  try { host = new URL(apiBaseUrl).hostname; } catch {
+    console.error(JSON.stringify({ event: "alert_run_failed", ok: false, reason: "invalid_test_endpoint" }));
+    process.exit(1);
   }
- }
- console.log(JSON.stringify({event:"alert_run_completed",ok:failed===0,checked:leads.length,claimed:claimedCount,already_claimed:alreadyClaimed,sent,failed,duration_ms:Date.now()-runStarted}));
- if(failed>0)process.exitCode=1;
-} catch(error){console.error(JSON.stringify({event:"alert_run_failed",ok:false,error:String(error),duration_ms:Date.now()-runStarted}));process.exitCode=1}
-finally{await sql.end()}
+  if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
+    console.error(JSON.stringify({ event: "alert_run_failed", ok: false, reason: "test_endpoint_must_be_loopback" }));
+    process.exit(1);
+  }
+}
+
+const sql = postgres(database, { max: 1, connect_timeout: 10, onnotice: () => {} });
+const started = Date.now();
+try {
+  const worker = createDeliveryWorker({ sql, token, chatId, apiBaseUrl });
+  const result = await worker.run();
+  if (result.rejected || result.uncertain) process.exitCode = 1;
+} catch (error) {
+  console.error(JSON.stringify({
+    event: "alert_run_failed",
+    ok: false,
+    error_class: String(error?.message || "delivery_worker_failed").replace(/[^a-zA-Z0-9_-]/g, "_"),
+    duration_ms: Date.now() - started,
+  }));
+  process.exitCode = 1;
+} finally {
+  await sql.end();
+}
