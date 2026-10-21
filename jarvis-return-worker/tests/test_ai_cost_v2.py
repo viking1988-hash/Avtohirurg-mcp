@@ -119,3 +119,23 @@ def test_v2_rejects_reuse_of_legacy_request_id():
         ).fetchone()["n"]
     assert existing["pricing_version"] == 1
     assert parts_count == 0
+
+
+def test_v2_rejects_distinct_request_id_for_same_successful_booking():
+    dsn = os.environ.get("JARVIS_WORKER_CI_DATABASE_URL")
+    if not dsn:
+        pytest.skip("disposable PostgreSQL required")
+    repo = QueueRepository(SimpleNamespace(database_url=dsn))
+    repo.migrate()
+    first, parts = usage(), components()
+    first["booking_success"] = True
+    assert repo.record_ai_usage_v2(first, parts) is True
+    second = dict(first, request_id="ai-v2-" + str(uuid.uuid4()))
+    with pytest.raises(Exception, match="correlation_id already has a successful booking"):
+        repo.record_ai_usage_v2(second, parts)
+    with repo.connection() as conn:
+        count = conn.execute(
+            "SELECT count(*) AS n FROM jarvis_ai_usage_events WHERE correlation_id=%s",
+            (first["correlation_id"],),
+        ).fetchone()["n"]
+    assert count == 1
