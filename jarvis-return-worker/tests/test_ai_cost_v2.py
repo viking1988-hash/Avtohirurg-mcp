@@ -172,3 +172,32 @@ def test_version_summary_flags_unknown_usage_as_incomplete():
     current = repo.ai_cost_summary_by_pricing_version()[2]
     assert current["unknown_usage_requests"] == prior.get("unknown_usage_requests", 0) + 1
     assert current["cost_completeness"] == "INCOMPLETE"
+
+
+def test_v2_cache_write_component_is_accounted_once():
+    u = usage()
+    parts = [
+        dict(component="standard_input", token_count=500, rate_micro_usd_per_million=2_000_000),
+        dict(component="cached_input", token_count=300, rate_micro_usd_per_million=500_000),
+        dict(component="cache_write_input", token_count=200, rate_micro_usd_per_million=3_000_000),
+        dict(component="output", token_count=500, rate_micro_usd_per_million=8_000_000),
+    ]
+    assert normalize_components(parts, input_tokens=1000, output_tokens=500,
+                                expected_cost_micro_usd=5750) == parts
+    with pytest.raises(ValueError, match="input_components_mismatch"):
+        normalize_components(parts, input_tokens=800, output_tokens=500,
+                             expected_cost_micro_usd=5750)
+
+
+def test_v2_rejects_cost_overflow_without_database_write():
+    u = usage()
+    parts = [
+        dict(component="standard_input", token_count=1000,
+             rate_micro_usd_per_million=(1 << 63) - 1),
+        dict(component="output", token_count=500,
+             rate_micro_usd_per_million=(1 << 63) - 1),
+    ]
+    with pytest.raises(ValueError, match="invalid_cost_micro_usd"):
+        normalize_components(parts, input_tokens=u["input_tokens"],
+                             output_tokens=u["output_tokens"],
+                             expected_cost_micro_usd=u["expected_cost_micro_usd"])
