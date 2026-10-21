@@ -53,7 +53,7 @@ def test_v2_atomic_insert_and_concurrent_idempotency():
         outcomes = list(pool.map(lambda _: repo.record_ai_usage_v2(u, parts), range(2)))
     assert sorted(outcomes) == [False, True]
     with repo.connection() as conn:
-        row = conn.execute("SELECT cost_micro_usd FROM jarvis_ai_usage_events WHERE request_id=%s",
+        row = conn.execute("SELECT cost_micro_usd, pricing_version FROM jarvis_ai_usage_events WHERE request_id=%s",
                            (u["request_id"],)).fetchone()
         count = conn.execute("SELECT count(*) AS n FROM jarvis_ai_usage_cost_components WHERE request_id=%s",
                              (u["request_id"],)).fetchone()["n"]
