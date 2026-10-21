@@ -614,14 +614,14 @@ class QueueRepository:
             inserted = c.execute("""INSERT INTO jarvis_ai_usage_events
                 (request_id,correlation_id,provider,model,input_tokens,output_tokens,
                  input_rate_micro_usd_per_million,output_rate_micro_usd_per_million,
-                 cost_micro_usd,latency_ms,outcome,booking_success)
+                 cost_micro_usd,latency_ms,outcome,booking_success,pricing_version)
                 VALUES (%(request_id)s,%(correlation_id)s,%(provider)s,%(model)s,
                  %(input_tokens)s,%(output_tokens)s,%(input_rate_micro_usd_per_million)s,
                  %(output_rate_micro_usd_per_million)s,%(cost_micro_usd)s,%(latency_ms)s,
-                 %(outcome)s,%(booking_success)s)
+                 %(outcome)s,%(booking_success)s,2)
                 ON CONFLICT DO NOTHING RETURNING request_id""", row).fetchone()
             if inserted is None:
-                existing = c.execute("""SELECT correlation_id,provider,model,input_tokens,
+                existing = c.execute("""SELECT pricing_version,correlation_id,provider,model,input_tokens,
                     output_tokens,cost_micro_usd,latency_ms,outcome,booking_success
                     FROM jarvis_ai_usage_events WHERE request_id=%s FOR UPDATE""",
                     (row["request_id"],)).fetchone()
@@ -629,7 +629,7 @@ class QueueRepository:
                     return False  # A different booking-success correlation won the unique index.
                 expected_fields = ("correlation_id","provider","model","input_tokens",
                     "output_tokens","cost_micro_usd","latency_ms","outcome","booking_success")
-                if any(existing[k] != row[k] for k in expected_fields):
+                if existing["pricing_version"] != 2 or any(existing[k] != row[k] for k in expected_fields):
                     raise Conflict("AI usage request_id bound to different metadata")
                 old_parts = c.execute("""SELECT component,token_count,rate_micro_usd_per_million
                     FROM jarvis_ai_usage_cost_components WHERE request_id=%s""",
