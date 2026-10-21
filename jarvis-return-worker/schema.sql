@@ -316,6 +316,11 @@ CREATE INDEX IF NOT EXISTS jarvis_ai_usage_created_model_idx
 
 
 
+-- Version 1 remains the default for all pre-existing and legacy usage events.
+ALTER TABLE jarvis_ai_usage_events
+ ADD COLUMN IF NOT EXISTS pricing_version smallint NOT NULL DEFAULT 1
+ CHECK (pricing_version IN (1,2));
+
 -- Additive v2 breakdown; legacy parent rows remain valid and unchanged.
 -- Parent cost is the authoritative total; v2 components are immutable snapshots.
 CREATE TABLE IF NOT EXISTS jarvis_ai_usage_cost_components (
