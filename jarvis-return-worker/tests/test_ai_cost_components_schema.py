@@ -52,11 +52,20 @@ def test_components_are_fk_guarded_and_reject_invalid_counts():
                    VALUES (%s,'cached_input',10,100)""",
                 ("nonexistent-" + str(uuid.uuid4()),),
             )
+    rid = "ai-invalid-count-" + str(uuid.uuid4())
+    assert repo.record_ai_usage({
+        "request_id": rid, "correlation_id": rid,
+        "provider": "synthetic-provider", "model": "synthetic-model",
+        "input_tokens": 10, "output_tokens": 0,
+        "input_rate_micro_usd_per_million": 1_000_000,
+        "output_rate_micro_usd_per_million": 0,
+        "latency_ms": 0, "outcome": "SUCCESS", "booking_success": False,
+    })
     with pytest.raises(Exception):
         with repo.connection() as conn:
             conn.execute(
                 """INSERT INTO jarvis_ai_usage_cost_components
                    (request_id,component,token_count,rate_micro_usd_per_million)
                    VALUES (%s,'cached_input',-1,100)""",
-                ("nonexistent-" + str(uuid.uuid4()),),
+                (rid,),
             )
