@@ -87,6 +87,9 @@ def test_v2_conflicting_retry_is_rejected():
     altered = dict(u, model="different-model")
     with pytest.raises(Exception, match="different metadata"):
         repo.record_ai_usage_v2(altered, parts)
+    altered_rate = dict(u, input_rate_micro_usd_per_million=u["input_rate_micro_usd_per_million"] + 1)
+    with pytest.raises(Exception, match="different metadata"):
+        repo.record_ai_usage_v2(altered_rate, parts)
     changed_parts = [dict(x) for x in parts]
     changed_parts[0]["rate_micro_usd_per_million"] += 1
     # Rounding is unchanged, but immutable rate snapshots must still conflict.
