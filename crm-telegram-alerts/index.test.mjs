@@ -35,15 +35,16 @@ assert.equal(b.summary.sent,2);assert.equal(b.summary.claimed,2);
 const c=await scenario({leads:[{id:3,created_at:old}],previous:["3:new","3:overdue"]});
 assert.equal(c.summary.sent,0);assert.equal(c.summary.already_claimed,2);
 const d=await scenario({leads:[{id:4,created_at:fresh}],fail:true});
-assert.equal(d.exitCode,1);assert.equal(d.summary.failed,1);assert.equal(d.claimed.size,0);assert.equal(d.errors[0].event,"send_failed");
+assert.equal(d.exitCode,1);assert.equal(d.summary.failed,1);assert.equal(d.claimed.size,0);assert.equal(d.errors[0].event,"send_rejected_retry_eligible");
 console.log("PASS: fresh, overdue, deduplication, Telegram failure retry eligibility");
 
 // A transport timeout after acceptance is ambiguous: retry eligibility may duplicate delivery.
 const ambiguous=await scenario({leads:[{id:5,created_at:fresh}],uncertain:true});
 assert.equal(ambiguous.exitCode,1);
 assert.equal(ambiguous.sent.length,1);
-assert.equal(ambiguous.claimed.size,0);
+assert.equal(ambiguous.claimed.size,1);
+assert.equal(ambiguous.errors[0].event,"send_outcome_uncertain_manual_review");
 const ambiguousRetry=await scenario({leads:[{id:5,created_at:fresh}],previous:[...ambiguous.claimed]});
-assert.equal(ambiguousRetry.sent.length,1);
+assert.equal(ambiguousRetry.sent.length,0);
 assert.equal(ambiguousRetry.exitCode,0);
-console.log("PASS: ambiguous Telegram response demonstrates duplicate-delivery risk; remediation requires separate review");
+console.log("PASS: ambiguous Telegram response retains claim, prevents automatic duplicate, requires manual review");
