@@ -64,6 +64,17 @@ try {
   await sql`DELETE FROM crm_telegram_alert_log WHERE lead_id BETWEEN 990100 AND 990199`;
   await sql`DELETE FROM inbound_leads WHERE id BETWEEN 990100 AND 990199`;
 
+  // Existing legacy claims remain unchanged and prevent re-enqueue.
+  await addLead(990109);
+  await sql`INSERT INTO crm_telegram_alert_log (lead_id,alert_type,sent_at)
+    VALUES (990109,'new','2026-10-01T12:00:00Z')`;
+  await worker.run();
+  assert.equal(await state(990109), undefined);
+  assert.equal(calls.get(990109) || 0, 0);
+  const legacyRow = await sql`SELECT sent_at FROM crm_telegram_alert_log WHERE lead_id=990109 AND alert_type='new'`;
+  assert.equal(legacyRow.length, 1);
+  assert.equal(new Date(legacyRow[0].sent_at).toISOString(), "2026-10-01T12:00:00.000Z");
+
   // Normal end-to-end delivery and persisted Telegram message id.
   await addLead(990101);
   await worker.run();
