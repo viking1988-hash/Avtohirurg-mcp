@@ -63,7 +63,7 @@ try {
   await addLead(990101);
   await worker.run();
   assert.equal((await state(990101)).state, "sent");
-  assert.equal((await state(990101)).telegram_message_id, 997101);
+  assert.equal(Number((await state(990101)).telegram_message_id), 997101);
   assert.equal(calls.get(990101), 1);
 
   // Two simultaneous worker runs must produce one atomic claim and one send.
