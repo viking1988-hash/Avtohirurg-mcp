@@ -4,7 +4,7 @@ const source=(await readFile(new URL("./index.mjs",import.meta.url),"utf8")).rep
 process.env.TELEGRAM_BOT_TOKEN="FAKE_TOKEN_NEVER_USED";
 process.env.TELEGRAM_CHAT_ID="FAKE_CHAT";
 process.env.DATABASE_URL="FAKE_DATABASE";
-async function scenario({leads,previous=[],fail=false}){
+async function scenario({leads,previous=[],fail=false,uncertain=false}){
  const claimed=new Set(previous),sent=[],logs=[],errors=[];
  globalThis.__mockPostgres=()=> {
   const sql=async (strings,...params)=>{
@@ -20,7 +20,7 @@ async function scenario({leads,previous=[],fail=false}){
  };
  const oldFetch=globalThis.fetch,oldLog=console.log,oldError=console.error,oldExitCode=process.exitCode;
  process.exitCode=0;
- globalThis.fetch=async (url,options)=>{assert.match(url,/api.telegram.org/);sent.push(JSON.parse(options.body));return {ok:!fail,status:fail?429:200,json:async()=>({ok:!fail})};};
+ globalThis.fetch=async (url,options)=>{assert.match(url,/api.telegram.org/);sent.push(JSON.parse(options.body));if(uncertain)throw Error("simulated timeout after Telegram may have accepted message");return {ok:!fail,status:fail?429:200,json:async()=>({ok:!fail})};};
  console.log=(x)=>logs.push(JSON.parse(x));console.error=(x)=>errors.push(JSON.parse(x));
  let exitCode;
  try{await import("data:text/javascript,"+encodeURIComponent(source)+"#"+Math.random());exitCode=process.exitCode;}
@@ -37,3 +37,13 @@ assert.equal(c.summary.sent,0);assert.equal(c.summary.already_claimed,2);
 const d=await scenario({leads:[{id:4,created_at:fresh}],fail:true});
 assert.equal(d.exitCode,1);assert.equal(d.summary.failed,1);assert.equal(d.claimed.size,0);assert.equal(d.errors[0].event,"send_failed");
 console.log("PASS: fresh, overdue, deduplication, Telegram failure retry eligibility");
+
+// A transport timeout after acceptance is ambiguous: retry eligibility may duplicate delivery.
+const ambiguous=await scenario({leads:[{id:5,created_at:fresh}],uncertain:true});
+assert.equal(ambiguous.exitCode,1);
+assert.equal(ambiguous.sent.length,1);
+assert.equal(ambiguous.claimed.size,0);
+const ambiguousRetry=await scenario({leads:[{id:5,created_at:fresh}],previous:[...ambiguous.claimed]});
+assert.equal(ambiguousRetry.sent.length,1);
+assert.equal(ambiguousRetry.exitCode,0);
+console.log("PASS: ambiguous Telegram response demonstrates duplicate-delivery risk; remediation requires separate review");
