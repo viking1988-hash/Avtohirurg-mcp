@@ -18,7 +18,7 @@ try {
    try{
     const text="Автохирург CRM: "+(kind==="new"?"🔔 Новая заявка":"⏰ Заявка без обработки более 30 минут")+" №"+lead.id;
     const response=await fetch("https://api.telegram.org/bot"+token+"/sendMessage",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chat,text})});
-    if(!response.ok){const err=Error("Telegram HTTP "+response.status);err.definiteRejection=response.status>=400&&response.status<500;throw err;}
+    if(!response.ok){const err=Error("Telegram HTTP "+response.status);err.httpStatus=response.status;err.definiteRejection=response.status>=400&&response.status<500&&response.status!==429;throw err;}
     const body=await response.json();
     if(!body.ok){const err=Error("Telegram API rejected message");err.definiteRejection=true;throw err;}
     sent++;
@@ -26,7 +26,7 @@ try {
     failed++;
     if(error.definiteRejection){
      await sql`DELETE FROM crm_telegram_alert_log WHERE lead_id=${lead.id} AND alert_type=${kind}`;
-     console.error(JSON.stringify({event:"send_rejected_retry_eligible",lead_id:lead.id,kind,error:String(error)}));
+     console.error(JSON.stringify({event:"send_rejected_retry_eligible",lead_id:lead.id,kind,error_class:error.httpStatus?("telegram_http_"+error.httpStatus):error.definiteRejection?"telegram_rejected":"delivery_or_database_error"}));
     }else{
      // Telegram may have accepted the message before a timeout or connection reset.
      // Retain the claim and require operator review rather than risk duplicate delivery.
