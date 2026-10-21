@@ -61,7 +61,7 @@ export function createDeliveryWorker({
         WITH candidate AS (
           SELECT lead_id, alert_type
           FROM crm_telegram_delivery_v2
-          WHERE attempt_count < ${maxAttempts}
+          WHERE (attempt_count < ${maxAttempts} OR manual_resend_authorized = true)
             AND (
               state = 'pending'
               OR (state = 'rejected' AND next_attempt_at IS NOT NULL AND next_attempt_at <= clock_timestamp())
@@ -76,6 +76,7 @@ export function createDeliveryWorker({
             claimed_at = clock_timestamp(),
             last_attempt_at = clock_timestamp(),
             next_attempt_at = NULL,
+            manual_resend_authorized = false,
             last_error_class = NULL,
             updated_at = clock_timestamp()
         FROM candidate c
