@@ -92,3 +92,27 @@ def test_v2_conflicting_retry_is_rejected():
     # Rounding is unchanged, but immutable rate snapshots must still conflict.
     with pytest.raises(Exception, match="different cost components"):
         repo.record_ai_usage_v2(u, changed_parts)
+
+
+def test_v2_rejects_reuse_of_legacy_request_id():
+    dsn = os.environ.get("JARVIS_WORKER_CI_DATABASE_URL")
+    if not dsn:
+        pytest.skip("disposable PostgreSQL required")
+    repo = QueueRepository(SimpleNamespace(database_url=dsn))
+    repo.migrate()
+    u, parts = usage(), components()
+    legacy = {k: v for k, v in u.items() if k != "expected_cost_micro_usd"}
+    assert repo.record_ai_usage(legacy) is True
+    with pytest.raises(Exception, match="different metadata"):
+        repo.record_ai_usage_v2(u, parts)
+    with repo.connection() as conn:
+        existing = conn.execute(
+            "SELECT pricing_version FROM jarvis_ai_usage_events WHERE request_id=%s",
+            (u["request_id"],),
+        ).fetchone()
+        parts_count = conn.execute(
+            "SELECT count(*) AS n FROM jarvis_ai_usage_cost_components WHERE request_id=%s",
+            (u["request_id"],),
+        ).fetchone()["n"]
+    assert existing["pricing_version"] == 1
+    assert parts_count == 0
