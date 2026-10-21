@@ -35,28 +35,21 @@ tokens are a subset of total input tokens, not an additional quantity. It
 rejects missing cached-input pricing, impossible token counts and BIGINT
 overflow. The calculator has CI unit tests.
 
-**Important:** this helper is not connected to `normalize_usage()`,
-`Orchestrator.record_ai_usage()` or the PostgreSQL ledger. The existing
-ledger still records two rate snapshots and calculates its cost from ordinary
-input/output totals. Do not represent its historical or current rows as
-cache-aware, and do not send cached provider usage into that two-rate path
-unless a separate, reviewed accounting contract is implemented. This is a
-known functional limitation, not a verified model-cost comparison.
-
-Before enabling cache-aware production reporting, design an additive schema
-that preserves the provider-reported token categories and their immutable
-rates, validate the provider's category semantics, and test migration,
-idempotency, PostgreSQL restart and mixed legacy/new reporting in an isolated
-Sandbox. Do not rewrite existing historical cost rows.
+**Current integration:** the legacy `record_ai_usage()` path remains
+two-rate and is not cache-aware. The opt-in `record_ai_usage_v2()` path
+atomically stores validated disjoint token-category snapshots in PostgreSQL
+with `pricing_version=2`. It does not automatically map any provider's raw
+cache telemetry, call an AI model, or change the production booking flow.
+See [the v2 migration contract](ai-ledger-v2-migration-contract.md) for the
+exact implemented schema, limitations, and safety gates.
 
 ## Verification evidence and remaining blockers
 
-GitHub Actions at commit `7edbb8cc46266ed841547912d105159e896fd7e3`
-reported 136 Worker tests passed and 54 MCP tests passed (11 MCP skips).
-The Worker workflow also printed
-`AI usage ledger PostgreSQL restart recovery: PASS` after restarting the
-ephemeral PostgreSQL container. This verifies ledger persistence and
-idempotency in CI, not a Railway deployment or real model inference.
+GitHub Actions at commit `251f4b1c54c1be8eebfe6ad80cfac75ff55640ab`
+reported 145 Worker tests passed and 54 MCP tests passed (11 MCP skips).
+The Worker workflow also confirmed v1/v2 ledger persistence and
+idempotency after restarting disposable PostgreSQL. These results verify CI
+behavior only, not Railway staging or real-model inference.
 
 Real candidate API access, official account-specific model availability,
 actual latency/accuracy on 100 synthetic examples per candidate, token
