@@ -18,14 +18,20 @@ try {
    try{
     const text="Автохирург CRM: "+(kind==="new"?"🔔 Новая заявка":"⏰ Заявка без обработки более 30 минут")+" №"+lead.id;
     const response=await fetch("https://api.telegram.org/bot"+token+"/sendMessage",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chat,text})});
-    if(!response.ok)throw Error("Telegram HTTP "+response.status);
+    if(!response.ok){const err=Error("Telegram HTTP "+response.status);err.definiteRejection=response.status>=400&&response.status<500;throw err;}
     const body=await response.json();
-    if(!body.ok)throw Error("Telegram API rejected message");
+    if(!body.ok){const err=Error("Telegram API rejected message");err.definiteRejection=true;throw err;}
     sent++;
    }catch(error){
     failed++;
-    await sql`DELETE FROM crm_telegram_alert_log WHERE lead_id=${lead.id} AND alert_type=${kind}`;
-    console.error(JSON.stringify({event:"send_failed",lead_id:lead.id,kind,error:String(error)}));
+    if(error.definiteRejection){
+     await sql`DELETE FROM crm_telegram_alert_log WHERE lead_id=${lead.id} AND alert_type=${kind}`;
+     console.error(JSON.stringify({event:"send_rejected_retry_eligible",lead_id:lead.id,kind,error:String(error)}));
+    }else{
+     // Telegram may have accepted the message before a timeout or connection reset.
+     // Retain the claim and require operator review rather than risk duplicate delivery.
+     console.error(JSON.stringify({event:"send_outcome_uncertain_manual_review",lead_id:lead.id,kind,error:String(error)}));
+    }
    }
   }
  }
