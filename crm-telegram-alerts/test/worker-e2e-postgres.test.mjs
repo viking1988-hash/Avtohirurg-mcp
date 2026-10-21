@@ -21,6 +21,11 @@ const server = createServer(async (req, res) => {
     res.socket.destroy();
     return;
   }
+  if (mode === "forbidden") {
+    res.writeHead(403, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error_code: 403, description: "Forbidden" }));
+    return;
+  }
   if (mode === "rate-limit") {
     res.writeHead(429, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 30 } }));
@@ -90,6 +95,15 @@ try {
   assert.equal((await state(990103)).state, "sent");
   assert.equal(calls.get(990103), 2);
 
+  // Explicit Telegram 403 is permanent and cannot be retried automatically.
+  await addLead(990107);
+  mode = "forbidden";
+  await worker.run();
+  assert.equal((await state(990107)).state, "rejected");
+  assert.equal((await state(990107)).next_attempt_at, null);
+  await worker.run();
+  assert.equal(calls.get(990107), 1);
+
   // Telegram may accept then the connection closes: uncertain and never auto-replayed.
   await addLead(990104);
   mode = "timeout";
@@ -116,11 +130,22 @@ try {
   assert.equal(audit[0].action, "authorized_resend");
   assert.equal(audit[0].duplicate_risk_accepted, true);
 
+  // Operator confirmation is also available and produces a sent audit entry.
+  await addLead(990108);
+  await worker.enqueue();
+  const claimedForConfirm = await worker.claimOne();
+  assert.equal(Number(claimedForConfirm.lead_id), 990108);
+  await sql`UPDATE crm_telegram_delivery_v2 SET state='uncertain', claimed_at=NULL WHERE lead_id=990108 AND alert_type='new'`;
+  await runOperatorAction(sql, "confirm-delivered", { ...operatorArgs, "lead-id": "990108" });
+  assert.equal((await state(990108)).state, "sent");
+  const confirmationAudit = await sql`SELECT action FROM crm_telegram_delivery_operator_audit WHERE lead_id=990108`;
+  assert.equal(confirmationAudit[0].action, "confirmed_delivered");
+
   // Process crash before send and expired lease become uncertain, never pending.
   await addLead(990105);
   await worker.enqueue();
   const claimed = await worker.claimOne();
-  assert.equal(claimed.lead_id, 990105);
+  assert.equal(Number(claimed.lead_id), 990105);
   await sql`UPDATE crm_telegram_delivery_v2 SET claimed_at=clock_timestamp()-interval '20 minutes'
     WHERE lead_id=990105`;
   await worker.run();
