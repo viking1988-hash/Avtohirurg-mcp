@@ -622,13 +622,15 @@ class QueueRepository:
                 ON CONFLICT DO NOTHING RETURNING request_id""", row).fetchone()
             if inserted is None:
                 existing = c.execute("""SELECT pricing_version,correlation_id,provider,model,input_tokens,
-                    output_tokens,cost_micro_usd,latency_ms,outcome,booking_success
+                    output_tokens,input_rate_micro_usd_per_million,
+                    output_rate_micro_usd_per_million,cost_micro_usd,latency_ms,outcome,booking_success
                     FROM jarvis_ai_usage_events WHERE request_id=%s FOR UPDATE""",
                     (row["request_id"],)).fetchone()
                 if existing is None:
                     return False  # A different booking-success correlation won the unique index.
                 expected_fields = ("correlation_id","provider","model","input_tokens",
-                    "output_tokens","cost_micro_usd","latency_ms","outcome","booking_success")
+                    "output_tokens","input_rate_micro_usd_per_million",
+                    "output_rate_micro_usd_per_million","cost_micro_usd","latency_ms","outcome","booking_success")
                 if existing["pricing_version"] != 2 or any(existing[k] != row[k] for k in expected_fields):
                     raise Conflict("AI usage request_id bound to different metadata")
                 old_parts = c.execute("""SELECT component,token_count,rate_micro_usd_per_million
