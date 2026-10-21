@@ -30,12 +30,12 @@ try {
     }else{
      // Telegram may have accepted the message before a timeout or connection reset.
      // Retain the claim and require operator review rather than risk duplicate delivery.
-     console.error(JSON.stringify({event:"send_outcome_uncertain_manual_review",lead_id:lead.id,kind,error:String(error)}));
+     console.error(JSON.stringify({event:"send_outcome_uncertain_manual_review",lead_id:lead.id,kind,error_class:error.httpStatus?("telegram_http_"+error.httpStatus):"transport_or_database_error"}));
     }
    }
   }
  }
  console.log(JSON.stringify({event:"alert_run_completed",ok:failed===0,checked:leads.length,claimed:claimedCount,already_claimed:alreadyClaimed,sent,failed,duration_ms:Date.now()-runStarted}));
  if(failed>0)process.exitCode=1;
-} catch(error){console.error(JSON.stringify({event:"alert_run_failed",ok:false,error:String(error),duration_ms:Date.now()-runStarted}));process.exitCode=1}
+} catch(error){console.error(JSON.stringify({event:"alert_run_failed",ok:false,error_class:error.httpStatus?("telegram_http_"+error.httpStatus):"transport_or_database_error",duration_ms:Date.now()-runStarted}));process.exitCode=1}
 finally{await sql.end()}
