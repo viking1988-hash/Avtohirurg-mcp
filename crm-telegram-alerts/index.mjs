@@ -2,7 +2,7 @@ import postgres from "postgres";
 const token=process.env.TELEGRAM_BOT_TOKEN;
 const chat=process.env.TELEGRAM_CHAT_ID;
 const database=process.env.DATABASE_URL;
-if(!token||!chat||!database){console.log(JSON.stringify({ok:false,reason:"missing_configuration"}));process.exit(0)}
+if(!token||!chat||!database){console.error(JSON.stringify({event:"alert_run_failed",ok:false,reason:"missing_configuration"}));process.exit(1)}
 const sql=postgres(database,{max:1,connect_timeout:10,onnotice:()=>{}});
 const runStarted=Date.now();
 console.log(JSON.stringify({event:"alert_run_started",at:new Date().toISOString()}));
@@ -30,5 +30,6 @@ try {
   }
  }
  console.log(JSON.stringify({event:"alert_run_completed",ok:failed===0,checked:leads.length,claimed:claimedCount,already_claimed:alreadyClaimed,sent,failed,duration_ms:Date.now()-runStarted}));
+ if(failed>0)process.exitCode=1;
 } catch(error){console.error(JSON.stringify({event:"alert_run_failed",ok:false,error:String(error),duration_ms:Date.now()-runStarted}));process.exitCode=1}
 finally{await sql.end()}
