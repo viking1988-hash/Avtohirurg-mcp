@@ -621,6 +621,23 @@ class QueueRepository:
                  %(outcome)s,%(booking_success)s)
                 ON CONFLICT DO NOTHING RETURNING request_id""", row).fetchone()
             if inserted is None:
+                existing = c.execute("""SELECT correlation_id,provider,model,input_tokens,
+                    output_tokens,cost_micro_usd,latency_ms,outcome,booking_success
+                    FROM jarvis_ai_usage_events WHERE request_id=%s FOR UPDATE""",
+                    (row["request_id"],)).fetchone()
+                if existing is None:
+                    return False  # A different booking-success correlation won the unique index.
+                expected_fields = ("correlation_id","provider","model","input_tokens",
+                    "output_tokens","cost_micro_usd","latency_ms","outcome","booking_success")
+                if any(existing[k] != row[k] for k in expected_fields):
+                    raise Conflict("AI usage request_id bound to different metadata")
+                old_parts = c.execute("""SELECT component,token_count,rate_micro_usd_per_million
+                    FROM jarvis_ai_usage_cost_components WHERE request_id=%s""",
+                    (row["request_id"],)).fetchall()
+                expected_parts = {tuple(p[k] for k in ("component","token_count","rate_micro_usd_per_million")) for p in normalized}
+                found_parts = {tuple(p[k] for k in ("component","token_count","rate_micro_usd_per_million")) for p in old_parts}
+                if found_parts != expected_parts:
+                    raise Conflict("AI usage request_id bound to different cost components")
                 return False
             for part in normalized:
                 c.execute("""INSERT INTO jarvis_ai_usage_cost_components
