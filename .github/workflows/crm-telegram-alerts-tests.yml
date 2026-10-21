@@ -42,4 +42,6 @@ jobs:
           PGUSER: test_user
           PGPASSWORD: test_password_local_only
           PGDATABASE: alerts_test
-        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/test/delivery-v2-disposable.sql
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/test/delivery-v2-disposable.sql
+          node crm-telegram-alerts/test/concurrent-claim.test.mjs
