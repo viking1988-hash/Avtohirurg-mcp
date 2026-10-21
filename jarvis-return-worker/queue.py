@@ -592,6 +592,44 @@ class QueueRepository:
                 ON CONFLICT DO NOTHING RETURNING request_id""",row).fetchone()
             return inserted is not None
 
+    def record_ai_usage_v2(self, usage, components):
+        """Atomically persist a costed parent and immutable category snapshots.
+
+        The legacy two-rate calculator remains authoritative for legacy calls.
+        V2 callers must supply an explicit expected cost; this path never
+        silently infers cached-input pricing from the legacy rates.
+        """
+        from .ai_cost import normalize_usage, _integer
+        from .ai_components import normalize_components
+        if not isinstance(usage, dict) or "expected_cost_micro_usd" not in usage:
+            raise ValueError("missing_expected_cost_micro_usd")
+        expected = _integer(usage["expected_cost_micro_usd"], "expected_cost_micro_usd")
+        row = normalize_usage({k: v for k, v in usage.items() if k != "expected_cost_micro_usd"})
+        normalized = normalize_components(
+            components, input_tokens=row["input_tokens"],
+            output_tokens=row["output_tokens"], expected_cost_micro_usd=expected,
+        )
+        row["cost_micro_usd"] = expected
+        with self.connection() as c:
+            inserted = c.execute("""INSERT INTO jarvis_ai_usage_events
+                (request_id,correlation_id,provider,model,input_tokens,output_tokens,
+                 input_rate_micro_usd_per_million,output_rate_micro_usd_per_million,
+                 cost_micro_usd,latency_ms,outcome,booking_success)
+                VALUES (%(request_id)s,%(correlation_id)s,%(provider)s,%(model)s,
+                 %(input_tokens)s,%(output_tokens)s,%(input_rate_micro_usd_per_million)s,
+                 %(output_rate_micro_usd_per_million)s,%(cost_micro_usd)s,%(latency_ms)s,
+                 %(outcome)s,%(booking_success)s)
+                ON CONFLICT DO NOTHING RETURNING request_id""", row).fetchone()
+            if inserted is None:
+                return False
+            for part in normalized:
+                c.execute("""INSERT INTO jarvis_ai_usage_cost_components
+                    (request_id,component,token_count,rate_micro_usd_per_million)
+                    VALUES (%s,%s,%s,%s)""",
+                    (row["request_id"],part["component"],part["token_count"],
+                     part["rate_micro_usd_per_million"]))
+            return True
+
     def ai_cost_summary(self):
         from .ai_cost import summarize_totals
         with self.connection() as c:
