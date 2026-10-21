@@ -657,14 +657,21 @@ class QueueRepository:
                 count(*) AS request_count,
                 count(*) FILTER (WHERE outcome='SUCCESS') AS successful_calls,
                 count(*) FILTER (WHERE booking_success) AS successful_bookings,
+                count(*) FILTER (WHERE outcome='UNKNOWN') AS unknown_usage_requests,
                 coalesce(sum(cost_micro_usd),0) AS total_cost_micro_usd
                 FROM jarvis_ai_usage_events
                 GROUP BY pricing_version ORDER BY pricing_version""").fetchall()
         return {
-            int(row["pricing_version"]): summarize_totals(
-                int(row["request_count"]), int(row["successful_calls"]),
-                int(row["successful_bookings"]), int(row["total_cost_micro_usd"])
-            ) for row in rows
+            int(row["pricing_version"]): {
+                **summarize_totals(
+                    int(row["request_count"]), int(row["successful_calls"]),
+                    int(row["successful_bookings"]), int(row["total_cost_micro_usd"])
+                ),
+                "unknown_usage_requests": int(row["unknown_usage_requests"]),
+                "cost_completeness": (
+                    "INCOMPLETE" if row["unknown_usage_requests"] else "RECORDED"
+                ),
+            } for row in rows
         }
 
     def ai_cost_summary(self):
