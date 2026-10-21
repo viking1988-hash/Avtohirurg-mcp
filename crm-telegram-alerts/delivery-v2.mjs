@@ -91,10 +91,17 @@ export function createDeliveryWorker({
     return sql`
       UPDATE crm_telegram_delivery_v2
       SET state = 'uncertain',
+          claimed_at = NULL,
           last_error_class = 'stale_sending_requires_review',
           updated_at = clock_timestamp()
       WHERE state = 'sending'
         AND claimed_at < clock_timestamp() - (${LEASE_TIMEOUT_MINUTES} * interval '1 minute')
+        AND NOT EXISTS (
+          SELECT 1 FROM crm_telegram_delivery_worker_lease lease
+          WHERE lease.lead_id = crm_telegram_delivery_v2.lead_id
+            AND lease.alert_type = crm_telegram_delivery_v2.alert_type
+            AND lease.lease_expires_at > clock_timestamp()
+        )
       RETURNING lead_id, alert_type, attempt_count
     `;
   }
