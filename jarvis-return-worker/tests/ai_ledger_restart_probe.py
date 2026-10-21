@@ -54,7 +54,7 @@ elif phase == "after":
     with repo.connection() as conn:
         found = conn.execute(
             """SELECT request_id, correlation_id, provider, model, input_tokens,
-                      output_tokens, cost_micro_usd, booking_success
+                      output_tokens, cost_micro_usd, booking_success, pricing_version
                  FROM jarvis_ai_usage_events WHERE request_id=%s""",
             (request_id,),
         ).fetchone()
@@ -66,10 +66,11 @@ elif phase == "after":
     assert found["output_tokens"] == 500
     assert found["cost_micro_usd"] == 6000
     assert found["booking_success"] is True
+    assert found["pricing_version"] == 1
     assert repo.record_ai_usage(row) is False, "idempotency lost after restart"
     with repo.connection() as conn:
         v2_parent = conn.execute(
-            "SELECT cost_micro_usd FROM jarvis_ai_usage_events WHERE request_id=%s",
+            "SELECT cost_micro_usd, pricing_version FROM jarvis_ai_usage_events WHERE request_id=%s",
             (v2_request_id,),
         ).fetchone()
         v2_components = conn.execute(
@@ -79,6 +80,7 @@ elif phase == "after":
             (v2_request_id,),
         ).fetchall()
     assert v2_parent is not None and v2_parent["cost_micro_usd"] == 5400
+    assert v2_parent["pricing_version"] == 2
     assert len(v2_components) == 3
     assert {p["component"]: (p["token_count"], p["rate_micro_usd_per_million"])
             for p in v2_components} == {
