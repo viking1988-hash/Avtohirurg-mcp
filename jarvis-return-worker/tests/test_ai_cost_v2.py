@@ -74,3 +74,21 @@ def test_v2_invalid_total_does_not_create_parent():
     with repo.connection() as conn:
         assert conn.execute("SELECT count(*) AS n FROM jarvis_ai_usage_events WHERE request_id=%s",
                             (u["request_id"],)).fetchone()["n"] == 0
+
+
+def test_v2_conflicting_retry_is_rejected():
+    dsn = os.environ.get("JARVIS_WORKER_CI_DATABASE_URL")
+    if not dsn:
+        pytest.skip("disposable PostgreSQL required")
+    repo = QueueRepository(SimpleNamespace(database_url=dsn))
+    repo.migrate()
+    u, parts = usage(), components()
+    assert repo.record_ai_usage_v2(u, parts)
+    altered = dict(u, model="different-model")
+    with pytest.raises(Exception, match="different metadata"):
+        repo.record_ai_usage_v2(altered, parts)
+    changed_parts = [dict(x) for x in parts]
+    changed_parts[0]["rate_micro_usd_per_million"] += 1
+    # Rounding is unchanged, but immutable rate snapshots must still conflict.
+    with pytest.raises(Exception, match="different cost components"):
+        repo.record_ai_usage_v2(u, changed_parts)
