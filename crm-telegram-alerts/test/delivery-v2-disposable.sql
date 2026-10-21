@@ -33,12 +33,17 @@ WITH claim AS (
  UPDATE crm_telegram_delivery_v2 SET state='sending',attempt_count=attempt_count+1,claimed_at=now()
  WHERE lead_id=900002 AND alert_type='overdue' AND state='pending' RETURNING lead_id
 )
-SELECT CASE WHEN count(*)=1 THEN 1 ELSE 1/0 END FROM claim;
+SELECT count(*) AS first_claim_count FROM claim;
 WITH second_claim AS (
  UPDATE crm_telegram_delivery_v2 SET state='sending',attempt_count=attempt_count+1
  WHERE lead_id=900002 AND alert_type='overdue' AND state='pending' RETURNING lead_id
 )
-SELECT CASE WHEN count(*)=0 THEN 1 ELSE 1/0 END FROM second_claim;
+SELECT count(*) AS second_claim_count FROM second_claim;
+DO $
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM crm_telegram_delivery_v2 WHERE lead_id=900002 AND state='sending' AND attempt_count=1)
+ THEN RAISE EXCEPTION 'duplicate claim or attempt count mismatch'; END IF;
+END $;
 -- Stale sending must be marked uncertain, not automatically retried.
 UPDATE crm_telegram_delivery_v2 SET claimed_at=now()-interval '20 minutes' WHERE lead_id=900002 AND state='sending';
 UPDATE crm_telegram_delivery_v2 SET state='uncertain',last_error_class='worker_crash_or_stalled'
