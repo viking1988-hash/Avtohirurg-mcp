@@ -46,14 +46,27 @@ jobs:
       - name: Install worker dependency
         working-directory: crm-telegram-alerts
         run: npm install --no-save --no-package-lock
-      - name: Apply Delivery v2 schema to disposable PostgreSQL
+      - name: Seed legacy delivery history before migration
         env:
           PGHOST: localhost
           PGPORT: '5432'
           PGUSER: test_user
           PGPASSWORD: test_password_local_only
           PGDATABASE: alerts_test
-        run: psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/migrations/001_delivery_v2.sql
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c "CREATE TABLE crm_telegram_alert_log (lead_id bigint NOT NULL, alert_type text NOT NULL, sent_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (lead_id, alert_type))"
+          psql -X -v ON_ERROR_STOP=1 -c "INSERT INTO crm_telegram_alert_log (lead_id, alert_type, sent_at) VALUES (980001, 'new', '2026-10-01T12:00:00Z')"
+      - name: Apply additive migration twice and verify legacy history is unchanged
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: test_user
+          PGPASSWORD: test_password_local_only
+          PGDATABASE: alerts_test
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/migrations/001_delivery_v2.sql
+          psql -X -v ON_ERROR_STOP=1 -f crm-telegram-alerts/migrations/001_delivery_v2.sql
+          psql -X -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM crm_telegram_alert_log WHERE lead_id=980001 AND alert_type='new' AND sent_at='2026-10-01T12:00:00Z') THEN RAISE EXCEPTION 'legacy delivery history changed'; END IF; END \$\$;"
       - name: Run worker E2E against PostgreSQL and local mock Telegram
         env:
           DATABASE_URL: postgres://test_user:test_password_local_only@localhost:5432/alerts_test
