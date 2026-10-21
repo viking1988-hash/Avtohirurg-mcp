@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS crm_telegram_delivery_v2 (
  alert_type text NOT NULL,
  state text NOT NULL CHECK (state IN ('pending','sending','sent','rejected','uncertain')),
  attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+ manual_resend_authorized boolean NOT NULL DEFAULT false,
  claimed_at timestamptz,
  last_attempt_at timestamptz,
  next_attempt_at timestamptz,
