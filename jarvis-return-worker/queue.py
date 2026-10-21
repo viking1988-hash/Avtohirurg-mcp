@@ -649,6 +649,24 @@ class QueueRepository:
                      part["rate_micro_usd_per_million"]))
             return True
 
+    def ai_cost_summary_by_pricing_version(self):
+        """Return separately labeled v1/v2 totals; never conflate tariff semantics."""
+        from .ai_cost import summarize_totals
+        with self.connection() as c:
+            rows = c.execute("""SELECT pricing_version,
+                count(*) AS request_count,
+                count(*) FILTER (WHERE outcome='SUCCESS') AS successful_calls,
+                count(*) FILTER (WHERE booking_success) AS successful_bookings,
+                coalesce(sum(cost_micro_usd),0) AS total_cost_micro_usd
+                FROM jarvis_ai_usage_events
+                GROUP BY pricing_version ORDER BY pricing_version""").fetchall()
+        return {
+            int(row["pricing_version"]): summarize_totals(
+                int(row["request_count"]), int(row["successful_calls"]),
+                int(row["successful_bookings"]), int(row["total_cost_micro_usd"])
+            ) for row in rows
+        }
+
     def ai_cost_summary(self):
         from .ai_cost import summarize_totals
         with self.connection() as c:
