@@ -2,6 +2,12 @@
 -- Never apply to Production without a separately reviewed migration and backup.
 -- Historical crm_telegram_alert_log rows are deliberately not copied or reclassified.
 BEGIN;
+CREATE TABLE IF NOT EXISTS crm_telegram_alert_log (
+ lead_id bigint NOT NULL,
+ alert_type text NOT NULL,
+ sent_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (lead_id, alert_type)
+);
 CREATE TABLE IF NOT EXISTS crm_telegram_delivery_v2 (
  lead_id bigint NOT NULL,
  alert_type text NOT NULL,
