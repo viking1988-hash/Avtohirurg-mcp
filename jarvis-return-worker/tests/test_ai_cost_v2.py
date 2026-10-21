@@ -139,3 +139,21 @@ def test_v2_rejects_distinct_request_id_for_same_successful_booking():
             (first["correlation_id"],),
         ).fetchone()["n"]
     assert count == 1
+
+
+def test_pricing_version_summary_keeps_legacy_and_v2_separate():
+    dsn = os.environ.get("JARVIS_WORKER_CI_DATABASE_URL")
+    if not dsn:
+        pytest.skip("disposable PostgreSQL required")
+    repo = QueueRepository(SimpleNamespace(database_url=dsn))
+    repo.migrate()
+    before = repo.ai_cost_summary_by_pricing_version()
+    v1, v2 = usage(), usage()
+    legacy = {k: v for k, v in v1.items() if k != "expected_cost_micro_usd"}
+    assert repo.record_ai_usage(legacy) is True
+    assert repo.record_ai_usage_v2(v2, components()) is True
+    after = repo.ai_cost_summary_by_pricing_version()
+    for version, delta in ((1, 6000), (2, 5400)):
+        prior = before.get(version, {})
+        assert after[version]["total_cost_micro_usd"] - prior.get("total_cost_micro_usd", 0) == delta
+        assert after[version]["request_count"] - prior.get("request_count", 0) == 1
