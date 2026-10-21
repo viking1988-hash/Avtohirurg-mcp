@@ -57,7 +57,7 @@ def test_v2_atomic_insert_and_concurrent_idempotency():
                            (u["request_id"],)).fetchone()
         count = conn.execute("SELECT count(*) AS n FROM jarvis_ai_usage_cost_components WHERE request_id=%s",
                              (u["request_id"],)).fetchone()["n"]
-    assert row["cost_micro_usd"] == 5400 and count == 3
+    assert row["cost_micro_usd"] == 5400 and row["pricing_version"] == 2 and count == 3
     assert repo.record_ai_usage_v2(u, parts) is False
 
 
