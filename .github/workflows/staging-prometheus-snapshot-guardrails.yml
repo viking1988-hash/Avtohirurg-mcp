@@ -1,0 +1,20 @@
+name: Staging Prometheus Snapshot Guardrails
+on:
+  pull_request:
+    paths:
+      - 'jarvis-return-worker/monitoring/start-prometheus.sh'
+      - 'jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh'
+      - '.github/workflows/staging-prometheus-snapshot-guardrails.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shell-guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check POSIX shell syntax
+        run: sh -n jarvis-return-worker/monitoring/start-prometheus.sh && sh -n jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh
+      - name: Check snapshot guardrails
+        run: sh jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh
