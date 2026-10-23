@@ -11,4 +11,13 @@ else
   umask 077
   printf '%s' 'synthetic-sandbox-no-access' > /tmp/worker-metrics-token
 fi
-exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --web.console.libraries=/usr/share/prometheus/console_libraries --web.console.templates=/usr/share/prometheus/consoles
+# Snapshot admin API is disabled by default. Enable only for a short,
+# explicitly controlled staging backup window; disable again afterwards.
+set -- --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/prometheus \
+  --web.console.libraries=/usr/share/prometheus/console_libraries \
+  --web.console.templates=/usr/share/prometheus/consoles
+if [ "${PROMETHEUS_SNAPSHOT_ADMIN_API:-false}" = "true" ]; then
+  set -- "$@" --web.enable-admin-api
+fi
+exec /bin/prometheus "$@"
