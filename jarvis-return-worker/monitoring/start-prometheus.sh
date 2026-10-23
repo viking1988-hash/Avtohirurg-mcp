@@ -17,7 +17,9 @@ set -- --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path=/prometheus \
   --web.console.libraries=/usr/share/prometheus/console_libraries \
   --web.console.templates=/usr/share/prometheus/consoles
+# During the snapshot window, bind admin API to loopback only.
+# Never expose mutating endpoints to other Railway private-network services.
 if [ "${PROMETHEUS_SNAPSHOT_ADMIN_API:-false}" = "true" ]; then
-  set -- "$@" --web.enable-admin-api
+  set -- "$@" --web.enable-admin-api --web.listen-address=127.0.0.1:9090
 fi
 exec /bin/prometheus "$@"
