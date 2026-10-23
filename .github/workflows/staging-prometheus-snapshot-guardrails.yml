@@ -1,0 +1,44 @@
+name: Staging Prometheus Snapshot Guardrails
+on:
+  pull_request:
+    paths:
+      - 'jarvis-return-worker/monitoring/start-prometheus.sh'
+      - 'jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh'
+      - '.github/workflows/staging-prometheus-snapshot-guardrails.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shell-guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check POSIX shell syntax
+        run: sh -n jarvis-return-worker/monitoring/start-prometheus.sh && sh -n jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh
+      - name: Check snapshot guardrails
+        run: sh jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh
+
+  isolated-prometheus-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify opt-in startup and snapshot on disposable TSDB
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name prometheus-snapshot-smoke \
+            -e PROMETHEUS_SNAPSHOT_ADMIN_API=true \
+            -v "${PWD}/jarvis-return-worker/monitoring/start-prometheus.sh:/usr/local/bin/start-prometheus:ro" \
+            --entrypoint /bin/sh \
+            prom/prometheus:v3.5.0 \
+            /usr/local/bin/start-prometheus
+          trap 'docker rm -f prometheus-snapshot-smoke >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if docker exec prometheus-snapshot-smoke wget -qO- http://127.0.0.1:9090/-/ready; then break; fi
+            sleep 1
+          done
+          docker exec prometheus-snapshot-smoke wget -qO- http://127.0.0.1:9090/-/ready
+          docker exec prometheus-snapshot-smoke wget -qO- --post-data='' 'http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot' | grep -q '"status":"success"'
+          docker exec prometheus-snapshot-smoke sh -c 'test -d /prometheus/snapshots && test "$(find /prometheus/snapshots -mindepth 1 -maxdepth 1 -type d | wc -l)" -ge 1'
