@@ -2,43 +2,89 @@ name: Staging Prometheus Snapshot Guardrails
 on:
   pull_request:
     paths:
+      - 'Dockerfile.worker-private-monitoring-sandbox'
       - 'jarvis-return-worker/monitoring/start-prometheus.sh'
+      - 'jarvis-return-worker/monitoring/prometheus_snapshot_runtime.py'
       - 'jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh'
+      - 'jarvis-return-worker/monitoring/tests/**'
       - '.github/workflows/staging-prometheus-snapshot-guardrails.yml'
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   shell-guardrails:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - name: Check POSIX shell syntax
-        run: sh -n jarvis-return-worker/monitoring/start-prometheus.sh && sh -n jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh
-      - name: Check snapshot guardrails
-        run: sh jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check POSIX shell syntax and static guardrails
+        run: |
+          sh -n jarvis-return-worker/monitoring/start-prometheus.sh
+          sh -n jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh
+          sh jarvis-return-worker/monitoring/test-start-prometheus-snapshot.sh
+      - name: Test authenticated snapshot proxy and archive guardrails
+        run: |
+          python -m py_compile jarvis-return-worker/monitoring/prometheus_snapshot_runtime.py
+          python -m unittest discover -s jarvis-return-worker/monitoring/tests -v
 
   isolated-prometheus-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-      - name: Verify opt-in startup and snapshot on disposable TSDB
+      - name: Build staging Prometheus image
+        run: docker build -f Dockerfile.worker-private-monitoring-sandbox -t avtohirurg-prometheus-snapshot:ci .
+      - name: Verify default mode keeps Admin API disabled
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --name prometheus-snapshot-smoke \
-            -e PROMETHEUS_SNAPSHOT_ADMIN_API=true \
-            -v "${PWD}/jarvis-return-worker/monitoring/start-prometheus.sh:/usr/local/bin/start-prometheus:ro" \
-            --entrypoint /bin/sh \
-            prom/prometheus:v3.5.0 \
-            /usr/local/bin/start-prometheus
-          trap 'docker rm -f prometheus-snapshot-smoke >/dev/null 2>&1 || true' EXIT
-          for i in $(seq 1 30); do
-            if docker exec prometheus-snapshot-smoke wget -qO- http://127.0.0.1:9090/-/ready; then break; fi
+          docker run -d --name prometheus-default avtohirurg-prometheus-snapshot:ci
+          trap 'docker rm -f prometheus-default prometheus-snapshot >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 60); do
+            if docker exec prometheus-default python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:9090/-/ready", timeout=2)'; then break; fi
             sleep 1
           done
-          docker exec prometheus-snapshot-smoke wget -qO- http://127.0.0.1:9090/-/ready
-          docker exec prometheus-snapshot-smoke wget -qO- --post-data='' 'http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot' | grep -q '"status":"success"'
-          docker exec prometheus-snapshot-smoke sh -c 'test -d /prometheus/snapshots && test "$(find /prometheus/snapshots -mindepth 1 -maxdepth 1 -type d | wc -l)" -ge 1'
+          docker exec prometheus-default python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:9090/-/ready", timeout=2)'
+          docker exec prometheus-default python3 -c 'import urllib.request, urllib.error, sys
+try:
+ urllib.request.urlopen("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot", timeout=2)
+ sys.exit("Admin API unexpectedly available")
+except urllib.error.HTTPError as exc:
+ assert exc.code != 200, exc.code'
+          docker rm -f prometheus-default >/dev/null
+      - name: Verify private proxy preserves queries and gates Admin API
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name prometheus-snapshot \
+            -e PROMETHEUS_SNAPSHOT_ADMIN_API=true \
+            -e PROMETHEUS_BACKUP_TOKEN=synthetic-ci-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+            -e PROMETHEUS_BACKUP_URL=http://127.0.0.1:8080/v1/upload \
+            avtohirurg-prometheus-snapshot:ci
+          trap 'docker rm -f prometheus-snapshot >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 60); do
+            if docker exec prometheus-snapshot python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:9090/-/ready", timeout=2)'; then break; fi
+            sleep 1
+          done
+          docker exec prometheus-snapshot python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:9090/-/ready", timeout=2)'
+          docker exec prometheus-snapshot python3 -c 'import urllib.request, urllib.error, sys
+try:
+ urllib.request.urlopen("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot", timeout=2)
+ sys.exit("unauthenticated Admin API unexpectedly available")
+except urllib.error.HTTPError as exc:
+ assert exc.code == 403, exc.code'
+          docker exec prometheus-snapshot python3 -c 'import urllib.request, urllib.parse, json
+data=urllib.parse.urlencode({"query":"up"}).encode()
+req=urllib.request.Request("http://127.0.0.1:9090/api/v1/query", data=data, method="POST")
+assert json.load(urllib.request.urlopen(req, timeout=5))["status"] == "success"'
+          docker exec prometheus-snapshot python3 -c 'import urllib.request, json
+req=urllib.request.Request("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot?skip_head=false", data=b"", method="POST", headers={"Authorization":"Bearer synthetic-ci-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"})
+assert json.load(urllib.request.urlopen(req, timeout=10))["status"] == "success"'
+          docker exec prometheus-snapshot python3 -c 'from pathlib import Path
+p=Path("/prometheus/snapshots")
+assert p.is_dir() and any(x.is_dir() for x in p.iterdir())'
