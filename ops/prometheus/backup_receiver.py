@@ -162,6 +162,7 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                 self._respond(200, payload)
                 return
             if path == "/metrics":
+                free_bytes = shutil.disk_usage(backup_dir).free
                 with _state_lock:
                     snapshot = dict(_state)
                 body = (
@@ -180,6 +181,9 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                     "# HELP prometheus_backup_last_archive_bytes Size of last verified archive.\n"
                     "# TYPE prometheus_backup_last_archive_bytes gauge\n"
                     f"prometheus_backup_last_archive_bytes {snapshot['last_archive_bytes']}\n"
+                    "# HELP prometheus_backup_volume_free_bytes Free bytes on the backup volume.\n"
+                    "# TYPE prometheus_backup_volume_free_bytes gauge\n"
+                    f"prometheus_backup_volume_free_bytes {free_bytes}\n"
                 ).encode("ascii")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; version=0.0.4")
