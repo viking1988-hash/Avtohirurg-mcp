@@ -28,6 +28,9 @@ class PriceComparisonTests(unittest.TestCase):
             estimate_usd(-1, 0, 1, 1)
         with self.assertRaisesRegex(ValueError, "invalid_rate"):
             estimate_usd(1, 0, -1, 1)
+        for rate in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(rate=rate), self.assertRaisesRegex(ValueError, "invalid_rate"):
+                estimate_usd(1, 0, rate, 1)
 
     def test_rejects_missing_source_and_unknown_availability(self):
         bad = [dict(self.candidates[0], source_url="http://provider.example")]
