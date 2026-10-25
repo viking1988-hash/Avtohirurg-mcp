@@ -278,8 +278,6 @@ def main():
         args.prometheus,
         f"--config.file={args.config}",
         f"--storage.tsdb.path={args.storage}",
-        "--web.console.libraries=/usr/share/prometheus/console_libraries",
-        "--web.console.templates=/usr/share/prometheus/consoles",
         "--web.enable-admin-api",
         "--web.listen-address=127.0.0.1:9091",
         *args.prometheus_args,
