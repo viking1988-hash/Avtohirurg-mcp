@@ -56,3 +56,20 @@ actual latency/accuracy on 100 synthetic examples per candidate, token
 category metadata, and provider-billed cost reconciliation remain NOT RUN.
 The baseline's `model_tested=false` must remain unchanged until an
 actual, budget-authorized model benchmark has run.
+
+## Offline price snapshot comparison
+
+`ai_price_comparison.py` provides a deterministic estimate for a supplied
+workload (input/output token counts) from immutable rate snapshots. Every
+candidate must include its official HTTPS source, `checked_on` date and an
+explicit availability state (`VERIFIED`, `UNVERIFIED`, or `UNAVAILABLE`).
+The comparator keeps availability as metadata and sorts by estimated USD cost;
+it makes no provider calls and does not claim that a model is enabled for this
+account. Prices alone are not a quality benchmark.
+
+Regression coverage is in `tests/test_ai_price_comparison.py`. No provider
+pricing has been embedded as a presumed current truth: snapshots must be
+researched and recorded with a source and date before a comparison is reported.
+The account-specific availability check and real-model quality/latency run
+remain blocked until isolated Sandbox credentials and an approved budget are
+available.
