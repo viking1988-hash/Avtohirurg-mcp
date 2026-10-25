@@ -35,7 +35,6 @@ groups:
           summary: Prometheus staging backup is older than 26 hours
       - alert: PrometheusBackupVerificationFailed
         expr: increase(prometheus_backup_failures_total{job="prometheus-backup-helper"}[1h]) > 0
-        for: 0m
         labels:
           severity: warning
           environment: staging
