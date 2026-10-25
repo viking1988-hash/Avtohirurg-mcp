@@ -10,6 +10,8 @@ tests:
         values: '0+0x20'
       - series: 'prometheus_backup_failures_total{job="prometheus-backup-helper"}'
         values: '0 0 1 1 1 1 1 1 1 1 1'
+      - series: 'prometheus_backup_volume_free_bytes{job="prometheus-backup-helper"}'
+        values: '100000000+0x20'
     alert_rule_test:
       - eval_time: 11m
         alertname: PrometheusBackupNeverSucceeded
@@ -29,3 +31,12 @@ tests:
               environment: staging
             exp_annotations:
               summary: Prometheus backup upload or restore verification failed
+      - eval_time: 6m
+        alertname: PrometheusBackupVolumeLow
+        exp_alerts:
+          - exp_labels:
+              job: prometheus-backup-helper
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Prometheus backup volume has less than 128 MiB free
