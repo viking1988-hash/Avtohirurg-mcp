@@ -55,12 +55,14 @@ class PriceComparisonTests(unittest.TestCase):
                        snapshot["workload"]["output_tokens"], as_of=snapshot["as_of"])
         self.assertEqual([row["id"] for row in rows], [
             "claude-haiku-5-5", "gpt-6-luna", "gemini-3.1-flash-lite",
-            "gemini-3.5-flash-lite", "gemini-3.8-flash",
-            "claude-sonnet-5-5", "gpt-6.1-sol",
+            "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.8-flash",
+            "claude-sonnet-5-5", "gemini-4-argon", "gpt-6.1-sol",
+            "claude-opus-5-5", "gpt-6-astra",
         ])
         self.assertEqual([row["estimated_cost_usd"] for row in rows], [
-            "0.000900", "0.000900", "0.002450", "0.003500",
-            "0.006750", "0.018000", "0.018000",
+            "0.000900", "0.000900", "0.002450", "0.003500", "0.006750",
+            "0.006750", "0.018000", "0.018000", "0.018000", "0.036000",
+            "0.090000",
         ])
         self.assertTrue(all(row["availability"] == "UNVERIFIED" for row in rows))
 
