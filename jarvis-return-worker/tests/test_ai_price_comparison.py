@@ -53,10 +53,15 @@ class PriceComparisonTests(unittest.TestCase):
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         rows = compare(snapshot["candidates"], snapshot["workload"]["input_tokens"],
                        snapshot["workload"]["output_tokens"], as_of=snapshot["as_of"])
-        self.assertEqual([row["id"] for row in rows],
-                         ["gemini-3.5-flash-lite", "claude-sonnet-5-5", "gpt-6.1-sol"])
-        self.assertEqual([row["estimated_cost_usd"] for row in rows],
-                         ["0.003500", "0.018000", "0.018000"])
+        self.assertEqual([row["id"] for row in rows], [
+            "claude-haiku-5-5", "gpt-6-luna", "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite", "gemini-3.8-flash",
+            "claude-sonnet-5-5", "gpt-6.1-sol",
+        ])
+        self.assertEqual([row["estimated_cost_usd"] for row in rows], [
+            "0.000900", "0.000900", "0.002450", "0.003500",
+            "0.006750", "0.018000", "0.018000",
+        ])
         self.assertTrue(all(row["availability"] == "UNVERIFIED" for row in rows))
 
 
