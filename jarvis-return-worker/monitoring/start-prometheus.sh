@@ -13,8 +13,7 @@ else
 fi
 set -- --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path=/prometheus \
-  --web.console.libraries=/usr/share/prometheus/console_libraries \
-  --web.console.templates=/usr/share/prometheus/consoles
+  --storage.tsdb.path=/prometheus
 
 # The automated mode keeps Prometheus on loopback and exposes the private
 # service endpoint through a proxy that allows only authenticated snapshot POSTs.
