@@ -18,33 +18,33 @@ jobs:
       - name: Validate rules and synthetic alert firing scenarios
         run: |
           docker run --rm \
-            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
-            -w /etc/prometheus/monitoring \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
+            -w /etc/prometheus \
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
             check rules alerts.yml
           docker run --rm \
-            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
-            -w /etc/prometheus/monitoring \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
+            -w /etc/prometheus \
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
             test rules alerts.test.yml
 
           docker run --rm \
-            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
-            -w /etc/prometheus/monitoring \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
+            -w /etc/prometheus \
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
             check config prometheus.worker-private.sandbox.yml
           docker run --rm \
-            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
-            -w /etc/prometheus/monitoring \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
+            -w /etc/prometheus \
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
             check rules worker-alerts.sandbox.yml
           docker run --rm \
-            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
-            -w /etc/prometheus/monitoring \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
+            -w /etc/prometheus \
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
             test rules worker-alerts.sandbox.test.yml
