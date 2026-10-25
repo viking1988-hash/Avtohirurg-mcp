@@ -186,12 +186,17 @@ def create_snapshot(api_url, snapshot_root, work_dir, upload_url, token, max_byt
     if not isinstance(snapshot_id, str) or not SNAPSHOT_NAME.fullmatch(snapshot_id):
         raise ValueError("Prometheus returned an invalid snapshot name")
     snapshot_dir = Path(snapshot_root) / snapshot_id
-    archive, digest, block_count = create_archive(snapshot_dir, snapshot_id, work_dir, max_bytes)
+    archive = None
     try:
-        result = upload_archive(upload_url, token, archive, digest, snapshot_id, block_count)
-        return result
+        archive, digest, block_count = create_archive(snapshot_dir, snapshot_id, work_dir, max_bytes)
+        return upload_archive(upload_url, token, archive, digest, snapshot_id, block_count)
     finally:
-        archive.unlink(missing_ok=True)
+        if archive is not None:
+            archive.unlink(missing_ok=True)
+        snapshot_root_path = Path(snapshot_root)
+        if (snapshot_dir.parent == snapshot_root_path and not snapshot_root_path.is_symlink()
+                and not snapshot_dir.is_symlink() and snapshot_dir.is_dir()):
+            shutil.rmtree(snapshot_dir)
 
 
 def upload_archive(url, token, archive, digest, snapshot_id, block_count):
@@ -224,9 +229,10 @@ def upload_archive(url, token, archive, digest, snapshot_id, block_count):
         connection.close()
 
 
-def backup_loop(stop, api_url, snapshot_root, work_dir, upload_url, token, interval, max_bytes):
+def backup_loop(stop, api_url, snapshot_root, work_dir, upload_url, token, interval, max_bytes, retry_interval=900):
     # Create and verify the first backup after readiness, then use the daily cadence.
     while not stop.is_set():
+        delay = interval
         try:
             result = create_snapshot(api_url, snapshot_root, work_dir, upload_url, token, max_bytes)
             print(json.dumps({
@@ -243,7 +249,8 @@ def backup_loop(stop, api_url, snapshot_root, work_dir, upload_url, token, inter
                 "error_type": type(exc).__name__,
                 "message": str(exc)[:200],
             }, sort_keys=True), file=sys.stderr, flush=True)
-        if stop.wait(interval):
+            delay = retry_interval
+        if stop.wait(delay):
             return
 
 
@@ -278,6 +285,9 @@ def main():
     interval = int(os.environ.get("PROMETHEUS_BACKUP_INTERVAL_SECONDS", "86400"))
     if interval < 3600:
         raise SystemExit("PROMETHEUS_BACKUP_INTERVAL_SECONDS must be at least 3600")
+    retry_interval = int(os.environ.get("PROMETHEUS_BACKUP_RETRY_SECONDS", "900"))
+    if retry_interval < 60:
+        raise SystemExit("PROMETHEUS_BACKUP_RETRY_SECONDS must be at least 60")
     max_bytes = int(os.environ.get("PROMETHEUS_BACKUP_MAX_BYTES", str(512 * 1024 * 1024)))
     if max_bytes < 1024 * 1024:
         raise SystemExit("PROMETHEUS_BACKUP_MAX_BYTES is too small")
@@ -305,7 +315,7 @@ def main():
             target=backup_loop,
             args=(stop, api_url, Path(args.storage) / "snapshots",
                   os.environ.get("PROMETHEUS_BACKUP_WORK_DIR", "/tmp/prometheus-backup-work"),
-                  upload_url, token, interval, max_bytes),
+                  upload_url, token, interval, max_bytes, retry_interval),
             daemon=True,
         )
         thread.start()
