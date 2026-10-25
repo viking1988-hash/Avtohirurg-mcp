@@ -30,7 +30,7 @@ def is_admin_path(path):
 
 
 def is_allowed_admin_request(method, path, query, supplied_token, expected_token):
-    if method != "POST" or unquote(path) != ADMIN_SNAPSHOT_PATH:
+    if method != "POST" or path != ADMIN_SNAPSHOT_PATH:
         return False
     params = parse_qs(query, keep_blank_values=True)
     if set(params) - {"skip_head"} or len(params.get("skip_head", [])) > 1:
