@@ -15,8 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate rules and synthetic alert firing scenarios
+      - name: Validate Prometheus config, rules and alert scenarios
         run: |
+          set -eu
           docker run --rm \
             -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
             -w /etc/prometheus \
@@ -29,7 +30,6 @@ jobs:
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
             test rules alerts.test.yml
-
           docker run --rm \
             -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
             -w /etc/prometheus \
