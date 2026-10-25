@@ -11,15 +11,23 @@ else
   umask 077
   printf '%s' 'synthetic-sandbox-no-access' > /tmp/worker-metrics-token
 fi
-# Snapshot admin API is disabled by default. Enable only for a short,
-# explicitly controlled staging backup window; disable again afterwards.
 set -- --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path=/prometheus \
   --web.console.libraries=/usr/share/prometheus/console_libraries \
   --web.console.templates=/usr/share/prometheus/consoles
-# During the snapshot window, bind admin API to loopback only.
-# Never expose mutating endpoints to other Railway private-network services.
+
+# The automated mode keeps Prometheus on loopback and exposes the private
+# service endpoint through a proxy that allows only authenticated snapshot POSTs.
 if [ "${PROMETHEUS_SNAPSHOT_ADMIN_API:-false}" = "true" ]; then
-  set -- "$@" --web.enable-admin-api --web.listen-address=127.0.0.1:9090
+  if [ -z "${PROMETHEUS_BACKUP_TOKEN:-}" ] || [ -z "${PROMETHEUS_BACKUP_URL:-}" ]; then
+    echo "Snapshot automation requires PROMETHEUS_BACKUP_TOKEN and PROMETHEUS_BACKUP_URL" >&2
+    exit 1
+  fi
+  exec python3 /usr/local/bin/prometheus_snapshot_runtime.py \
+    --prometheus /bin/prometheus \
+    --config /etc/prometheus/prometheus.yml \
+    --storage /prometheus
 fi
+
+# Default mode: no Admin API, original private scrape address and arguments.
 exec /bin/prometheus "$@"
