@@ -15,8 +15,8 @@ The scheduler runs an initial backup after Prometheus is ready, then uses a 24-h
 
 These PRs remain Draft. On HOBBY, the Railway native volume-backup schedule is unavailable; this draft uses an application-level pipeline instead.
 
-- Prometheus: build from Dockerfile.worker-private-monitoring-sandbox.
-- Helper: set the Railway service config file to ops/prometheus/railway.backup-helper.json. It selects ops/prometheus/Dockerfile.backup-helper, runs the receiver, and configures the /healthz healthcheck.
+- Prometheus: build with Dockerfile builder using Dockerfile.worker-private-monitoring-sandbox.
+- Helper: build with Dockerfile builder using ops/prometheus/Dockerfile.backup-helper; run python3 /opt/prometheus-backup/backup_receiver.py and configure /healthz as the healthcheck.
 - Keep the existing helper volume mounted at /backup and keep the helper private with no public domain.
 - Set the same unique PROMETHEUS_BACKUP_TOKEN (at least 32 characters) on both services. Set PROMETHEUS_BACKUP_URL on Prometheus to the helper's private upload URL and set PROMETHEUS_SNAPSHOT_ADMIN_API=true.
 - Leave PROMETHEUS_BACKUP_RETENTION_ENABLED=false for the first run. Review free space and restore-test evidence before enabling retention.
