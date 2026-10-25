@@ -21,6 +21,13 @@ class AdminProxyTests(unittest.TestCase):
             f"Bearer {TOKEN}", TOKEN,
         ))
 
+    def test_encoded_admin_paths_cannot_bypass_the_guard(self):
+        encoded = "/api/v1/%61dmin/tsdb/snapshot"
+        self.assertTrue(runtime.is_admin_path(encoded))
+        self.assertFalse(runtime.is_allowed_admin_request(
+            "POST", encoded, "skip_head=false", f"Bearer {TOKEN}", TOKEN,
+        ))
+
     def test_missing_or_wrong_token_is_rejected(self):
         for supplied in ("", "Bearer wrong", f"Basic {TOKEN}"):
             with self.subTest(supplied=supplied):
