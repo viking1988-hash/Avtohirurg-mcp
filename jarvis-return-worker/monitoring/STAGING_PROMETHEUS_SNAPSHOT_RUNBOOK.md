@@ -17,7 +17,7 @@
 
 ## Automated staging cycle
 1. Deploy the pinned Prometheus controller and helper candidates only in staging. Keep the helper private with no public domain.
-2. Set the same unique bearer token (at least 32 characters) on both services. Set `PROMETHEUS_BACKUP_URL` to the helper's private upload endpoint and enable `PROMETHEUS_SNAPSHOT_ADMIN_API=true`.
+2. Set the same unique bearer token (at least 32 characters) on both services. Set `PROMETHEUS_BACKUP_URL=http://jarvis-prometheus-backup-helper.railway.internal:8080/v1/upload` and enable `PROMETHEUS_SNAPSHOT_ADMIN_API=true`. The hostname is the helper's configured `privateNetworkEndpoint`.
 3. Wait for Prometheus readiness. The controller creates an initial snapshot, archives it, calculates SHA-256, and uploads it to the helper. It retries failures after 15 minutes and otherwise runs every 24 hours.
 4. Confirm sanitized `prometheus_backup_verified` logs, HTTP 200 from helper `/healthz`, a positive last-success timestamp on `/metrics`, a saved archive on the separate backup volume, and the matching block count/checksum in the receiver response.
 5. Confirm Prometheus remains ready on its private proxy and the helper scrape target becomes UP. Review free-space metrics before enabling optional retention; leave retention disabled for the first run.
