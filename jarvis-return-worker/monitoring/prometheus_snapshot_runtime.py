@@ -141,6 +141,14 @@ def create_archive(snapshot_dir, snapshot_id, work_dir, max_bytes):
     if work_dir.is_symlink():
         raise ValueError("Archive work directory must not be a symlink")
     free_bytes = shutil.disk_usage(work_dir).free
+    source_bytes = sum(
+        (Path(root) / name).stat().st_size
+        for root, _directories, files in os.walk(snapshot_dir, followlinks=False)
+        for name in files
+    )
+    reserve_bytes = 16 * 1024 * 1024
+    if source_bytes + reserve_bytes > free_bytes:
+        raise OSError("Insufficient temporary disk space for a safe archive build")
     archive = work_dir / f".{snapshot_id}.tar.gz.partial"
     if archive.exists() or archive.is_symlink():
         raise FileExistsError("Snapshot archive work file already exists")
@@ -270,6 +278,8 @@ def main():
         args.prometheus,
         f"--config.file={args.config}",
         f"--storage.tsdb.path={args.storage}",
+        "--web.console.libraries=/usr/share/prometheus/console_libraries",
+        "--web.console.templates=/usr/share/prometheus/consoles",
         "--web.enable-admin-api",
         "--web.listen-address=127.0.0.1:9091",
         *args.prometheus_args,
