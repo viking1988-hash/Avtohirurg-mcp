@@ -1,9 +1,11 @@
-FROM prom/prometheus:v3.5.0
+FROM prom/prometheus:v3.5.0 AS prometheus
+FROM python:3.11-alpine3.21
+COPY --from=prometheus /bin/prometheus /bin/prometheus
 COPY jarvis-return-worker/monitoring/prometheus.worker-private.sandbox.yml /etc/prometheus/prometheus.yml
-COPY jarvis-return-worker/monitoring/worker-alerts.sandbox.yml /etc/prometheus/worker-alerts.yml
+COPY jarvis-return-worker/monitoring/worker-alerts.sandbox.yml /etc/prometheus/worker-alerts.sandbox.yml
 COPY jarvis-return-worker/monitoring/start-prometheus.sh /usr/local/bin/start-prometheus
+COPY jarvis-return-worker/monitoring/prometheus_snapshot_runtime.py /usr/local/bin/prometheus_snapshot_runtime.py
 USER root
-RUN sed -i 's/\r$//' /usr/local/bin/start-prometheus && chmod 0755 /usr/local/bin/start-prometheus
-USER root
+RUN sed -i 's/\r$//' /usr/local/bin/start-prometheus /usr/local/bin/prometheus_snapshot_runtime.py && chmod 0755 /usr/local/bin/start-prometheus /usr/local/bin/prometheus_snapshot_runtime.py
 EXPOSE 9090
 ENTRYPOINT ["/usr/local/bin/start-prometheus"]

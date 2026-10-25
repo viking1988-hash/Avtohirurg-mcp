@@ -11,4 +11,21 @@ else
   umask 077
   printf '%s' 'synthetic-sandbox-no-access' > /tmp/worker-metrics-token
 fi
-exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --web.console.libraries=/usr/share/prometheus/console_libraries --web.console.templates=/usr/share/prometheus/consoles
+set -- --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/prometheus
+
+# The automated mode keeps Prometheus on loopback and exposes the private
+# service endpoint through a proxy that allows only authenticated snapshot POSTs.
+if [ "${PROMETHEUS_SNAPSHOT_ADMIN_API:-false}" = "true" ]; then
+  if [ -z "${PROMETHEUS_BACKUP_TOKEN:-}" ] || [ -z "${PROMETHEUS_BACKUP_URL:-}" ]; then
+    echo "Snapshot automation requires PROMETHEUS_BACKUP_TOKEN and PROMETHEUS_BACKUP_URL" >&2
+    exit 1
+  fi
+  exec python3 /usr/local/bin/prometheus_snapshot_runtime.py \
+    --prometheus /bin/prometheus \
+    --config /etc/prometheus/prometheus.yml \
+    --storage /prometheus
+fi
+
+# Default mode: no Admin API and Prometheus keeps its regular private listener.
+exec /bin/prometheus "$@"

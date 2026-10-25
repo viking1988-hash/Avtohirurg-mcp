@@ -8,7 +8,7 @@ alerting:
         - targets: ['jarvis-worker-alertmanager-e2e.railway.internal:9093']
 
 rule_files:
-  - /etc/prometheus/worker-alerts.yml
+  - /etc/prometheus/worker-alerts.sandbox.yml
 
 scrape_configs:
   - job_name: jarvis-sandbox-worker
@@ -24,3 +24,10 @@ scrape_configs:
 # Same-project, private-only Worker monitoring.
 # No cross-project Alertmanager and no synthetic fixture references.
 # Notifications must be enabled only after a same-project receiver is deployed.
+
+  - job_name: prometheus-backup-helper
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ['jarvis-prometheus-backup-helper.railway.internal:8080']
