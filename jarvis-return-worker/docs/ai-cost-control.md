@@ -61,14 +61,15 @@ actual, budget-authorized model benchmark has run.
 
 The dated snapshot at
 `benchmark-pricing-snapshot-2026-10-25.json` was rechecked against official
-API model and pricing documentation on 2026-10-25. It now covers current
-efficiency and general-purpose candidates across OpenAI, Anthropic, and Google.
-The documented model IDs and public list prices are verified; account-specific
-credentials, access, quota and region eligibility remain UNVERIFIED. No model
-endpoint was called.
+API model and pricing documentation on 2026-10-25. It covers 11 current
+efficiency, general-purpose and flagship candidates across OpenAI, Anthropic,
+and Google, including newly documented GPT-6 Astra, Claude Opus 5.5,
+Gemini 3.6 Flash and Gemini 4 Argon. The documented public model IDs and list
+prices are verified; account-specific credentials, access, quota and region
+eligibility remain UNVERIFIED. No model endpoint was called.
 
 For 5,000 input and 800 output tokens per provider's tokenizer, using paid
-Standard text inference:
+Standard text inference and prices effective on 2026-10-25:
 
 | Provider model | Input / output per MTok | Estimated cost |
 | --- | ---: | ---: |
@@ -76,17 +77,24 @@ Standard text inference:
 | GPT-6 Luna | $0.10 / $0.50 | $0.000900 |
 | Gemini 3.1 Flash-Lite | $0.25 / $1.50 | $0.002450 |
 | Gemini 3.5 Flash-Lite | $0.30 / $2.50 | $0.003500 |
+| Gemini 3.6 Flash | $0.75 / $3.75 | $0.006750 |
 | Gemini 3.8 Flash | $0.75 / $3.75 | $0.006750 |
 | Claude Sonnet 5.5 | $2.00 / $10.00 | $0.018000 |
 | GPT-6.1 Sol | $2.00 / $10.00 | $0.018000 |
+| Gemini 4 Argon | $2.00 / $10.00 | $0.018000 |
+| Claude Opus 5.5 | $4.00 / $20.00 | $0.036000 |
+| GPT-6 Astra | $10.00 / $50.00 | $0.090000 |
 
 The estimates are calculations over fixed token counts. They do not represent
 equal text or task workloads: tokenizers differ, and this pass measured no
 quality, latency, or task completion. Claude Haiku 5.5's listed rates apply
-through 100,000 input tokens; Gemini 3.8 Flash's introductory rates end
-2026-12-31. Google free-tier eligibility, cached tokens, tools, batch/flex/
-priority pricing, taxes, regional modifiers and account discounts are excluded.
-This is a price illustration, not a model recommendation or ranking.
+through 100,000 input tokens. Gemini 4 Argon's Standard prices double on
+2026-12-01; Gemini 3.6 Flash and Gemini 3.8 Flash prices double on
+2027-01-01. GPT-6 Astra has higher rates for requests over 272,000 input
+tokens. Google Gemini 4 Argon is not available on the Free tier. Google
+free-tier eligibility, cached tokens, tools, batch/flex/priority pricing,
+taxes, regional modifiers and account discounts are excluded. This is a price
+illustration, not a model recommendation or ranking.
 
 The official model pages document each candidate's model ID, context/output
 limits and supported modalities. The snapshot keeps all account availability
