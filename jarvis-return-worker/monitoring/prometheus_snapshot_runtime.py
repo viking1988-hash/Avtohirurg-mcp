@@ -15,7 +15,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 ADMIN_SNAPSHOT_PATH = "/api/v1/admin/tsdb/snapshot"
@@ -24,8 +24,13 @@ HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriz
                "te", "trailers", "transfer-encoding", "upgrade", "host", "authorization"}
 
 
+def is_admin_path(path):
+    # Check a decoded view so escaped path bytes cannot bypass the Admin API guard.
+    return unquote(path).startswith("/api/v1/admin")
+
+
 def is_allowed_admin_request(method, path, query, supplied_token, expected_token):
-    if method != "POST" or path != ADMIN_SNAPSHOT_PATH:
+    if method != "POST" or unquote(path) != ADMIN_SNAPSHOT_PATH:
         return False
     params = parse_qs(query, keep_blank_values=True)
     if set(params) - {"skip_head"} or len(params.get("skip_head", [])) > 1:
@@ -54,7 +59,7 @@ def make_proxy_handler(token, local_port):
 
         def _forward(self):
             parsed = urlsplit(self.path)
-            if parsed.path.startswith("/api/v1/admin"):
+            if is_admin_path(parsed.path):
                 if not is_allowed_admin_request(
                     self.command, parsed.path, parsed.query,
                     self.headers.get("Authorization", ""), token
@@ -220,7 +225,8 @@ def upload_archive(url, token, archive, digest, snapshot_id, block_count):
 
 
 def backup_loop(stop, api_url, snapshot_root, work_dir, upload_url, token, interval, max_bytes):
-    while not stop.wait(interval):
+    # Create and verify the first backup after readiness, then use the daily cadence.
+    while not stop.is_set():
         try:
             result = create_snapshot(api_url, snapshot_root, work_dir, upload_url, token, max_bytes)
             print(json.dumps({
@@ -237,6 +243,8 @@ def backup_loop(stop, api_url, snapshot_root, work_dir, upload_url, token, inter
                 "error_type": type(exc).__name__,
                 "message": str(exc)[:200],
             }, sort_keys=True), file=sys.stderr, flush=True)
+        if stop.wait(interval):
+            return
 
 
 def wait_ready(process, timeout=90):
