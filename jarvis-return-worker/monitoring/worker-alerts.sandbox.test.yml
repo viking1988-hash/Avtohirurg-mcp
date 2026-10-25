@@ -1,0 +1,31 @@
+rule_files:
+  - worker-alerts.sandbox.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="prometheus-backup-helper"}'
+        values: '1+0x20'
+      - series: 'prometheus_backup_last_success_timestamp_seconds{job="prometheus-backup-helper"}'
+        values: '0+0x20'
+      - series: 'prometheus_backup_failures_total{job="prometheus-backup-helper"}'
+        values: '0 0 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: PrometheusBackupNeverSucceeded
+        exp_alerts:
+          - exp_labels:
+              job: prometheus-backup-helper
+              severity: critical
+              environment: staging
+            exp_annotations:
+              summary: No verified Prometheus staging backup yet
+      - eval_time: 3m
+        alertname: PrometheusBackupVerificationFailed
+        exp_alerts:
+          - exp_labels:
+              job: prometheus-backup-helper
+              severity: warning
+              environment: staging
+            exp_annotations:
+              summary: Prometheus backup upload or restore verification failed
