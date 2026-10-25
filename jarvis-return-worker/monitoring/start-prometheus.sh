@@ -12,7 +12,6 @@ else
   printf '%s' 'synthetic-sandbox-no-access' > /tmp/worker-metrics-token
 fi
 set -- --config.file=/etc/prometheus/prometheus.yml \
-  --storage.tsdb.path=/prometheus \
   --storage.tsdb.path=/prometheus
 
 # The automated mode keeps Prometheus on loopback and exposes the private
@@ -28,5 +27,5 @@ if [ "${PROMETHEUS_SNAPSHOT_ADMIN_API:-false}" = "true" ]; then
     --storage /prometheus
 fi
 
-# Default mode: no Admin API, original private scrape address and arguments.
+# Default mode: no Admin API and Prometheus keeps its regular private listener.
 exec /bin/prometheus "$@"
