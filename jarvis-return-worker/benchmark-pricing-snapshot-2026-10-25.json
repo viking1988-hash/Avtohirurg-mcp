@@ -1,0 +1,45 @@
+{
+  "as_of": "2026-10-25",
+  "currency": "USD",
+  "workload": {
+    "input_tokens": 5000,
+    "output_tokens": 800,
+    "assumption": "Text-only standard inference; excludes tools, cached tokens, batch/flex/priority modifiers, taxes, and account-specific discounts."
+  },
+  "availability_scope": "Public documentation confirms model IDs are listed; account-specific access was not checked.",
+  "candidates": [
+    {
+      "provider": "OpenAI",
+      "id": "gpt-6.1-sol",
+      "input_usd_per_million": 2.0,
+      "output_usd_per_million": 10.0,
+      "source_url": "https://developers.openai.com/api/docs/pricing",
+      "model_source_url": "https://developers.openai.com/api/docs/models",
+      "checked_on": "2026-10-25",
+      "availability": "UNVERIFIED",
+      "availability_note": "Listed in public pricing; credentials and account endpoint not checked."
+    },
+    {
+      "provider": "Anthropic",
+      "id": "claude-sonnet-5-5",
+      "input_usd_per_million": 2.0,
+      "output_usd_per_million": 10.0,
+      "source_url": "https://docs.anthropic.com/en/docs/about-claude/pricing",
+      "model_source_url": "https://docs.anthropic.com/en/docs/about-claude/models/overview",
+      "checked_on": "2026-10-25",
+      "availability": "UNVERIFIED",
+      "availability_note": "Listed in public model/pricing docs; credentials and account endpoint not checked."
+    },
+    {
+      "provider": "Google",
+      "id": "gemini-3.5-flash-lite",
+      "input_usd_per_million": 0.30,
+      "output_usd_per_million": 2.50,
+      "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "model_source_url": "https://ai.google.dev/gemini-api/docs/models",
+      "checked_on": "2026-10-25",
+      "availability": "UNVERIFIED",
+      "availability_note": "Listed in public model/pricing docs; API key and account endpoint not checked."
+    }
+  ]
+}
