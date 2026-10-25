@@ -66,7 +66,7 @@ def make_proxy_handler(token, local_port):
                 ):
                     self._error(403, "admin endpoint is restricted to an authenticated snapshot POST")
                     return
-            if parsed.path in ("/-/quit", "/-/reload"):
+            if unquote(parsed.path) in ("/-/quit", "/-/reload"):
                 self._error(403, "lifecycle endpoint is disabled")
                 return
             if self.command not in ("GET", "HEAD", "POST", "OPTIONS"):
