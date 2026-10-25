@@ -21,8 +21,12 @@ The non-Pro path is a two-service staging workflow:
    preserves the newest archive, 7 daily points and 4 weekly points.
 
 The scheduler runs an initial backup after Prometheus is ready, then uses a
-24-hour interval by default (minimum one hour). Failed runs log a failure event
-without deleting older backups.
+24-hour interval by default (minimum one hour). Failed transfers retry every
+15 minutes by default (minimum one minute). The temporary local snapshot tree is
+removed after each transfer attempt so snapshots do not accumulate on the
+Prometheus volume. Failed runs log a failure event without deleting older
+backups. The helper reports backup-volume free bytes; staging rules alert below
+128 MiB.
 
 ## Required staging wiring
 
