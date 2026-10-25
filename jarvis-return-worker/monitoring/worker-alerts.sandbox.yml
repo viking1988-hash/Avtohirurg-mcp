@@ -40,3 +40,11 @@ groups:
           environment: staging
         annotations:
           summary: Prometheus backup upload or restore verification failed
+      - alert: PrometheusBackupVolumeLow
+        expr: prometheus_backup_volume_free_bytes{job="prometheus-backup-helper"} < 134217728
+        for: 5m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: Prometheus backup volume has less than 128 MiB free
