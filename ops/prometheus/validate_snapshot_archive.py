@@ -11,6 +11,10 @@ from pathlib import PurePosixPath
 ULID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 
 def validate(archive, expected_sha256, expected_blocks):
+    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+        raise ValueError("Invalid expected SHA-256")
+    if not isinstance(expected_blocks, int) or isinstance(expected_blocks, bool) or expected_blocks < 1:
+        raise ValueError("Invalid expected block count")
     digest = hashlib.sha256()
     with open(archive, "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -21,9 +25,13 @@ def validate(archive, expected_sha256, expected_blocks):
 
     blocks = {}
     root = None
+    seen_names = set()
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar:
             name = member.name.removeprefix("./")
+            if name in seen_names:
+                raise ValueError(f"Duplicate archive member: {name}")
+            seen_names.add(name)
             path = PurePosixPath(name)
             if path.is_absolute() or ".." in path.parts or not path.parts:
                 raise ValueError(f"Unsafe archive path: {member.name}")
@@ -45,9 +53,14 @@ def validate(archive, expected_sha256, expected_blocks):
                     extracted = tar.extractfile(member)
                     if extracted is None or member.size > 1024 * 1024:
                         raise ValueError(f"Invalid meta.json: {block}")
-                    meta = json.load(extracted)
-                    if meta.get("ulid") != block:
+                    try:
+                        meta = json.load(extracted)
+                    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                        raise ValueError(f"Invalid meta.json: {block}") from exc
+                    if not isinstance(meta, dict) or meta.get("ulid") != block:
                         raise ValueError(f"Block ULID mismatch: {block}")
+                    if not isinstance(meta.get("version"), int) or isinstance(meta.get("version"), bool):
+                        raise ValueError(f"Invalid block metadata version: {block}")
             if len(path.parts) >= 3 and path.parts[2] == "chunks":
                 present.add("chunks")
     if len(blocks) != expected_blocks:
