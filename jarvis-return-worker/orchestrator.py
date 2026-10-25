@@ -22,6 +22,20 @@ class Orchestrator:
     def cancel(self, task_id, actor): return self.repository.cancel(task_id, actor)
     def requeue(self, task_id, actor): return self.repository.requeue(task_id, actor)
 
+    def record_ai_usage(self, usage):
+        """Record provider-reported token/cost metadata through the app boundary."""
+        from .ai_cost import normalize_usage
+        return self.repository.record_ai_usage(normalize_usage(usage))
+
+    def record_ai_usage_v2(self, usage, components):
+        """Opt-in category-priced usage; never routes or sends provider requests."""
+        if not isinstance(usage, dict):
+            raise ValueError("invalid_usage_fields")
+        return self.repository.record_ai_usage_v2(usage, components)
+
+    def ai_cost_summary(self):
+        return self.repository.ai_cost_summary()
+
     def provider_receipt(self, name, message_id):
         from .metrics import provider_call
         provider=self.dispatcher.dispatch(name)
@@ -306,4 +320,5 @@ class Orchestrator:
             if exc.__class__.__name__=="DispatcherError":
                 dispatcher_failure(str(exc))
             raise
+
 

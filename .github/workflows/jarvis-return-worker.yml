@@ -98,12 +98,15 @@ jobs:
           PY
           container_id="$(docker ps -q --filter ancestor=postgres:18 | head -n1)"
           test -n "$container_id"
+          export JARVIS_AI_RESTART_MARKER="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python jarvis-return-worker/tests/ai_ledger_restart_probe.py before
           docker restart "$container_id"
           for attempt in $(seq 1 20); do
             docker exec "$container_id" pg_isready -U jarvis_sandbox -d jarvis_return_queue_test && break
             sleep 1
           done
           docker exec "$container_id" pg_isready -U jarvis_sandbox -d jarvis_return_queue_test
+          python jarvis-return-worker/tests/ai_ledger_restart_probe.py after
           python - <<'PY'
           import importlib.util, pathlib, sys
           package = pathlib.Path('jarvis-return-worker')
