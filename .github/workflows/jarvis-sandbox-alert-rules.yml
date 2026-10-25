@@ -18,6 +18,7 @@ jobs:
       - name: Validate Prometheus config, rules and alert scenarios
         run: |
           set -eu
+          printf '%s' 'synthetic-sandbox-no-access' > "${RUNNER_TEMP}/worker-metrics-token"
           docker run --rm \
             -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
             -w /etc/prometheus \
@@ -32,6 +33,7 @@ jobs:
             test rules alerts.test.yml
           docker run --rm \
             -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus:ro" \
+            -v "${RUNNER_TEMP}/worker-metrics-token:/tmp/worker-metrics-token:ro" \
             -w /etc/prometheus \
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
