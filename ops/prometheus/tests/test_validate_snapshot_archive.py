@@ -16,10 +16,11 @@ spec.loader.exec_module(validator)
 BLOCK = "01M5NEYN71T8MY4RF27T1K2GN4"
 ROOT = "snapshot-20261023T224352Z"
 
-def archive_at(path, *, bad_meta=False, unsafe=False, missing_index=False):
+def archive_at(path, *, bad_meta=False, unsafe=False, missing_index=False, duplicate=False, invalid_version=False):
     with tarfile.open(path, "w:gz") as tar:
+        meta = {"ulid": "WRONG" if bad_meta else BLOCK, "version": "bad" if invalid_version else 1}
         items = {
-            f"{ROOT}/{BLOCK}/meta.json": json.dumps({"ulid": "WRONG" if bad_meta else BLOCK}).encode(),
+            f"{ROOT}/{BLOCK}/meta.json": json.dumps(meta).encode(),
             f"{ROOT}/{BLOCK}/chunks/000001": b"chunk",
         }
         if not missing_index:
@@ -28,6 +29,11 @@ def archive_at(path, *, bad_meta=False, unsafe=False, missing_index=False):
             items[f"{ROOT}/../outside"] = b"unsafe"
         for name, data in items.items():
             info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        if duplicate:
+            data = items[f"{ROOT}/{BLOCK}/index"]
+            info = tarfile.TarInfo(f"{ROOT}/{BLOCK}/index")
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -61,6 +67,22 @@ class ArchiveValidatorTests(unittest.TestCase):
         sha = archive_at(self.path, bad_meta=True)
         with self.assertRaisesRegex(ValueError, "Block ULID mismatch"):
             validator.validate(self.path, sha, 1)
+
+    def test_invalid_metadata_version(self):
+        sha = archive_at(self.path, invalid_version=True)
+        with self.assertRaisesRegex(ValueError, "Invalid block metadata version"):
+            validator.validate(self.path, sha, 1)
+
+    def test_duplicate_member(self):
+        sha = archive_at(self.path, duplicate=True)
+        with self.assertRaisesRegex(ValueError, "Duplicate archive member"):
+            validator.validate(self.path, sha, 1)
+
+    def test_rejects_invalid_expected_block_count(self):
+        sha = archive_at(self.path)
+        for count in (0, -1, True):
+            with self.subTest(count=count), self.assertRaisesRegex(ValueError, "Invalid expected block count"):
+                validator.validate(self.path, sha, count)
 
     def test_path_traversal(self):
         sha = archive_at(self.path, unsafe=True)
