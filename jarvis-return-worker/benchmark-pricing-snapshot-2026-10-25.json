@@ -94,7 +94,7 @@
       "input_usd_per_million": 0.25,
       "output_usd_per_million": 1.5,
       "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
-      "model_source_url": "https://ai.google.dev/gemini-api/docs/models",
+      "model_source_url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite",
       "checked_on": "2026-10-25",
       "availability": "UNVERIFIED",
       "availability_note": "Official stable API model ID and paid Standard list price verified; API key, account access and quota not checked.",
@@ -103,7 +103,9 @@
       "input_modalities": [
         "text",
         "image",
-        "video"
+        "video",
+        "audio",
+        "pdf"
       ],
       "output_modalities": [
         "text"
