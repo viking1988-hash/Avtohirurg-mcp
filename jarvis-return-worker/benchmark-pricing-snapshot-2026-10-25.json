@@ -11,35 +11,65 @@
     {
       "provider": "OpenAI",
       "id": "gpt-6.1-sol",
-      "input_usd_per_million": 2.0,
-      "output_usd_per_million": 10.0,
+      "input_usd_per_million": 2,
+      "output_usd_per_million": 10,
       "source_url": "https://developers.openai.com/api/docs/pricing",
-      "model_source_url": "https://developers.openai.com/api/docs/models",
+      "model_source_url": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
       "checked_on": "2026-10-25",
       "availability": "UNVERIFIED",
-      "availability_note": "Listed in public pricing; credentials and account endpoint not checked."
+      "availability_note": "Listed in public pricing; credentials and account endpoint not checked.",
+      "context_tokens": 1050000,
+      "max_output_tokens": 128000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
     },
     {
       "provider": "Anthropic",
       "id": "claude-sonnet-5-5",
-      "input_usd_per_million": 2.0,
-      "output_usd_per_million": 10.0,
+      "input_usd_per_million": 2,
+      "output_usd_per_million": 10,
       "source_url": "https://docs.anthropic.com/en/docs/about-claude/pricing",
       "model_source_url": "https://docs.anthropic.com/en/docs/about-claude/models/overview",
       "checked_on": "2026-10-25",
       "availability": "UNVERIFIED",
-      "availability_note": "Listed in public model/pricing docs; credentials and account endpoint not checked."
+      "availability_note": "Listed in public model/pricing docs; credentials and account endpoint not checked.",
+      "context_tokens": 1000000,
+      "max_output_tokens": 128000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
     },
     {
       "provider": "Google",
       "id": "gemini-3.5-flash-lite",
-      "input_usd_per_million": 0.30,
-      "output_usd_per_million": 2.50,
+      "input_usd_per_million": 0.3,
+      "output_usd_per_million": 2.5,
       "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
-      "model_source_url": "https://ai.google.dev/gemini-api/docs/models",
+      "model_source_url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite",
       "checked_on": "2026-10-25",
       "availability": "UNVERIFIED",
-      "availability_note": "Listed in public model/pricing docs; API key and account endpoint not checked."
+      "availability_note": "Listed in public model/pricing docs; API key and account endpoint not checked.",
+      "context_tokens": 1048576,
+      "max_output_tokens": 65536,
+      "input_modalities": [
+        "text",
+        "image",
+        "video",
+        "audio",
+        "pdf"
+      ],
+      "output_modalities": [
+        "text"
+      ]
     }
   ]
 }
