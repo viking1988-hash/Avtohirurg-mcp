@@ -59,21 +59,38 @@ actual, budget-authorized model benchmark has run.
 
 ## Offline price snapshot comparison
 
-`ai_price_comparison.py` provides a deterministic estimate for a supplied
-workload (input/output token counts) from immutable rate snapshots. Every
-candidate must include its official HTTPS source, `checked_on` date and an
-explicit availability state (`VERIFIED`, `UNVERIFIED`, or `UNAVAILABLE`).
-The comparator keeps availability as metadata and sorts by estimated USD cost;
-it makes no provider calls and does not claim that a model is enabled for this
-account. Prices alone are not a quality benchmark.
+The dated snapshot at
+`benchmark-pricing-snapshot-2026-10-25.json` was rechecked against official
+API model and pricing documentation on 2026-10-25. It now covers current
+efficiency and general-purpose candidates across OpenAI, Anthropic, and Google.
+The documented model IDs and public list prices are verified; account-specific
+credentials, access, quota and region eligibility remain UNVERIFIED. No model
+endpoint was called.
 
-A dated public price snapshot is checked in at
-`benchmark-pricing-snapshot-2026-10-25.json`. For a text-only workload of
-5,000 input and 800 output tokens, the listed estimates are Gemini 3.5
-Flash-Lite **$0.0035**, Claude Sonnet 5.5 **$0.018**, and GPT-6.1 Sol
-**$0.018**. These are public list-price calculations, not a quality ranking;
-they exclude caching, tools, tier modifiers, taxes, and account discounts.
-The snapshot cites official pricing/model pages and marks all account-level
-availability `UNVERIFIED`. The regression test checks these calculations.
-Re-check official pages before using this snapshot for a purchasing decision.
-Account-specific access and real-model quality/latency remain untested.
+For 5,000 input and 800 output tokens per provider's tokenizer, using paid
+Standard text inference:
+
+| Provider model | Input / output per MTok | Estimated cost |
+| --- | ---: | ---: |
+| Claude Haiku 5.5 | $0.10 / $0.50 | $0.000900 |
+| GPT-6 Luna | $0.10 / $0.50 | $0.000900 |
+| Gemini 3.1 Flash-Lite | $0.25 / $1.50 | $0.002450 |
+| Gemini 3.5 Flash-Lite | $0.30 / $2.50 | $0.003500 |
+| Gemini 3.8 Flash | $0.75 / $3.75 | $0.006750 |
+| Claude Sonnet 5.5 | $2.00 / $10.00 | $0.018000 |
+| GPT-6.1 Sol | $2.00 / $10.00 | $0.018000 |
+
+The estimates are calculations over fixed token counts. They do not represent
+equal text or task workloads: tokenizers differ, and this pass measured no
+quality, latency, or task completion. Claude Haiku 5.5's listed rates apply
+through 100,000 input tokens; Gemini 3.8 Flash's introductory rates end
+2026-12-31. Google free-tier eligibility, cached tokens, tools, batch/flex/
+priority pricing, taxes, regional modifiers and account discounts are excluded.
+This is a price illustration, not a model recommendation or ranking.
+
+The official model pages document each candidate's model ID, context/output
+limits and supported modalities. The snapshot keeps all account availability
+states UNVERIFIED because the Sandbox has no provider credentials and no
+account-specific model-list or inference request was attempted. The synthetic
+benchmark remains model_tested=false until an authorized, budgeted provider
+test runs on synthetic inputs.
