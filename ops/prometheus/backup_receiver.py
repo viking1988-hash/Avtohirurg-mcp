@@ -327,9 +327,33 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
     return Handler
 
 
+def load_last_verified(backup_dir):
+    """Restore success gauges from the durable volume after process restart."""
+    status_file = Path(backup_dir) / "last-verified.json"
+    try:
+        payload = json.loads(status_file.read_text(encoding="utf-8"))
+        if payload.get("restore_test") != "promtool-tsdb-analyze-pass":
+            return False
+        verified_at = datetime.fromisoformat(payload["verified_at"])
+        timestamp = int(verified_at.timestamp())
+        archive = payload["archive"]
+        if not BACKUP_NAME.fullmatch(archive):
+            return False
+        with _state_lock:
+            _state["last_success_timestamp"] = timestamp
+            _state["last_restore_success_timestamp"] = timestamp
+            archive_path = Path(backup_dir) / archive
+            if archive_path.is_file() and not archive_path.is_symlink():
+                _state["last_archive_bytes"] = archive_path.stat().st_size
+        return True
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+
+
 def serve():
     backup_dir = Path(os.environ.get("PROMETHEUS_BACKUP_DIR", "/backup/prometheus-snapshots"))
     backup_dir.mkdir(parents=True, exist_ok=True)
+    load_last_verified(backup_dir)
     token = os.environ.get("PROMETHEUS_BACKUP_TOKEN", "")
     host = os.environ.get("PROMETHEUS_BACKUP_BIND", "0.0.0.0")
     port = int(os.environ.get("PORT", os.environ.get("PROMETHEUS_BACKUP_PORT", "8080")))
