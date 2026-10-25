@@ -67,9 +67,13 @@ The comparator keeps availability as metadata and sorts by estimated USD cost;
 it makes no provider calls and does not claim that a model is enabled for this
 account. Prices alone are not a quality benchmark.
 
-Regression coverage is in `tests/test_ai_price_comparison.py`. No provider
-pricing has been embedded as a presumed current truth: snapshots must be
-researched and recorded with a source and date before a comparison is reported.
-The account-specific availability check and real-model quality/latency run
-remain blocked until isolated Sandbox credentials and an approved budget are
-available.
+A dated public price snapshot is checked in at
+`benchmark-pricing-snapshot-2026-10-25.json`. For a text-only workload of
+5,000 input and 800 output tokens, the listed estimates are Gemini 3.5
+Flash-Lite **$0.0035**, Claude Sonnet 5.5 **$0.018**, and GPT-6.1 Sol
+**$0.018**. These are public list-price calculations, not a quality ranking;
+they exclude caching, tools, tier modifiers, taxes, and account discounts.
+The snapshot cites official pricing/model pages and marks all account-level
+availability `UNVERIFIED`. The regression test checks these calculations.
+Re-check official pages before using this snapshot for a purchasing decision.
+Account-specific access and real-model quality/latency remain untested.
