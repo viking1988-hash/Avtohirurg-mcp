@@ -16,8 +16,8 @@ class PriceComparisonTests(unittest.TestCase):
     def test_estimate_and_sort(self):
         rows = compare(self.candidates, 100_000, 50_000, as_of="2026-10-25")
         self.assertEqual([row["id"] for row in rows], ["model-b", "model-a"])
-        self.assertEqual(rows[0]["estimated_cost_usd"], "0.000300")
-        self.assertEqual(rows[1]["estimated_cost_usd"], "0.000600")
+        self.assertEqual(rows[0]["estimated_cost_usd"], "0.300000")
+        self.assertEqual(rows[1]["estimated_cost_usd"], "0.600000")
         self.assertEqual(rows[0]["availability"], "UNVERIFIED")
 
     def test_half_up_at_micro_usd_boundary(self):
