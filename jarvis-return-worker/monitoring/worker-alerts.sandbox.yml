@@ -9,3 +9,35 @@ groups:
           environment: staging
         annotations:
           summary: Sandbox Worker metrics scrape unavailable
+      - alert: PrometheusBackupHelperUnavailable
+        expr: up{job="prometheus-backup-helper"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          environment: staging
+        annotations:
+          summary: Prometheus backup helper is unavailable
+      - alert: PrometheusBackupNeverSucceeded
+        expr: prometheus_backup_last_success_timestamp_seconds{job="prometheus-backup-helper"} == 0
+        for: 10m
+        labels:
+          severity: critical
+          environment: staging
+        annotations:
+          summary: No verified Prometheus staging backup yet
+      - alert: PrometheusBackupStale
+        expr: time() - prometheus_backup_last_success_timestamp_seconds{job="prometheus-backup-helper"} > 93600
+        for: 10m
+        labels:
+          severity: critical
+          environment: staging
+        annotations:
+          summary: Prometheus staging backup is older than 26 hours
+      - alert: PrometheusBackupVerificationFailed
+        expr: increase(prometheus_backup_failures_total{job="prometheus-backup-helper"}[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: Prometheus backup upload or restore verification failed
