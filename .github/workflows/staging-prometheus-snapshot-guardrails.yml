@@ -51,11 +51,11 @@ jobs:
           done
           docker exec prometheus-default python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:9090/-/ready", timeout=2)'
           docker exec prometheus-default python3 -c 'import urllib.request, urllib.error, sys
-try:
- urllib.request.urlopen("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot", timeout=2)
- sys.exit("Admin API unexpectedly available")
-except urllib.error.HTTPError as exc:
- assert exc.code != 200, exc.code'
+          try:
+           urllib.request.urlopen("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot", timeout=2)
+           sys.exit("Admin API unexpectedly available")
+          except urllib.error.HTTPError as exc:
+           assert exc.code != 200, exc.code'
           docker rm -f prometheus-default >/dev/null
       - name: Verify private proxy preserves queries and gates Admin API
         shell: bash
@@ -73,18 +73,18 @@ except urllib.error.HTTPError as exc:
           done
           docker exec prometheus-snapshot python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:9090/-/ready", timeout=2)'
           docker exec prometheus-snapshot python3 -c 'import urllib.request, urllib.error, sys
-try:
- urllib.request.urlopen("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot", timeout=2)
- sys.exit("unauthenticated Admin API unexpectedly available")
-except urllib.error.HTTPError as exc:
- assert exc.code == 403, exc.code'
+          try:
+           urllib.request.urlopen("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot", timeout=2)
+           sys.exit("unauthenticated Admin API unexpectedly available")
+          except urllib.error.HTTPError as exc:
+           assert exc.code == 403, exc.code'
           docker exec prometheus-snapshot python3 -c 'import urllib.request, urllib.parse, json
-data=urllib.parse.urlencode({"query":"up"}).encode()
-req=urllib.request.Request("http://127.0.0.1:9090/api/v1/query", data=data, method="POST")
-assert json.load(urllib.request.urlopen(req, timeout=5))["status"] == "success"'
+          data=urllib.parse.urlencode({"query":"up"}).encode()
+          req=urllib.request.Request("http://127.0.0.1:9090/api/v1/query", data=data, method="POST")
+          assert json.load(urllib.request.urlopen(req, timeout=5))["status"] == "success"'
           docker exec prometheus-snapshot python3 -c 'import urllib.request, json
-req=urllib.request.Request("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot?skip_head=false", data=b"", method="POST", headers={"Authorization":"Bearer synthetic-ci-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"})
-assert json.load(urllib.request.urlopen(req, timeout=10))["status"] == "success"'
+          req=urllib.request.Request("http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot?skip_head=false", data=b"", method="POST", headers={"Authorization":"Bearer synthetic-ci-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"})
+          assert json.load(urllib.request.urlopen(req, timeout=10))["status"] == "success"'
           docker exec prometheus-snapshot python3 -c 'from pathlib import Path
-p=Path("/prometheus/snapshots")
-assert p.is_dir() and any(x.is_dir() for x in p.iterdir())'
+          p=Path("/prometheus/snapshots")
+          assert p.is_dir() and any(x.is_dir() for x in p.iterdir())'
