@@ -121,6 +121,24 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertEqual(list(self.backups.iterdir()), [])
 
+    def test_last_verified_status_survives_receiver_restart(self):
+        archive_name = "prometheus-20261025T170000Z-fixture-snapshot.tar.gz"
+        (self.backups / archive_name).write_bytes(b"verified")
+        (self.backups / "last-verified.json").write_text(
+            json.dumps({
+                "archive": archive_name,
+                "verified_at": "2026-10-25T17:00:00+00:00",
+                "restore_test": "promtool-tsdb-analyze-pass",
+            }),
+            encoding="utf-8",
+        )
+        receiver._state["last_success_timestamp"] = 0
+        receiver._state["last_restore_success_timestamp"] = 0
+        self.assertTrue(receiver.load_last_verified(self.backups))
+        self.assertEqual(receiver._state["last_success_timestamp"], 1792947600)
+        self.assertEqual(receiver._state["last_restore_success_timestamp"], 1792947600)
+        self.assertEqual(receiver._state["last_archive_bytes"], len(b"verified"))
+
     def test_health_and_metrics_do_not_expose_token(self):
         connection = http.client.HTTPConnection(*self.url, timeout=10)
         connection.request("GET", "/healthz")
