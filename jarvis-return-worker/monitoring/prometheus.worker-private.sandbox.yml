@@ -24,3 +24,10 @@ scrape_configs:
 # Same-project, private-only Worker monitoring.
 # No cross-project Alertmanager and no synthetic fixture references.
 # Notifications must be enabled only after a same-project receiver is deployed.
+
+  - job_name: prometheus-backup-helper
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ['jarvis-prometheus-backup-helper-staging.railway.internal:8080']
