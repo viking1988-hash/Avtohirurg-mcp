@@ -29,3 +29,22 @@ jobs:
             --entrypoint /bin/promtool \
             prom/prometheus:v3.5.0 \
             test rules alerts.test.yml
+
+          docker run --rm \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
+            -w /etc/prometheus/monitoring \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            check config prometheus.worker-private.sandbox.yml
+          docker run --rm \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
+            -w /etc/prometheus/monitoring \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            check rules worker-alerts.sandbox.yml
+          docker run --rm \
+            -v "${PWD}/jarvis-return-worker/monitoring:/etc/prometheus/monitoring:ro" \
+            -w /etc/prometheus/monitoring \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            test rules worker-alerts.sandbox.test.yml
