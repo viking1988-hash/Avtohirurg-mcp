@@ -101,6 +101,19 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertEqual(list(self.backups.iterdir()), [])
 
+    def test_repeated_upload_is_idempotent(self):
+        archive = self.root / "fixture.tar.gz"
+        digest = make_archive(archive)
+        data = archive.read_bytes()
+        first_code, first = self.post(data, digest)
+        second_code, second = self.post(data, digest)
+        self.assertEqual(first_code, 201)
+        self.assertEqual(second_code, 200)
+        self.assertEqual(second["status"], "already-verified")
+        self.assertEqual(first["archive"], second["archive"])
+        archives = list(self.backups.glob("prometheus-*.tar.gz"))
+        self.assertEqual(len(archives), 1)
+
     def test_corrupt_archive_writes_nothing(self):
         data = b"not an archive"
         digest = hashlib.sha256(data).hexdigest()
