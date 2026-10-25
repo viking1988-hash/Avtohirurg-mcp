@@ -26,7 +26,7 @@ class IngestTests(unittest.TestCase):
         self.backup.mkdir()
         with tarfile.open(self.archive, "w:gz") as tar:
             files = {
-                f"snapshot/{BLOCK}/meta.json": json.dumps({"ulid": BLOCK}).encode(),
+                f"snapshot/{BLOCK}/meta.json": json.dumps({"ulid": BLOCK, "version": 1}).encode(),
                 f"snapshot/{BLOCK}/index": b"index",
                 f"snapshot/{BLOCK}/chunks/000001": b"chunk",
             }
