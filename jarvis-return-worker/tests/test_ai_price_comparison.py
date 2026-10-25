@@ -42,5 +42,20 @@ class PriceComparisonTests(unittest.TestCase):
             compare(self.candidates, 1, 1, as_of="2026-10-24")
 
 
+    def test_public_snapshot_comparison_keeps_account_access_unverified(self):
+        import json
+        from pathlib import Path
+
+        snapshot_path = Path(__file__).resolve().parents[1] / "benchmark-pricing-snapshot-2026-10-25.json"
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        rows = compare(snapshot["candidates"], snapshot["workload"]["input_tokens"],
+                       snapshot["workload"]["output_tokens"], as_of=snapshot["as_of"])
+        self.assertEqual([row["id"] for row in rows],
+                         ["gemini-3.5-flash-lite", "claude-sonnet-5-5", "gpt-6.1-sol"])
+        self.assertEqual([row["estimated_cost_usd"] for row in rows],
+                         ["0.003500", "0.018000", "0.018000"])
+        self.assertTrue(all(row["availability"] == "UNVERIFIED" for row in rows))
+
+
 if __name__ == "__main__":
     unittest.main()
