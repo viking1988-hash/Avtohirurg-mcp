@@ -253,6 +253,22 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                     _extract_validated(temporary, restored)
                     validate_restored(restored, promtool, expected_blocks, timeout=180)
 
+                existing = sorted(backup_dir.glob(f"prometheus-*-{snapshot_id}.tar.gz"))
+                for prior in existing:
+                    if prior.is_symlink() or not prior.is_file():
+                        continue
+                    if hmac.compare_digest(_sha256(prior).lower(), actual_sha.lower()):
+                        self._respond(200, {
+                            "status": "already-verified",
+                            "archive": prior.name,
+                            "sha256": actual_sha,
+                            "blocks": expected_blocks,
+                            "restore_test": "promtool-tsdb-analyze-pass",
+                            "retention_deletions": 0,
+                        })
+                        return
+                    raise ValueError("Snapshot ID already exists with a different archive digest")
+
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 final_name = f"prometheus-{stamp}-{snapshot_id}.tar.gz"
                 target = backup_dir / final_name
@@ -266,20 +282,32 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                     _state["last_restore_success_timestamp"] = now_ts
                     _state["last_archive_bytes"] = length
                     _state["last_error"] = ""
-                _write_status(backup_dir / "last-verified.json", {
-                    "archive": final_name,
-                    "sha256": actual_sha,
-                    "blocks": expected_blocks,
-                    "verified_at": datetime.now(timezone.utc).isoformat(),
-                    "restore_test": "promtool-tsdb-analyze-pass",
-                })
+
+                status_warning = ""
+                try:
+                    _write_status(backup_dir / "last-verified.json", {
+                        "archive": final_name,
+                        "sha256": actual_sha,
+                        "blocks": expected_blocks,
+                        "verified_at": datetime.now(timezone.utc).isoformat(),
+                        "restore_test": "promtool-tsdb-analyze-pass",
+                    })
+                except OSError as exc:
+                    status_warning = type(exc).__name__
+
                 deleted = 0
+                retention_warning = ""
                 if retention_enabled:
-                    for old in retention_candidates(backup_dir):
-                        old.unlink()
-                        deleted += 1
-                    with _state_lock:
-                        _state["retention_deletions_total"] += deleted
+                    try:
+                        for old in retention_candidates(backup_dir):
+                            old.unlink()
+                            deleted += 1
+                        with _state_lock:
+                            _state["retention_deletions_total"] += deleted
+                    except OSError as exc:
+                        retention_warning = type(exc).__name__
+                        with _state_lock:
+                            _state["last_error"] = "retention-" + retention_warning
                 self._respond(201, {
                     "status": "verified",
                     "archive": final_name,
@@ -287,6 +315,8 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                     "blocks": expected_blocks,
                     "restore_test": "promtool-tsdb-analyze-pass",
                     "retention_deletions": deleted,
+                    "retention_warning": retention_warning,
+                    "status_warning": status_warning,
                 })
             finally:
                 if temporary and os.path.exists(temporary):
