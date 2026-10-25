@@ -1,59 +1,59 @@
-# Prometheus Staging backup automation — gated rollout
+# Prometheus Staging backup automation
 
-## Verified baseline (2026-10-24)
+## What this draft implements
 
-Manual snapshot `20261023T224352Z-5414e93b16d99cb9` was copied to
-`/backup/prometheus-snapshots/` on the separate backup helper volume.
-SHA-256: `f96f4ae41b381b41f476547026889ae943be56ae5d0a7ce39cbd5688280456b5`.
-Restored into a temporary directory; all 11 TSDB blocks passed
-`promtool tsdb analyze <restored-db-path> <block-id>`.
-The live Prometheus admin API was then disabled and Staging rolled back.
-This evidence covers a manual recovery exercise, **not** scheduled backup.
+The non-Pro path is a two-service staging workflow:
 
-## Current PR
+1. Prometheus creates a consistent TSDB snapshot through its Admin API bound
+   only to loopback (127.0.0.1:9091). Its private service port stays on 9090
+   behind a proxy. The proxy allows only a bearer-authenticated POST to the
+   exact snapshot endpoint; other Admin API and lifecycle routes are blocked.
+2. A controller creates an archive from the completed snapshot, checks for
+   symlinks and available disk space, computes SHA-256, then sends it to the
+   private backup helper.
+3. The helper writes to a temporary file, checks the digest, archive paths,
+   block metadata and expected block count, extracts only regular files into a
+   temporary restore directory, and runs promtool tsdb analyze for every block.
+   It publishes the archive atomically only after all checks pass.
+4. The helper exposes health and Prometheus metrics. It restores last-success
+   timestamps from last-verified.json after restart. Retention is optional and
+   disabled by default; when enabled it runs only after a verified upload and
+   preserves the newest archive, 7 daily points and 4 weekly points.
 
-- `validate_snapshot_archive.py`: offline, read-only SHA-256, safe tar member
-  types/paths, expected block count, meta.json ULID and index/chunks checks.
-- Offline unit tests and isolated GitHub Actions job.
-- No deployment, scheduling, rotation or administrative API changes.
+The scheduler runs an initial backup after Prometheus is ready, then uses a
+24-hour interval by default (minimum one hour). Failed runs log a failure event
+without deleting older backups.
 
-## Required before enabling unattended backup
+## Required staging wiring
 
-1. **Snapshot consistency:** use a supported Prometheus snapshot operation.
-   The admin API is currently disabled. Do not simply tar the live TSDB and
-   do not permanently expose the admin API. Design an authenticated,
-   least-privilege, localhost-only snapshot controller with explicit time-bound
-   access and independent verification that the admin API is disabled outside
-   the maintenance window. Alternative: validated offline snapshot from a
-   stopped *replica*, not the live process.
-2. **Transfer:** move completed snapshots from the Prometheus instance to
-   the separate backup helper volume using a restricted transfer channel;
-   write to `.partial`, verify SHA-256, fsync as applicable, then atomically
-   rename. Never share/move the live TSDB volume to the helper.
-3. **Scheduling:** run a dedicated staging-only job with no production
-   credentials, a distributed lock and failure timeout. An unsuccessful job
-   must never print PASS or trigger retention deletion.
-4. **Retention:** keep at least 7 daily and 4 weekly snapshots as an initial
-   proposal, adjustable for actual volume capacity. Delete only backups
-   older than the policy after the new archive has passed verification.
-   Always preserve the latest verified restore candidate.
-5. **Recovery:** periodically unpack to a *new* isolated directory, validate
-   every block with `promtool tsdb analyze <db> <block-id>`, and run a
-   temporary Prometheus against that copy for query-level confidence.
-6. **Alerting:** report last verified backup age, duration, errors, volume
-   free space and last restore-test result. Alert on missed backups and
-   verification failures. No secret values in logs.
-7. **Release gates:** offline unit tests, negative tests, a staged dry-run,
-   staging backup+restore, explicit rollback, and monitoring verification.
-   Keep PR Draft until evidence is attached.
+These PRs remain Draft and are not deployed. On HOBBY, the Railway native
+volume-backup schedule is unavailable; this draft uses an application-level
+pipeline instead.
 
-## Offline validation
+To activate the staging path after review:
 
-```sh
-python -m unittest discover -s ops/prometheus/tests -v
-python ops/prometheus/validate_snapshot_archive.py /path/to/snapshot.tar.gz \
-  --sha256 EXPECTED_SHA256 --blocks 11
-```
+- Build the Prometheus image from Dockerfile.worker-private-monitoring-sandbox
+  and the helper image from ops/prometheus/Dockerfile.backup-helper.
+- Configure the helper to mount its existing /backup volume and set
+  PROMETHEUS_BACKUP_TOKEN to a unique random value of at least 32 characters.
+- Set the same token in the Prometheus service, set PROMETHEUS_BACKUP_URL to the
+  helper's private upload URL, and set PROMETHEUS_SNAPSHOT_ADMIN_API=true.
+  Keep the helper private and do not attach a public domain.
+- Before enabling retention, confirm restore-test and storage headroom against
+  the expected archive size. Retention is off by default.
+- Verify the helper's /healthz and /metrics, a successful backup, the restored
+  blocks and scrape target health. Then rehearse rollback by disabling the
+  opt-in flag.
 
-This validator does **not** establish consistency or full TSDB readability:
-the `promtool` and isolated restore tests are separate mandatory gates.
+Secrets and service configuration are not part of these PRs. No live service,
+volume, deployment or production environment has been changed.
+
+## Validation
+
+    python -m unittest discover -s ops/prometheus/tests -v
+    python ops/prometheus/validate_snapshot_archive.py /path/to/snapshot.tar.gz --sha256 EXPECTED_SHA256 --blocks 11
+
+CI builds the helper image and runs synthetic receiver, archive and restore
+checks. These checks do not prove that the current Railway services are wired
+together or that a live staging restore has succeeded. Keep both PRs Draft
+until the staging activation and rollback evidence is recorded.
