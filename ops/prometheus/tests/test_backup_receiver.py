@@ -148,6 +148,7 @@ class ReceiverTests(unittest.TestCase):
         connection.request("GET", "/metrics")
         metrics = connection.getresponse().read().decode()
         self.assertIn("prometheus_backup_failures_total", metrics)
+        self.assertIn("prometheus_backup_volume_free_bytes", metrics)
         self.assertNotIn(TOKEN, metrics)
         connection.close()
 
