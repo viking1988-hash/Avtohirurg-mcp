@@ -1,4 +1,4 @@
-"""Sandbox-only transport for the CRM PR #78 diagnostic intake contract.
+"""Isolated non-production transport for the CRM PR #78 diagnostic intake contract.
 
 Not registered in the worker yet. Runtime dispatch remains behind the existing
 Jarvis approval and transactional outbox flow.
@@ -58,7 +58,7 @@ def normalize_intake(payload):
 
 
 class CRMIntakeProvider:
-    """Sandbox-only POST client for /api/v1/leads, authenticated by X-API-Key."""
+    """Staging or Sandbox POST client for /api/v1/leads, authenticated by X-API-Key."""
 
     provider = "crm-intake"
 
@@ -66,16 +66,16 @@ class CRMIntakeProvider:
         parsed = urlsplit(base_url or "")
         host = (parsed.hostname or "").lower()
         labels = host.split(".")
-        sandbox_host = any("sandbox" in label for label in labels)
+        isolated_host = any("sandbox" in label or "staging" in label or label == "stage" for label in labels)
         production_host = any(
             "production" in label or label == "prod" or label.startswith("prod-")
             for label in labels
         )
         if (parsed.scheme != "https" or not host.endswith(".up.railway.app")
                 or not api_key or parsed.username or parsed.password
-                or parsed.query or parsed.fragment or not sandbox_host
+                or parsed.query or parsed.fragment or not isolated_host
                 or production_host or not 1 <= timeout_seconds <= 30):
-            raise ValueError("CRM intake requires HTTPS Railway Sandbox endpoint and bounded timeout")
+            raise ValueError("CRM intake requires HTTPS Railway staging or Sandbox endpoint and bounded timeout")
         self.__base_url = base_url.rstrip("/")
         self.__api_key = api_key
         self.timeout_seconds = timeout_seconds
