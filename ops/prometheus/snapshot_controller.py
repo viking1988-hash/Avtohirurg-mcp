@@ -7,11 +7,13 @@ until a proxy keeps the admin API unreachable from the service network.
 import hmac
 import http.client
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 SNAPSHOT_ROUTE = "/v1/snapshot"
 UPSTREAM_ROUTE = "/api/v1/admin/tsdb/snapshot"
+_snapshot_lock = threading.Lock()
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -25,6 +27,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._deny(401)
         if self.headers.get("Content-Length", "0") not in ("", "0"):
             return self._deny(400)
+        if not _snapshot_lock.acquire(blocking=False):
+            return self._deny(409)
         try:
             conn = http.client.HTTPConnection("127.0.0.1", 19091, timeout=30)
             conn.request("POST", UPSTREAM_ROUTE)
@@ -40,6 +44,8 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
         except (OSError, http.client.HTTPException):
             self._deny(502)
+        finally:
+            _snapshot_lock.release()
 
     def do_GET(self):
         self._deny(405)
