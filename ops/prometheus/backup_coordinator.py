@@ -5,6 +5,7 @@ DISPOSABLE/ISOLATED TEST ONLY until Railway service topology is accepted.
 Requires controller and completed snapshots to share a filesystem.
 """
 import argparse
+import fcntl
 import http.client
 import json
 import os
@@ -42,11 +43,23 @@ def coordinate(snapshots_root, output_dir, url, backup_token, controller_token, 
     root = Path(snapshots_root)
     if not root.is_dir() or root.is_symlink():
         raise ValueError("Snapshot root must be a real directory")
-    name = request_snapshot(controller_token)
-    snapshot = root / name
-    if not snapshot.is_dir() or snapshot.is_symlink():
-        raise RuntimeError("Completed snapshot not present in expected root")
-    return execute(snapshot, root, output_dir, url, backup_token, lock_path)
+    lock_path = Path(lock_path)
+    if lock_path.is_symlink() or not lock_path.parent.is_dir():
+        raise ValueError("Lock path must have a real existing parent")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(lock_path, flags, 0o600)
+    with os.fdopen(fd, "a+b") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Another coordinator cycle is active") from exc
+        name = request_snapshot(controller_token)
+        snapshot = root / name
+        if not snapshot.is_dir() or snapshot.is_symlink():
+            raise RuntimeError("Completed snapshot not present in expected root")
+        # Separate lock avoids nested locking of the same lock file.
+        upload_lock = lock_path.with_name(lock_path.name + ".upload")
+        return execute(snapshot, root, output_dir, url, backup_token, upload_lock)
 
 
 def main():
