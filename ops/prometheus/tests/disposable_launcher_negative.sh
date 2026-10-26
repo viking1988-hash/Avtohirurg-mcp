@@ -22,4 +22,9 @@ ln -s "$tmp" "$tmp/link"
 ln -s "$tmp" /tmp/prometheus-disposable-ci-link-$$
 trap 'rm -f /tmp/prometheus-disposable-ci-link-$$; rm -rf "$tmp"' EXIT
 expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR=/tmp/prometheus-disposable-ci-link-$$ sh "$script"
+mkdir -p /tmp/prometheus-disposable-ci-path-$
+trap 'rm -rf /tmp/prometheus-disposable-ci-path-$; rm -f /tmp/prometheus-disposable-ci-link-$; rm -rf "$tmp"' EXIT
+expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR=/tmp/prometheus-disposable-ci-path-$/../prometheus-disposable-ci-path-$ sh "$script"
+expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR=/tmp/prometheus-disposable-ci-path-$/. sh "$script"
+expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR=/tmp/prometheus-disposable-ci-path-$/ sh "$script"
 echo "DISPOSABLE_SNAPSHOT_LAUNCHER_NEGATIVE_PASS"
