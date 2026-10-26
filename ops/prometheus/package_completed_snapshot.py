@@ -64,7 +64,11 @@ def package(snapshot, snapshots_root, output, max_bytes=512*1024*1024):
         with tarfile.open(temporary, "x:gz", dereference=False) as archive:
             for file in sorted(files):
                 archive.add(file, arcname=str(Path("snapshot") / file.relative_to(snapshot)), recursive=False)
-        digest = hashlib.sha256(temporary.read_bytes()).hexdigest()
+        digest_state = hashlib.sha256()
+        with temporary.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest_state.update(chunk)
+        digest = digest_state.hexdigest()
         if temporary.stat().st_size > max_bytes:
             raise ValueError("Archive exceeds compressed size limit")
         if output.exists():
