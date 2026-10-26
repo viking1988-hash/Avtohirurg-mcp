@@ -13,9 +13,9 @@ GitHub Actions has passed the disposable synthetic snapshot -> archive -> real H
 
 ---
 
-## Verified implementation status (2026-10-26)
+## Verified implementation status (2026-10-27)
 
-- GitHub Actions at commit `4643eb7`: both workflows passed.
+- GitHub Actions at commit `3eda368`: both workflows passed, including real disposable Prometheus launcher snapshot API and negative config-path checks.
 - Disposable Prometheus snapshot -> `backup_once.py` -> authenticated receiver -> restored blocks -> real `promtool` is covered by CI.
 - `backup_cycle.py` is a **single invocation only**, disabled unless `PROMETHEUS_BACKUP_SCHEDULER_ENABLED=true`. It uses a nonblocking file lock, does not retry automatically, does not create snapshots, and does not delete local archives.
 - `snapshot_controller.py` remains a loopback-only prototype, **not** integrated into the Railway Prometheus image or startup command.
@@ -33,7 +33,7 @@ The non-Pro path is a two-service staging workflow:
 3. The helper writes to a temporary file, checks the digest, archive paths, block metadata and expected block count, extracts only regular files into a temporary restore directory, and runs promtool tsdb analyze for every block. It publishes the archive atomically only after all checks pass.
 4. The helper exposes health and Prometheus metrics. It restores last-success timestamps from last-verified.json after restart. Retention is optional and disabled by default; when enabled it runs only after a verified upload and preserves the newest archive, 7 daily points and 4 weekly points.
 
-The scheduler runs an initial backup after Prometheus is ready, then uses a 24-hour interval by default (minimum one hour). Failed transfers retry every 15 minutes by default (minimum one minute). The temporary local snapshot tree is removed after each transfer attempt so snapshots do not accumulate on the Prometheus volume. Failed runs log a failure event without deleting older backups. The helper reports backup-volume free bytes; staging rules alert below 128 MiB.
+**Target design only, not implemented or deployed:** a scheduler would run an initial backup after Prometheus is ready and then on a 24-hour interval, with controlled retries. The current `backup_cycle.py` performs one opt-in cycle only; there is no running periodic scheduler, no automatic snapshot creation or cleanup, and no proven Railway-to-Railway transfer. Do not rely on automatic retention, retry, disk-space alerts or periodic backup until verified separately.
 
 ## Read-only Railway inventory (2026-10-26)
 
