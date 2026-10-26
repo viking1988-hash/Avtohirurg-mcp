@@ -50,3 +50,34 @@ def test_disposable_identity_rejects_unsafe_config(change):
     with patch.dict(os.environ, settings(**change), clear=True):
         with pytest.raises(ValueError):
             Config.from_env()
+
+
+# The disposable allowlist must not weaken the pre-existing Sandbox gate.
+SANDBOX_URL = 'postgresql://jarvis_sandbox:local-test-only@jarvis-sandbox-postgres.railway.internal/jarvis_return_queue_test'
+
+
+def test_original_sandbox_identity_remains_allowed():
+    env = settings(
+        RAILWAY_PROJECT_ID='original-sandbox-project',
+        JARVIS_SANDBOX_PROJECT_ID='original-sandbox-project',
+        RAILWAY_ENVIRONMENT_ID='original-sandbox-environment',
+        JARVIS_SANDBOX_ENVIRONMENT_ID='original-sandbox-environment',
+        JARVIS_SANDBOX_DATABASE_URL=SANDBOX_URL,
+    )
+    with patch.dict(os.environ, env, clear=True):
+        assert not Config.isolated_e2e()
+        assert Config.from_env().database_url == SANDBOX_URL
+
+
+@pytest.mark.parametrize('database_url', [URL, SANDBOX_URL.replace('jarvis_sandbox:', 'jarvis_test:')])
+def test_original_sandbox_rejects_disposable_and_mismatched_database(database_url):
+    env = settings(
+        RAILWAY_PROJECT_ID='original-sandbox-project',
+        JARVIS_SANDBOX_PROJECT_ID='original-sandbox-project',
+        RAILWAY_ENVIRONMENT_ID='original-sandbox-environment',
+        JARVIS_SANDBOX_ENVIRONMENT_ID='original-sandbox-environment',
+        JARVIS_SANDBOX_DATABASE_URL=database_url,
+    )
+    with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(ValueError):
+            Config.from_env()
