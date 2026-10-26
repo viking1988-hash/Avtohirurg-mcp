@@ -75,8 +75,12 @@ def test_intake_is_durable_idempotent_and_requires_human_approval(repository):
 
         class FakeCRMIntake:
             provider = "crm-intake"
+            def send(self, payload, idempotency_key):
+                calls.append((payload, idempotency_key))
+                return {"lead_id": 501, "receipt_id": "synthetic-receipt-501", "status": "new"}
+
             def create_lead(self, payload):
-                calls.append(payload)
+                calls.append((payload, "synthetic-idempotency-key"))
                 return {"lead_id": 501, "receipt_id": "synthetic-receipt-501", "status": "new"}
 
         dispatcher = TransportDispatcher()
@@ -84,7 +88,7 @@ def test_intake_is_durable_idempotent_and_requires_human_approval(repository):
         orchestrator = Orchestrator(repository, dispatcher, intake_store=store)
         asyncio.run(orchestrator.process_crm_intake_operation(operation, "synthetic-worker"))
         assert len(calls) == 1
-        assert calls[0]["source_id"] == source_id
+        assert calls[0][0]["source_id"] == source_id
 
         readback = store.get(source_id)
         assert readback["state"] == "DONE"
@@ -119,8 +123,13 @@ def test_unknown_crm_outcome_is_held_for_human_reconciliation(repository):
 
         class UnknownCRMIntake:
             provider = "crm-intake"
+            def send(self, payload, idempotency_key):
+                calls.append((payload, idempotency_key))
+                from jarvis_return_worker.transport import Classification, DeliveryError
+                raise DeliveryError(Classification.UNKNOWN, "synthetic_timeout")
+
             def create_lead(self, payload):
-                calls.append(payload)
+                calls.append((payload, "synthetic-idempotency-key"))
                 from jarvis_return_worker.transport import Classification, DeliveryError
                 raise DeliveryError(Classification.UNKNOWN, "synthetic_timeout")
 
