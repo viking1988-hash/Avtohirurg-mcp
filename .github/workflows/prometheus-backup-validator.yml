@@ -22,6 +22,8 @@ jobs:
         run: python -m unittest discover -s ops/prometheus/tests -v
       - name: Guard existing Prometheus launcher against admin API exposure
         run: sh ops/prometheus/tests/production_boundary_preflight.sh
+      - name: Disposable snapshot launcher negative safety checks
+        run: sh ops/prometheus/tests/disposable_launcher_negative.sh
       - name: Build isolated backup helper image
         run: docker build -f ops/prometheus/Dockerfile.backup-helper -t prometheus-backup-helper:test .
       - name: Disposable Prometheus snapshot API smoke test
