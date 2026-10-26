@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 from types import SimpleNamespace
@@ -6,6 +7,8 @@ import pytest
 
 from jarvis_return_worker.crm_intake_store import CRMIntakeStore
 from jarvis_return_worker.queue import Conflict, QueueRepository
+from jarvis_return_worker.dispatcher import TransportDispatcher
+from jarvis_return_worker.orchestrator import Orchestrator
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +60,7 @@ def test_intake_is_durable_idempotent_and_requires_human_approval(repository):
             store.prepare({**body, "symptom": "changed synthetic symptom"},
                           correlation_id, "synthetic-ci")
 
+        assert store.claim("synthetic-worker") is None
         approved = store.approve(source_id, first["version"], "synthetic-human")
         assert approved["state"] == "PENDING"
         assert approved["status"] == "pending_external_confirmation"
@@ -65,11 +69,29 @@ def test_intake_is_durable_idempotent_and_requires_human_approval(repository):
         with pytest.raises(Conflict):
             store.approve(source_id, first["version"], "synthetic-human")
 
+        operation = store.claim("synthetic-worker")
+        assert operation["state"] == "PROCESSING"
+        calls = []
+
+        class FakeCRMIntake:
+            provider = "crm-intake"
+            def create_lead(self, payload):
+                calls.append(payload)
+                return {"lead_id": 501, "receipt_id": "synthetic-receipt-501", "status": "new"}
+
+        dispatcher = TransportDispatcher()
+        dispatcher.register("crm-intake", FakeCRMIntake())
+        orchestrator = Orchestrator(repository, dispatcher, intake_store=store)
+        asyncio.run(orchestrator.process_crm_intake_operation(operation, "synthetic-worker"))
+        assert len(calls) == 1
+        assert calls[0]["source_id"] == source_id
+
         readback = store.get(source_id)
-        assert readback["state"] == "PENDING"
+        assert readback["state"] == "DONE"
+        assert readback["external_lead_id"] == "501"
         assert "phone" not in readback and "name" not in readback
         events = store.events(source_id)
-        assert [event["action"] for event in events] == ["prepared", "approved"]
+        assert [event["action"] for event in events] == ["prepared", "approved", "claimed", "completed"]
         assert all("phone" not in event and "name" not in event for event in events)
     finally:
         with repository.connection() as conn:
