@@ -19,7 +19,7 @@ scrape_configs:
     static_configs:
       - targets: ['127.0.0.1:19091']
 YAML
-/bin/prometheus \
+"${PROMETHEUS_BIN:-/bin/prometheus}" \
   --config.file="$ROOT/prometheus.yml" \
   --storage.tsdb.path="$ROOT/tsdb" \
   --web.listen-address=127.0.0.1:19091 \
