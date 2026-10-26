@@ -62,5 +62,22 @@ class CycleTests(unittest.TestCase):
                     self.assertEqual(backup_cycle.main(), 2)
                     execute.assert_not_called()
 
+    def test_upload_failure_keeps_source_and_releases_lock(self):
+        marker = self.snapshot / "source-marker"
+        marker.write_text("preserve")
+        with patch.object(backup_cycle, "run", side_effect=RuntimeError("receiver unavailable")):
+            with self.assertRaisesRegex(RuntimeError, "receiver unavailable"):
+                backup_cycle.execute(self.snapshot, self.snapshots, self.output, "http://example.invalid/v1/upload", "x"*32, self.lock)
+        self.assertEqual(marker.read_text(), "preserve")
+        with self.lock.open("a+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    def test_failure_does_not_retry_without_explicit_scheduler(self):
+        with patch.object(backup_cycle, "run", side_effect=RuntimeError("receiver unavailable")) as run:
+            with self.assertRaisesRegex(RuntimeError, "receiver unavailable"):
+                backup_cycle.execute(self.snapshot, self.snapshots, self.output, "http://example.invalid/v1/upload", "x"*32, self.lock)
+            run.assert_called_once()
+
 if __name__ == "__main__":
     unittest.main()
