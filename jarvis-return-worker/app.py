@@ -16,6 +16,7 @@ from .health import ready
 from .events import EventBus
 from .outbox import OutboxReplay, ReplayWorker
 from .crm import CRMAdapter, CRMProvider
+from .crm_intake_store import CRMIntakeStore
 from .email_adapter import EmailAdapter
 from .email_provider import EmailProvider
 
@@ -79,7 +80,8 @@ async def lifespan(app):
     CRMAdapter().register(registry)
     EmailAdapter().register(registry)
     replay=OutboxReplay(repo,registry,owner=config.worker_id)
-    orchestrator=Orchestrator(repo,dispatcher,event_bus=registry)
+    intake_store=CRMIntakeStore(repo)
+    orchestrator=Orchestrator(repo,dispatcher,event_bus=registry,intake_store=intake_store)
     transport=dispatcher.dispatch(os.environ.get('JARVIS_TRANSPORT','fake')).client
     worker=Worker(repo,transport,stop,orchestrator=orchestrator)
     recovery=RecoveryWorker(orchestrator,stop)
