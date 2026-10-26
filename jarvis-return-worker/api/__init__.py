@@ -146,6 +146,12 @@ async def crm_operation(event_id:str,request:Request,actor:str=Depends(read)):
 
 @router.post('/crm/intakes')
 async def prepare_crm_intake(body:CRMIntakeRequest,request:Request,actor:str=Depends(read)):
+    from ..crm_intake import normalize_intake
+    from ..transport import DeliveryError
+    try:
+        normalize_intake(body.payload)
+    except DeliveryError:
+        raise HTTPException(422,'invalid CRM intake payload') from None
     return await call(request.app.state.orchestrator.prepare_crm_intake,
                       body.payload,body.correlation_id,actor)
 
