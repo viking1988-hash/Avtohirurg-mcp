@@ -34,11 +34,17 @@ def test_disposable_identity_is_allowed_only_with_fake_transport():
 @pytest.mark.parametrize('change', [
     {'JARVIS_TRANSPORT': 'telegram'},
     {'JARVIS_TELEGRAM_BOT_TOKEN': 'should-not-exist'},
+    {'JARVIS_TELEGRAM_TEST_CHAT_ID': '12345'},
+    {'RAILWAY_PROJECT_ID': 'wrong'},
+    {'RAILWAY_ENVIRONMENT_ID': 'wrong'},
     {'JARVIS_SANDBOX_PROJECT_ID': 'wrong'},
     {'JARVIS_SANDBOX_ENVIRONMENT_ID': 'wrong'},
     {'JARVIS_SANDBOX_DATABASE_URL': 'postgresql://jarvis_test:pw@production.railway.internal/jarvis_pr47_e2e'},
     {'JARVIS_SANDBOX_DATABASE_URL': 'postgresql://jarvis_sandbox:pw@jarvis-pr47-postgres-disposable.railway.internal/jarvis_pr47_e2e'},
     {'JARVIS_SANDBOX_DATABASE_URL': 'postgresql://jarvis_test:pw@jarvis-pr47-postgres-disposable.railway.internal/other'},
+    {'JARVIS_SANDBOX_DATABASE_URL': 'postgresql://jarvis_test:pw@jarvis-pr47-postgres-disposable.railway.internal/jarvis_pr47_e2e?sslmode=disable'},
+    {'JARVIS_READ_TOKEN': 'short'},
+    {'JARVIS_APPROVAL_TOKEN': 'r' * 40},
 ])
 def test_disposable_identity_rejects_unsafe_config(change):
     with patch.dict(os.environ, settings(**change), clear=True):
