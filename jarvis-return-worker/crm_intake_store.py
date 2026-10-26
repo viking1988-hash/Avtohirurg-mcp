@@ -21,6 +21,7 @@ def _public(row, deduplicated=False):
         "DONE": "crm_lead_saved",
         "FAILED": "failed",
         "RECONCILIATION_REQUIRED": "pending_external_confirmation",
+        "DELIVERED_CONFIRMED": "crm_lead_saved_operator_confirmed",
     }[state]
     return {
         "source_id": row["source_id"],
@@ -29,6 +30,8 @@ def _public(row, deduplicated=False):
         "version": row["version"],
         "external_lead_id": row["external_lead_id"],
         "external_status": row["external_status"],
+        "reconciled_by": row.get("reconciled_by"),
+        "reconciliation_reason": row.get("reconciliation_reason"),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "deduplicated": deduplicated,
@@ -232,11 +235,62 @@ class CRMIntakeStore:
                 (source_id,),
             ).fetchone()
 
+    def reconcile(self, source_id, expected_version, outcome, evidence, actor, external_lead_id=None):
+        if not isinstance(actor, str) or not actor.strip() or len(actor) > 128:
+            raise ValueError("authenticated human actor required")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("invalid expected version")
+        if outcome not in ("delivered", "not_delivered"):
+            raise ValueError("invalid reconciliation outcome")
+        if not isinstance(evidence, str) or len(evidence.strip()) < 5 or len(evidence) > 1000:
+            raise ValueError("manual evidence is required")
+        if outcome == "delivered" and (
+                not isinstance(external_lead_id, (str, int)) or not str(external_lead_id).strip()):
+            raise ValueError("CRM lead ID is required for delivered confirmation")
+        with self.repository.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM jarvis_crm_intake_requests WHERE source_id=%s FOR UPDATE",
+                (source_id,),
+            ).fetchone()
+            if not row or row["state"] != "RECONCILIATION_REQUIRED":
+                raise Conflict("CRM intake is not awaiting reconciliation")
+            if row["version"] != expected_version:
+                raise Conflict("stale CRM intake version")
+            if outcome == "delivered":
+                updated = conn.execute(
+                    """UPDATE jarvis_crm_intake_requests
+                       SET state='DELIVERED_CONFIRMED',external_lead_id=%s,
+                           external_status='operator_confirmed',reconciled_by=%s,
+                           reconciliation_evidence=%s,reconciliation_reason=NULL,
+                           version=version+1,updated_at=clock_timestamp()
+                       WHERE source_id=%s RETURNING *""",
+                    (str(external_lead_id)[:256],actor.strip(),evidence.strip(),source_id),
+                ).fetchone()
+                action, reason = "reconciled_delivered", "operator confirmed CRM lead exists"
+            else:
+                updated = conn.execute(
+                    """UPDATE jarvis_crm_intake_requests
+                       SET state='PREPARED',approved_by=NULL,approved_at=NULL,
+                           lease_owner=NULL,lease_until=NULL,reconciled_by=%s,
+                           reconciliation_evidence=%s,reconciliation_reason=NULL,
+                           version=version+1,updated_at=clock_timestamp()
+                       WHERE source_id=%s RETURNING *""",
+                    (actor.strip(),evidence.strip(),source_id),
+                ).fetchone()
+                action, reason = "reconciled_not_delivered", "operator confirmed non-delivery; fresh approval required"
+            conn.execute(
+                """INSERT INTO jarvis_crm_intake_events
+                   (source_id,action,actor,correlation_id,reason)
+                   VALUES (%s,%s,%s,%s,%s)""",
+                (source_id,action,actor.strip(),row["correlation_id"],reason),
+            )
+            return _public(updated)
+
     def get(self, source_id):
         with self.repository.connection() as conn:
             row = conn.execute(
                 """SELECT source_id,state,version,external_lead_id,external_status,
-                          created_at,updated_at
+                          reconciled_by,reconciliation_reason,created_at,updated_at
                    FROM jarvis_crm_intake_requests WHERE source_id=%s""",
                 (source_id,),
             ).fetchone()
