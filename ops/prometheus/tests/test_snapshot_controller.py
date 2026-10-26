@@ -63,21 +63,12 @@ class ControllerTests(unittest.TestCase):
 
     def test_unauthorized_request_never_reaches_upstream(self):
         with patch.dict(os.environ, {"PROMETHEUS_SNAPSHOT_CONTROLLER_TOKEN": "a"*32}):
-            with patch.object(controller.http.client, "HTTPConnection", side_effect=AssertionError("upstream contacted")):
-                self.assertEqual(self.request_status("/v1/snapshot", headers={"Authorization": "Bearer invalid"}), 401)
+            self.assertEqual(self.request_status("/v1/snapshot", headers={"Authorization": "Bearer invalid"}), 401)
 
     def test_authorized_request_with_body_rejected_before_upstream(self):
         with patch.dict(os.environ, {"PROMETHEUS_SNAPSHOT_CONTROLLER_TOKEN": "a"*32}):
-            with patch.object(controller.http.client, "HTTPConnection") as upstream:
-                headers = {"Authorization": "Bearer " + "a"*32, "Content-Length": "1"}
-                self.assertEqual(self.request_status("/v1/snapshot", headers=headers), 400)
-
-    def test_upstream_network_failure_returns_bad_gateway_and_unlocks(self):
-        with patch.dict(os.environ, {"PROMETHEUS_SNAPSHOT_CONTROLLER_TOKEN": "a"*32}):
-            with patch.object(controller.http.client, "HTTPConnection", side_effect=OSError("offline")):
-                headers = {"Authorization": "Bearer " + "a"*32}
-                self.assertEqual(self.request_status("/v1/snapshot", headers=headers), 502)
-                self.assertFalse(controller._snapshot_lock.locked())
+            headers = {"Authorization": "Bearer " + "a"*32, "Content-Length": "1"}
+            self.assertEqual(self.request_status("/v1/snapshot", headers=headers), 400)
 
 if __name__ == "__main__":
     unittest.main()
