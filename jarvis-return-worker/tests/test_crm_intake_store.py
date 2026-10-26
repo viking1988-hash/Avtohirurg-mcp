@@ -98,3 +98,46 @@ def test_intake_is_durable_idempotent_and_requires_human_approval(repository):
             conn.execute("DELETE FROM jarvis_crm_intake_events WHERE source_id=%s", (source_id,))
             conn.execute("DELETE FROM jarvis_crm_intake_requests WHERE source_id=%s", (source_id,))
         assert store.get(source_id) is None
+
+
+def test_unknown_crm_outcome_is_held_for_human_reconciliation(repository):
+    source_id = "jarvis:" + str(uuid.uuid4())
+    correlation_id = "synthetic-unknown-" + str(uuid.uuid4())
+    body = {
+        "source_id": source_id,
+        "name": "Synthetic customer",
+        "phone": "000000000",
+        "symptom": "synthetic timeout case",
+        "followup_consent": False,
+    }
+    store = CRMIntakeStore(repository)
+    try:
+        prepared = store.prepare(body, correlation_id, "synthetic-ci")
+        store.approve(source_id, prepared["version"], "synthetic-human")
+        operation = store.claim("synthetic-unknown-worker")
+        calls = []
+
+        class UnknownCRMIntake:
+            provider = "crm-intake"
+            def create_lead(self, payload):
+                calls.append(payload)
+                from jarvis_return_worker.transport import Classification, DeliveryError
+                raise DeliveryError(Classification.UNKNOWN, "synthetic_timeout")
+
+        dispatcher = TransportDispatcher()
+        dispatcher.register("crm-intake", UnknownCRMIntake())
+        orchestrator = Orchestrator(repository, dispatcher, intake_store=store)
+        asyncio.run(orchestrator.process_crm_intake_operation(operation, "synthetic-unknown-worker"))
+
+        assert len(calls) == 1
+        saved = store.get_operation(source_id)
+        assert saved["state"] == "RECONCILIATION_REQUIRED"
+        assert saved["reconciliation_reason"] == "synthetic_timeout"
+        assert store.claim("synthetic-unknown-worker") is None
+        assert [event["action"] for event in store.events(source_id)] == [
+            "prepared", "approved", "claimed", "reconciliation_required"
+        ]
+    finally:
+        with repository.connection() as conn:
+            conn.execute("DELETE FROM jarvis_crm_intake_events WHERE source_id=%s", (source_id,))
+            conn.execute("DELETE FROM jarvis_crm_intake_requests WHERE source_id=%s", (source_id,))
