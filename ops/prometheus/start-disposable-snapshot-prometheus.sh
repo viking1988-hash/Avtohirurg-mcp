@@ -12,7 +12,11 @@ if [ "${PROMETHEUS_SNAPSHOT_TEST_DATA_DIR:-}" = "" ]; then
 fi
 case "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" in
   /tmp/prometheus-disposable-*) ;;
+
   *) echo "REFUSED: TSDB path must start with /tmp/prometheus-disposable-" >&2; exit 2 ;;
+esac
+case "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" in
+  *"/../"*|*"/./"*|*"/.."|*"/."|*"/" ) echo "REFUSED: noncanonical TSDB path" >&2; exit 2 ;;
 esac
 if [ ! -d "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" ] || [ -L "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" ]; then
   echo "REFUSED: disposable TSDB directory must exist and not be symlinked" >&2
