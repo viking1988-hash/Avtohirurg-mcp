@@ -42,7 +42,7 @@ class ForwardTests(unittest.TestCase):
             original = controller.http.client.HTTPConnection
             def connect(host, port=80, timeout=30):
                 # urllib also uses HTTPConnection in the calling test thread.
-                if host == "127.0.0.1" and port != 19091:
+                if port != 19091:
                     return original(host, port, timeout=timeout)
                 self.assertEqual(host, "127.0.0.1")
                 self.assertEqual(port, 19091)
