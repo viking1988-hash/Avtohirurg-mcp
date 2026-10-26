@@ -311,6 +311,8 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_intake_requests (
  provider_receipt text,
  external_status text,
  reconciliation_reason text,
+ reconciled_by text,
+ reconciliation_evidence text,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CHECK(state NOT IN ('PENDING','PROCESSING','DONE') OR
