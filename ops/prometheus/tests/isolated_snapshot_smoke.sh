@@ -24,6 +24,8 @@ YAML
   --storage.tsdb.path="$ROOT/tsdb" \
   --web.listen-address=127.0.0.1:19091 \
   --web.enable-admin-api \
+  --storage.tsdb.min-block-duration=2s \
+  --storage.tsdb.max-block-duration=2s \
   --storage.tsdb.retention.time=1h >"$ROOT/prometheus.log" 2>&1 &
 PROM_PID="$!"
 READY=0
@@ -36,7 +38,7 @@ if [ "$READY" -ne 1 ]; then
   echo "ISOLATED_SNAPSHOT_FAIL: not ready" >&2
   exit 1
 fi
-sleep 3
+sleep 12
 curl --silent --show-error --fail --request POST \
   'http://127.0.0.1:19091/api/v1/admin/tsdb/snapshot' >"$ROOT/result.json"
 python3 - "$ROOT/result.json" <<'PY'
