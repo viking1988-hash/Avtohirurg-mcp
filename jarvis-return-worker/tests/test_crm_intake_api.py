@@ -33,10 +33,17 @@ def make_client():
                 "version": 1,
                 "external_lead_id": None,
                 "external_status": None,
+                "reconciled_by": None,
+                "reconciliation_reason": None,
                 "created_at": None,
                 "updated_at": None,
                 "deduplicated": False,
             }
+
+        def reconcile_crm_intake(self, *args):
+            calls.append(("reconcile", args))
+            return {"source_id": args[0], "state": "DELIVERED_CONFIRMED",
+                    "status": "crm_lead_saved_operator_confirmed", "version": 3}
 
     app = FastAPI()
     app.include_router(router)
@@ -88,5 +95,27 @@ def test_prepare_intake_uses_read_auth_and_approval_requires_human_token():
     )
     assert approved.status_code == 200
     assert approved.json()["status"] == "pending_external_confirmation"
+    reconcile_body = {
+        "expected_version": 2,
+        "outcome": "delivered",
+        "evidence": "verified synthetic CRM lead",
+        "external_lead_id": "501",
+    }
+    assert client.post(
+        f"/crm/intakes/{source_id}/reconcile",
+        headers={"Authorization": "Bearer sandbox-read-test-token"},
+        json=reconcile_body,
+    ).status_code == 401
+    reconciled = client.post(
+        f"/crm/intakes/{source_id}/reconcile",
+        headers={"Authorization": "Bearer sandbox-approval-test-token"},
+        json=reconcile_body,
+    )
+    assert reconciled.status_code == 200
+    assert reconciled.json()["state"] == "DELIVERED_CONFIRMED"
     assert calls[0][0] == "prepare"
     assert calls[1] == ("approve", (source_id, 0, "sandbox-test-operator"))
+    assert calls[2] == ("reconcile", (
+        source_id, 2, "delivered", "verified synthetic CRM lead",
+        "sandbox-test-operator", "501",
+    ))
