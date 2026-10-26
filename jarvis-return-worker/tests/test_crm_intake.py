@@ -1,7 +1,6 @@
 import io
 import json
 import uuid
-from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -93,12 +92,13 @@ def test_create_lead_uses_crm_intake_contract_and_returns_minimal_receipt():
     provider = CRMIntakeProvider(
         "https://crm-sandbox.up.railway.app", "synthetic-key", opener=opener
     )
-    result = provider.create_lead(payload())
+    request_payload = payload()
+    result = provider.create_lead(request_payload)
     assert captured["request"].get_method() == "POST"
     assert captured["request"].full_url == "https://crm-sandbox.up.railway.app/api/v1/leads"
     assert captured["request"].get_header("X-api-key") == "synthetic-key"
     assert captured["timeout"] == 8
-    assert captured["body"]["source_id"] == result["receipt_id"].removeprefix("crm-lead:") if False else captured["body"]["source_id"]
+    assert captured["body"]["source_id"] == request_payload["source_id"]
     assert result == {"receipt_id": "crm-lead:102", "lead_id": 102, "status": "new"}
     assert "customer_phone" not in repr(result)
     assert set(captured["body"]) == {
