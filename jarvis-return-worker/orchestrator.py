@@ -50,6 +50,11 @@ class Orchestrator:
     def claim_crm_operation(self, owner):
         return self.repository.claim_crm_operation(owner)
 
+    def claim_crm_intake_operation(self, owner):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.claim(owner)
+
     def request_email(self, recipient, subject, body, correlation_id, causation_id):
         from .email_provider import EmailProvider
         if not EmailProvider._valid_recipient(recipient):
@@ -209,6 +214,36 @@ class Orchestrator:
                 logging.getLogger(__name__).warning('CRM operation fenced')
             except Exception:
                 logging.getLogger(__name__).warning('CRM operation state unavailable')
+
+    async def process_crm_intake_operation(self, operation, owner):
+        """Dispatch only a durably stored, human-approved intake request."""
+        store = self.intake_store
+        if store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        try:
+            decision = self.policy.crm_intake_operation(operation)
+            if decision.action != 'dispatch':
+                await asyncio.to_thread(store.fail, operation['source_id'], owner,
+                    operation['attempt_count'], Classification.UNKNOWN, decision.reason)
+                return
+            provider = self.dispatcher.dispatch('crm-intake')
+            result = await asyncio.to_thread(provider.create_lead, operation['payload'])
+            await asyncio.to_thread(store.finish, operation['source_id'], owner,
+                operation['attempt_count'], result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            decision = self.policy.crm_intake_delivery_failure(exc, operation)
+            classification = (exc.classification if isinstance(exc, DeliveryError)
+                              else Classification.UNKNOWN)
+            reason = exc.code if isinstance(exc, DeliveryError) else decision.reason
+            try:
+                await asyncio.to_thread(store.fail, operation['source_id'], owner,
+                    operation['attempt_count'], classification, reason)
+            except Conflict:
+                logging.getLogger(__name__).warning('CRM intake operation fenced')
+            except Exception:
+                logging.getLogger(__name__).warning('CRM intake state unavailable')
 
     def approve(self, task_id, fingerprint, expires_at, actor):
         result=self.repository.approve(task_id,fingerprint,expires_at,actor)
