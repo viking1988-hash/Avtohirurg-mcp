@@ -72,6 +72,26 @@ class CoordinatorTests(unittest.TestCase):
                         coordinator.coordinate(root, output, "http://127.0.0.1", "b", "c", lock_path)
                     snapshot.assert_not_called()
 
+    def test_controller_rejects_short_token_without_network(self):
+        with patch.object(coordinator.http.client, "HTTPConnection") as connection:
+            with self.assertRaises(ValueError):
+                coordinator.request_snapshot("short")
+            connection.assert_not_called()
+
+    def test_missing_snapshot_does_not_upload_or_delete(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "snapshots"
+            root.mkdir()
+            output = Path(temp) / "output"
+            output.mkdir()
+            existing = output / "previous.tar.gz"
+            existing.write_bytes(b"keep")
+            with patch.object(coordinator, "request_snapshot", return_value="missing"), patch.object(coordinator, "execute") as execute:
+                with self.assertRaises(RuntimeError):
+                    coordinator.coordinate(root, output, "http://127.0.0.1", "b", "c", Path(temp) / "lock")
+                execute.assert_not_called()
+            self.assertEqual(existing.read_bytes(), b"keep")
+
     def test_coordinate_only_uploads_expected_completed_snapshot(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "snapshots"
