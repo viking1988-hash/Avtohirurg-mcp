@@ -21,6 +21,7 @@ sys.path.insert(0, str(pathlib.Path("ops/prometheus").resolve()))
 import backup_receiver
 import backup_once
 import backup_coordinator
+import snapshot_controller
 archive = pathlib.Path(os.environ["ARCHIVE"])
 blocks = {p.name for p in pathlib.Path(os.environ["SNAPSHOT_DIR"]).iterdir() if p.is_dir()}
 if not blocks:
@@ -31,14 +32,21 @@ with tempfile.TemporaryDirectory() as backup:
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        from unittest.mock import patch
-        # Controller response is mocked; archive, HTTP upload, restore and promtool are real.
-        with patch.object(backup_coordinator, "request_snapshot", return_value=os.environ["SNAPSHOT_ID"]):
+        # Real loopback controller forwards to the already-running disposable Prometheus.
+        controller = ThreadingHTTPServer(("127.0.0.1", 19092), snapshot_controller.Handler)
+        controller_worker = threading.Thread(target=controller.serve_forever, daemon=True)
+        controller_worker.start()
+        try:
+            os.environ["PROMETHEUS_SNAPSHOT_CONTROLLER_TOKEN"] = "y"*32
             result = backup_coordinator.coordinate(
                 os.environ["SNAPSHOTS_ROOT"], archive.parent,
                 f"http://127.0.0.1:{server.server_port}/v1/upload",
                 "x"*32, "y"*32, archive.parent / "coordinator.lock"
             )
+        finally:
+            controller.shutdown()
+            controller.server_close()
+            os.environ.pop("PROMETHEUS_SNAPSHOT_CONTROLLER_TOKEN", None)
         generated = list(archive.parent.glob("snapshot-*.tar.gz"))
         assert len(generated) == 1, generated
         archive = generated[0]
