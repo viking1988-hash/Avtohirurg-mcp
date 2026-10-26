@@ -29,7 +29,13 @@ class Config:
                 and os.environ.get('JARVIS_SANDBOX_ENVIRONMENT_ID') == 'eff27b7a-7561-4863-84c6-8a4bcc6bb5e1'
                 and os.environ.get('JARVIS_TRANSPORT', 'fake') == 'fake'
                 and not os.environ.get('JARVIS_TELEGRAM_BOT_TOKEN')
-                and not os.environ.get('JARVIS_TELEGRAM_TEST_CHAT_ID'))
+                and not os.environ.get('JARVIS_TELEGRAM_TEST_CHAT_ID')
+                # Fake-only must also exclude all other outbound provider integrations.
+                and not any(os.environ.get(name) for name in (
+                    'JARVIS_CRM_SANDBOX_URL', 'JARVIS_CRM_SANDBOX_TOKEN',
+                    'JARVIS_EMAIL_SANDBOX_SMTP_HOST',
+                    'JARVIS_HTTP_SANDBOX_URL', 'JARVIS_HTTP_SANDBOX_TOKEN',
+                    'JARVIS_WEBHOOK_BASE_URL', 'JARVIS_WEBHOOK_TOKEN')))
 
     @classmethod
     def from_env(cls):
