@@ -1,4 +1,5 @@
 import json
+import fcntl
 import os
 from pathlib import Path
 import sys
@@ -56,6 +57,20 @@ class CoordinatorTests(unittest.TestCase):
         FakeConnection.response = FakeResponse(b'{"status":"success","data":{"name":"20261027T123456Z-abc"}}')
         with patch.object(coordinator.http.client, "HTTPConnection", FakeConnection):
             self.assertEqual(coordinator.request_snapshot("x" * 32), "20261027T123456Z-abc")
+
+    def test_existing_lock_prevents_snapshot_request(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "snapshots"
+            root.mkdir()
+            output = Path(temp) / "output"
+            output.mkdir()
+            lock_path = Path(temp) / "cycle.lock"
+            with open(lock_path, "a+b") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.object(coordinator, "request_snapshot") as snapshot:
+                    with self.assertRaises(RuntimeError):
+                        coordinator.coordinate(root, output, "http://127.0.0.1", "b", "c", lock_path)
+                    snapshot.assert_not_called()
 
     def test_coordinate_only_uploads_expected_completed_snapshot(self):
         with tempfile.TemporaryDirectory() as temp:
