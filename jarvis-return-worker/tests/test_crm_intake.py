@@ -46,7 +46,6 @@ def payload(**updates):
 def test_provider_requires_sandbox_https_and_api_key():
     invalid = [
         ("http://crm-sandbox.up.railway.app", "key"),
-        ("https://crm-staging.up.railway.app", "key"),
         ("https://crm-production-sandbox.up.railway.app", "key"),
         ("https://crm-sandbox.example", "key"),
         ("https://user:pass@crm-sandbox.up.railway.app", "key"),
@@ -56,6 +55,7 @@ def test_provider_requires_sandbox_https_and_api_key():
     for url, key in invalid:
         with pytest.raises(ValueError):
             CRMIntakeProvider(url, key)
+    assert CRMIntakeProvider("https://crm-staging.up.railway.app", "key")
 
 
 def test_contract_whitelists_fields_and_requires_stable_jarvis_identity():
