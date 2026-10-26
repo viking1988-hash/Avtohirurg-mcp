@@ -38,4 +38,5 @@ jobs:
           docker cp "$cid:/bin/prometheus" "$RUNNER_TEMP/prometheus"
           docker cp "$cid:/bin/promtool" "$RUNNER_TEMP/promtool"
           chmod +x "$RUNNER_TEMP/prometheus" "$RUNNER_TEMP/promtool"
+          PROMETHEUS_BIN="$RUNNER_TEMP/prometheus" sh ops/prometheus/tests/disposable_launcher_real_snapshot.sh
           PROMETHEUS_BIN="$RUNNER_TEMP/prometheus" PROMTOOL_BIN="$RUNNER_TEMP/promtool" sh ops/prometheus/tests/isolated_snapshot_smoke.sh
