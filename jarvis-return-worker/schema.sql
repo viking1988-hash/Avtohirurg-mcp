@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS jarvis_email_operation_events (
 
 -- Sandboxed token/cost ledger. Store no prompt, model output, customer data, or secret values.
 DO $$ BEGIN
- IF (current_database(), current_user) NOT IN (('jarvis_return_queue_test', 'jarvis_sandbox'), ('jarvis_pr47_e2e', 'jarvis_test')) THEN
+ IF (current_database() <> 'jarvis_return_queue_test' OR current_user <> 'jarvis_sandbox') AND (current_database() <> 'jarvis_pr47_e2e' OR current_user <> 'jarvis_test') THEN
   RAISE EXCEPTION 'Refusing AI usage ledger outside Jarvis Sandbox database/role';
  END IF;
 END $$;
