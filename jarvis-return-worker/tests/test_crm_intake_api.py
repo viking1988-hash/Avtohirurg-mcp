@@ -74,6 +74,15 @@ def test_prepare_intake_uses_read_auth_and_approval_requires_human_token():
         headers={"Authorization": "Bearer sandbox-approval-test-token"},
         json=body,
     ).status_code == 401
+    invalid_body = {"payload": {**payload, "phone": ""}, "correlation_id": "invalid-correlation"}
+    invalid = client.post(
+        "/crm/intakes",
+        headers={"Authorization": "Bearer sandbox-read-test-token"},
+        json=invalid_body,
+    )
+    assert invalid.status_code == 422
+    assert calls == []
+
     prepared = client.post(
         "/crm/intakes",
         headers={"Authorization": "Bearer sandbox-read-test-token"},
