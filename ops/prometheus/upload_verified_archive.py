@@ -62,7 +62,7 @@ def upload(archive, url, token, snapshot_id, expected_blocks):
         if response.status not in (200, 201):
             raise RuntimeError(f"Receiver rejected upload (HTTP {response.status})")
         result = json.loads(body)
-        if not isinstance(result, dict) or result.get("status") != "verified" or result.get("sha256") != sha or result.get("blocks") != expected_blocks or result.get("restore_test") != "promtool-tsdb-analyze-pass":
+        if not isinstance(result, dict) or result.get("status") not in ("verified", "already-verified") or result.get("sha256") != sha or result.get("blocks") != expected_blocks or result.get("restore_test") != "promtool-tsdb-analyze-pass":
             raise ValueError("Receiver did not confirm matching archive and restore verification")
         return result
     finally:
