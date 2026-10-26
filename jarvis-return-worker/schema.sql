@@ -262,6 +262,8 @@ CREATE TABLE IF NOT EXISTS jarvis_email_operations (
  provider_status text,
  delivery_time timestamptz,
  reconciliation_reason text,
+ reconciled_by text,
+ reconciliation_evidence text,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL),
@@ -297,7 +299,7 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_intake_requests (
  correlation_id text NOT NULL,
  payload jsonb NOT NULL,
  state text NOT NULL DEFAULT 'PREPARED'
-   CHECK(state IN ('PREPARED','PENDING','PROCESSING','DONE','FAILED','RECONCILIATION_REQUIRED')),
+   CHECK(state IN ('PREPARED','PENDING','PROCESSING','DONE','FAILED','RECONCILIATION_REQUIRED','DELIVERED_CONFIRMED')),
  version bigint NOT NULL DEFAULT 0 CHECK(version>=0),
  approved_by text,
  approved_at timestamptz,
@@ -314,7 +316,9 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_intake_requests (
  CHECK(state NOT IN ('PENDING','PROCESSING','DONE') OR
        (approved_by IS NOT NULL AND approved_at IS NOT NULL)),
  CHECK(state<>'DONE' OR (external_lead_id IS NOT NULL AND provider_receipt IS NOT NULL)),
- CHECK(state<>'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL)
+ CHECK(state<>'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL),
+ CHECK(state<>'DELIVERED_CONFIRMED' OR
+       (external_lead_id IS NOT NULL AND reconciled_by IS NOT NULL AND reconciliation_evidence IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS jarvis_crm_intake_pending_idx
  ON jarvis_crm_intake_requests(state,next_attempt_at,created_at,source_id);
@@ -323,7 +327,8 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_intake_events (
  source_id text NOT NULL REFERENCES jarvis_crm_intake_requests(source_id),
  event_sequence bigint GENERATED ALWAYS AS IDENTITY,
  action text NOT NULL CHECK(action IN
-   ('prepared','approved','claimed','completed','retry_scheduled','failed','reconciliation_required')),
+   ('prepared','approved','claimed','completed','retry_scheduled','failed','reconciliation_required',
+   'reconciled_delivered','reconciled_not_delivered')),
  actor text NOT NULL,
  correlation_id text NOT NULL,
  reason text,
