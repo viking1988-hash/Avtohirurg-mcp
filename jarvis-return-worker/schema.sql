@@ -288,3 +288,45 @@ CREATE TABLE IF NOT EXISTS jarvis_email_operation_events (
  PRIMARY KEY(event_id,event_sequence)
 );
 
+
+-- CRM diagnostic intake is persisted before any external call. PENDING can only
+-- be reached through an explicit human approval; no booking is created here.
+CREATE TABLE IF NOT EXISTS jarvis_crm_intake_requests (
+ source_id text PRIMARY KEY,
+ request_fingerprint char(64) NOT NULL,
+ payload jsonb NOT NULL,
+ state text NOT NULL DEFAULT 'PREPARED'
+   CHECK(state IN ('PREPARED','PENDING','PROCESSING','DONE','FAILED','RECONCILIATION_REQUIRED')),
+ version bigint NOT NULL DEFAULT 0 CHECK(version>=0),
+ approved_by text,
+ approved_at timestamptz,
+ lease_owner text,
+ lease_until timestamptz,
+ attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ external_lead_id text,
+ provider_receipt text,
+ external_status text,
+ reconciliation_reason text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(state NOT IN ('PENDING','PROCESSING','DONE') OR
+       (approved_by IS NOT NULL AND approved_at IS NOT NULL)),
+ CHECK(state<>'DONE' OR (external_lead_id IS NOT NULL AND provider_receipt IS NOT NULL)),
+ CHECK(state<>'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS jarvis_crm_intake_pending_idx
+ ON jarvis_crm_intake_requests(state,next_attempt_at,created_at,source_id);
+
+CREATE TABLE IF NOT EXISTS jarvis_crm_intake_events (
+ source_id text NOT NULL REFERENCES jarvis_crm_intake_requests(source_id),
+ event_sequence bigint GENERATED ALWAYS AS IDENTITY,
+ action text NOT NULL CHECK(action IN
+   ('prepared','approved','claimed','completed','retry_scheduled','failed','reconciliation_required')),
+ actor text NOT NULL,
+ reason text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(source_id,event_sequence)
+);
+CREATE INDEX IF NOT EXISTS jarvis_crm_intake_events_source_time_idx
+ ON jarvis_crm_intake_events(source_id,created_at);
