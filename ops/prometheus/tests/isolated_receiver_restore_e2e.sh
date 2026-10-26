@@ -20,6 +20,7 @@ from http.server import ThreadingHTTPServer
 sys.path.insert(0, str(pathlib.Path("ops/prometheus").resolve()))
 import backup_receiver
 import backup_once
+import backup_coordinator
 archive = pathlib.Path(os.environ["ARCHIVE"])
 blocks = {p.name for p in pathlib.Path(os.environ["SNAPSHOT_DIR"]).iterdir() if p.is_dir()}
 if not blocks:
@@ -30,12 +31,22 @@ with tempfile.TemporaryDirectory() as backup:
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        result = backup_once.run(os.environ["SNAPSHOT_DIR"], os.environ["SNAPSHOTS_ROOT"], archive, f"http://127.0.0.1:{server.server_port}/v1/upload", "x"*32)
+        from unittest.mock import patch
+        # Controller response is mocked; archive, HTTP upload, restore and promtool are real.
+        with patch.object(backup_coordinator, "request_snapshot", return_value=os.environ["SNAPSHOT_ID"]):
+            result = backup_coordinator.coordinate(
+                os.environ["SNAPSHOTS_ROOT"], archive.parent,
+                f"http://127.0.0.1:{server.server_port}/v1/upload",
+                "x"*32, "y"*32, archive.parent / "coordinator.lock"
+            )
+        generated = list(archive.parent.glob("snapshot-*.tar.gz"))
+        assert len(generated) == 1, generated
+        archive = generated[0]
         assert result["status"] == "verified", result
         assert result["restore_test"] == "promtool-tsdb-analyze-pass", result
         assert result["sha256"] == hashlib.sha256(archive.read_bytes()).hexdigest()
         assert len(list(pathlib.Path(backup).glob("*.tar.gz"))) == 1
-        print("REAL_RECEIVER_PROMTOOL_E2E_PASS", flush=True)
+        print("REAL_COORDINATOR_RECEIVER_PROMTOOL_E2E_PASS", flush=True)
     finally:
         server.shutdown()
         server.server_close()
