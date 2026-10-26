@@ -294,6 +294,7 @@ CREATE TABLE IF NOT EXISTS jarvis_email_operation_events (
 CREATE TABLE IF NOT EXISTS jarvis_crm_intake_requests (
  source_id text PRIMARY KEY,
  request_fingerprint char(64) NOT NULL,
+ correlation_id text NOT NULL,
  payload jsonb NOT NULL,
  state text NOT NULL DEFAULT 'PREPARED'
    CHECK(state IN ('PREPARED','PENDING','PROCESSING','DONE','FAILED','RECONCILIATION_REQUIRED')),
@@ -324,6 +325,7 @@ CREATE TABLE IF NOT EXISTS jarvis_crm_intake_events (
  action text NOT NULL CHECK(action IN
    ('prepared','approved','claimed','completed','retry_scheduled','failed','reconciliation_required')),
  actor text NOT NULL,
+ correlation_id text NOT NULL,
  reason text,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(source_id,event_sequence)
