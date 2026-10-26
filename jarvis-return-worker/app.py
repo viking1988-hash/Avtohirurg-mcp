@@ -16,7 +16,7 @@ from .health import ready
 from .events import EventBus
 from .outbox import OutboxReplay, ReplayWorker
 from .crm import CRMAdapter, CRMProvider
-from .crm_intake_store import CRMIntakeStore
+from .crm_intake_store import CRMIntakeStore, CRMIntakeAdapter
 from .crm_intake import CRMIntakeProvider
 from .email_adapter import EmailAdapter
 from .email_provider import EmailProvider
@@ -87,6 +87,7 @@ async def lifespan(app):
     registry.register("jarvis.lifecycle-projector","*",_project_event,version=1)
     CRMAdapter().register(registry)
     EmailAdapter().register(registry)
+    CRMIntakeAdapter().register(registry)
     replay=OutboxReplay(repo,registry,owner=config.worker_id)
     intake_store=CRMIntakeStore(repo)
     orchestrator=Orchestrator(repo,dispatcher,event_bus=registry,intake_store=intake_store)
