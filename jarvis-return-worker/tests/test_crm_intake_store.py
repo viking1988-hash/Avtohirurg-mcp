@@ -51,6 +51,30 @@ def test_intake_is_durable_idempotent_and_requires_human_approval(repository):
         assert first["status"] == "approval_required"
         assert first["deduplicated"] is False
 
+        from jarvis_return_worker.events import EventBus
+        from jarvis_return_worker.outbox import OutboxReplay
+        from jarvis_return_worker.crm_intake_store import CRMIntakeAdapter
+        registry = EventBus()
+        CRMIntakeAdapter().register(registry)
+        outbox = OutboxReplay(repository, registry, owner="synthetic-intake-replay")
+        outbox.register_subscribers()
+        with repository.connection() as conn:
+            outbox_event = conn.execute(
+                "SELECT event_id,payload FROM jarvis_outbox_events WHERE causation_id=%s",
+                (source_id,),
+            ).fetchone()
+        assert outbox_event["payload"] == {
+            "source_id": source_id,
+            "request_fingerprint": store.get_operation(source_id)["request_fingerprint"],
+        }
+        assert outbox.replay_one() is True
+        with repository.connection() as conn:
+            assert conn.execute(
+                """SELECT count(*) AS n FROM jarvis_processed_events
+                   WHERE event_id=%s AND subscriber_name='jarvis.crm-intake-adapter'""",
+                (outbox_event["event_id"],),
+            ).fetchone()["n"] == 1
+
         replay = store.prepare(body, correlation_id, "synthetic-ci")
         assert replay["source_id"] == source_id
         assert replay["deduplicated"] is True
@@ -99,6 +123,16 @@ def test_intake_is_durable_idempotent_and_requires_human_approval(repository):
         assert all("phone" not in event and "name" not in event for event in events)
     finally:
         with repository.connection() as conn:
+            event_ids = conn.execute(
+                "SELECT event_id FROM jarvis_outbox_events WHERE causation_id=%s",
+                (source_id,),
+            ).fetchall()
+            ids = [row["event_id"] for row in event_ids]
+            if ids:
+                conn.execute("DELETE FROM jarvis_outbox_audit WHERE event_id = ANY(%s)", (ids,))
+                conn.execute("DELETE FROM jarvis_processed_events WHERE event_id = ANY(%s)", (ids,))
+                conn.execute("DELETE FROM jarvis_outbox_deliveries WHERE event_id = ANY(%s)", (ids,))
+                conn.execute("DELETE FROM jarvis_outbox_events WHERE event_id = ANY(%s)", (ids,))
             conn.execute("DELETE FROM jarvis_crm_intake_events WHERE source_id=%s", (source_id,))
             conn.execute("DELETE FROM jarvis_crm_intake_requests WHERE source_id=%s", (source_id,))
         assert store.get(source_id) is None
