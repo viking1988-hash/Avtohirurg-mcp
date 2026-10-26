@@ -28,7 +28,18 @@ if [ ! -f "$PROM_BIN" ] || [ -L "$PROM_BIN" ] || [ ! -x "$PROM_BIN" ]; then
   echo "REFUSED: invalid disposable Prometheus executable" >&2
   exit 2
 fi
-exec "$PROM_BIN" --config.file="${PROMETHEUS_DISPOSABLE_TEST_CONFIG:-/etc/prometheus/prometheus.yml}" \
+CONFIG="${PROMETHEUS_DISPOSABLE_TEST_CONFIG:-/etc/prometheus/prometheus.yml}"
+if [ -n "${PROMETHEUS_DISPOSABLE_TEST_CONFIG:-}" ]; then
+  case "$CONFIG" in
+    "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR"/*) ;;
+    *) echo "REFUSED: test config must be inside disposable TSDB directory" >&2; exit 2 ;;
+  esac
+  if [ ! -f "$CONFIG" ] || [ -L "$CONFIG" ]; then
+    echo "REFUSED: test config must be a regular non-symlink file" >&2
+    exit 2
+  fi
+fi
+exec "$PROM_BIN" --config.file="$CONFIG" \
   --storage.tsdb.path="$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" \
   --web.listen-address=127.0.0.1:19091 \
   --web.enable-admin-api
