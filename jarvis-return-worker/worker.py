@@ -93,6 +93,40 @@ class CRMOperationWorker:
                 pass
 
 
+class CRMIntakeOperationWorker:
+    """Claims approved diagnostic leads and dispatches only through Orchestrator."""
+    def __init__(self, orchestrator, stop):
+        self.orchestrator=orchestrator
+        self.stop=stop
+        self.owner=orchestrator.repository.config.worker_id+":crm-intake"
+
+    async def run(self):
+        while not self.stop.is_set():
+            try:
+                operation=await asyncio.to_thread(
+                    self.orchestrator.claim_crm_intake_operation,self.owner)
+                if operation:
+                    await self.orchestrator.process_crm_intake_operation(operation,self.owner)
+                    saved=await asyncio.to_thread(
+                        self.orchestrator.read_crm_intake,operation['source_id']) or {}
+                    logging.getLogger(__name__).info(json.dumps({
+                        'source_id':operation['source_id'],
+                        'correlation_id':operation.get('correlation_id'),
+                        'attempt':operation.get('attempt_count'),
+                        'lease_owner':self.owner,
+                        'provider':'crm-intake',
+                        'external_lead_id':saved.get('external_lead_id'),
+                        'state':saved.get('state'),
+                    },separators=(',',':'),sort_keys=True))
+                    continue
+            except Exception:
+                logging.getLogger(__name__).warning('CRM intake worker unavailable')
+            try:
+                await asyncio.wait_for(self.stop.wait(),self.orchestrator.repository.config.poll_seconds)
+            except TimeoutError:
+                pass
+
+
 class EmailOperationWorker:
     """Claims replay-created email intents; SMTP calls stay inside Orchestrator."""
     def __init__(self, orchestrator, stop):
