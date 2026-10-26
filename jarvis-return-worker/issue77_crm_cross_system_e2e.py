@@ -84,8 +84,9 @@ def cleanup_jarvis(repo, source_id):
             raise RuntimeError("jarvis_synthetic_cleanup_failed")
 
 
-async def run_worker_until_terminal(worker, store, source_id):
+async def run_worker_until_terminal(orchestrator, store, source_id):
     stop = asyncio.Event()
+    worker = CRMIntakeOperationWorker(orchestrator, stop)
     task = asyncio.create_task(worker.run())
     try:
         for _ in range(150):
@@ -147,8 +148,7 @@ def main():
             raise RuntimeError("human_approval_transition_failed")
 
         orchestrator = Orchestrator(repo, dispatcher, event_bus=registry, intake_store=store)
-        worker = CRMIntakeOperationWorker(orchestrator, asyncio.Event())
-        result = asyncio.run(run_worker_until_terminal(worker, store, SOURCE_ID))
+        result = asyncio.run(run_worker_until_terminal(orchestrator, store, SOURCE_ID))
         if result["state"] != "DONE" or not result.get("external_lead_id"):
             raise RuntimeError("worker_dispatch_not_receipt_confirmed")
 
@@ -168,10 +168,12 @@ def main():
     finally:
         # Always clean the exact UUID/name/phone synthetic identity, including
         # ambiguous worker outcomes where CRM may have committed before timeout.
-        cleanup_crm(crm_database_url, SOURCE_ID)
-        cleanup_jarvis(repo, SOURCE_ID)
-        if store.get(SOURCE_ID) is not None:
-            raise RuntimeError("jarvis_synthetic_cleanup_verification_failed")
+        try:
+            cleanup_crm(crm_database_url, SOURCE_ID)
+        finally:
+            cleanup_jarvis(repo, SOURCE_ID)
+            if store.get(SOURCE_ID) is not None:
+                raise RuntimeError("jarvis_synthetic_cleanup_verification_failed")
 
     print("ISSUE77_CROSS_SYSTEM_E2E_CLEANUP_PASS crm=1 jarvis=1")
     print("SYNTHETIC_LEAD_ID=" + lead_id)
