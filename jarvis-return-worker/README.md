@@ -136,3 +136,19 @@ adapter = SandboxMailAdapter()
 adapter.register(event_bus)
 # The operation worker calls Orchestrator.process_email_operation(...).
 ~~~
+
+
+## Diagnostic intake to CRM (staging only)
+
+The intake API persists a whitelisted lead payload in the Jarvis Sandbox PostgreSQL database before any CRM network request. A repeated source_id with the same payload returns the existing request; a changed payload for that source_id is rejected.
+
+- POST /crm/intakes uses the read token to prepare a lead. It returns approval_required and does not call CRM.
+- POST /crm/intakes/{source_id}/approve requires the distinct human approval token and the observed expected_version. It queues CRM delivery; this is not a confirmed booking.
+- GET /crm/intakes/{source_id} and GET /crm/intakes/{source_id}/events expose status and PII-free audit events.
+- The worker is enabled only when both JARVIS_CRM_INTAKE_STAGING_URL and JARVIS_CRM_INTAKE_API_KEY are configured. The endpoint must be HTTPS on a Railway Sandbox or staging host; Production hosts are rejected. The optional bounded timeout is JARVIS_CRM_INTAKE_TIMEOUT_SECONDS.
+- A CRM 202 response plus lead_id and status is required before the operation becomes DONE. 429 responses use bounded retry; permanent 4xx failures stop; ambiguous network/5xx outcomes enter RECONCILIATION_REQUIRED and are not automatically resent.
+- POST /crm/intakes/{source_id}/reconcile requires human approval, expected_version, evidence, and a CRM lead ID when confirming delivery. Confirming non-delivery clears the old approval and returns the request to PREPARED; a fresh human approval is required before another attempt.
+
+pending_external_confirmation means CRM has not yet been confirmed and no appointment has been booked. It must not be presented as a confirmed CRM lead or booking.
+
+The intake payload contains contact details in the isolated Jarvis database while awaiting delivery. Audit events and worker logs omit the payload. This feature has not been deployed; use synthetic data for Sandbox verification and establish the retention policy before any real-customer rollout.
