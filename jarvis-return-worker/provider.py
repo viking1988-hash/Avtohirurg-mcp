@@ -28,6 +28,12 @@ class ProviderAdapter:
             return result
         return {"receipt_id": str(result)} if result is not None else {}
 
+    def create_lead(self, payload):
+        method = getattr(self.client, "create_lead", None)
+        if not method:
+            raise RuntimeError("provider_create_lead_not_supported")
+        return method(payload)
+
     def update(self, task, idempotency_key):
         method = getattr(self.client, "update", None)
         if not method:
