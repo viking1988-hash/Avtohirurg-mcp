@@ -9,8 +9,7 @@ integrated in this branch. Enabling `PROMETHEUS_SNAPSHOT_ADMIN_API=true` by
 itself does not implement a snapshot mechanism. Do not enable an unauthenticated
 admin API on the private network listener.
 
-The GitHub Actions checks pass on the current HEAD, but do **not** demonstrate
-live staging snapshot creation or recovery. Keep PR Draft and do not deploy.
+GitHub Actions has passed the disposable synthetic snapshot -> archive -> real HTTP receiver -> extracted TSDB -> real promtool E2E (three blocks). This is **not** a live Railway backup or recovery. Keep PR Draft and do not deploy.
 
 ---
 
@@ -26,6 +25,14 @@ The non-Pro path is a two-service staging workflow:
 4. The helper exposes health and Prometheus metrics. It restores last-success timestamps from last-verified.json after restart. Retention is optional and disabled by default; when enabled it runs only after a verified upload and preserves the newest archive, 7 daily points and 4 weekly points.
 
 The scheduler runs an initial backup after Prometheus is ready, then uses a 24-hour interval by default (minimum one hour). Failed transfers retry every 15 minutes by default (minimum one minute). The temporary local snapshot tree is removed after each transfer attempt so snapshots do not accumulate on the Prometheus volume. Failed runs log a failure event without deleting older backups. The helper reports backup-volume free bytes; staging rules alert below 128 MiB.
+
+## Read-only Railway inventory (2026-10-26)
+
+- Staging Prometheus service `10589df1-2963-4094-9050-7ec11a09006e` currently tracks `chore/staging-prometheus-optional-snapshot-20261023` and mounts its own `/prometheus` TSDB volume.
+- Backup helper service `43f16966-9d83-4563-b6c9-b68a339dd840` tracks `test/prometheus-backup-automation-safe-20261024` and mounts a **different** `/backup` volume.
+- Both latest deployments reported SUCCESS; neither service has a Railway cron schedule, and no Railway changes were staged.
+- The helper has no direct access to `/prometheus`; this is intentional. The current Prometheus startup does not provide the authenticated snapshot controller, nor the upload scheduler. **Do not switch its source branch or enable the Admin API as a shortcut.**
+- Next gate: implement and test an opt-in loopback-only snapshot controller, packaging/upload scheduler and clean rollback in a disposable service first. Only then propose a staging deployment, with explicit verification of mounted volume, private networking, token handling and disk usage.
 
 ## Required staging wiring
 
