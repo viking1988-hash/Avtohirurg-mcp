@@ -30,5 +30,6 @@ jobs:
           cid="$(docker create prom/prometheus:v3.5.0)"
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           docker cp "$cid:/bin/prometheus" "$RUNNER_TEMP/prometheus"
-          chmod +x "$RUNNER_TEMP/prometheus"
-          PROMETHEUS_BIN="$RUNNER_TEMP/prometheus" sh ops/prometheus/tests/isolated_snapshot_smoke.sh
+          docker cp "$cid:/bin/promtool" "$RUNNER_TEMP/promtool"
+          chmod +x "$RUNNER_TEMP/prometheus" "$RUNNER_TEMP/promtool"
+          PROMETHEUS_BIN="$RUNNER_TEMP/prometheus" PROMTOOL_BIN="$RUNNER_TEMP/promtool" sh ops/prometheus/tests/isolated_snapshot_smoke.sh
