@@ -14,8 +14,12 @@ import tarfile
 ULID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 
 def package(snapshot, snapshots_root, output, max_bytes=512*1024*1024):
-    snapshot = Path(snapshot).resolve(strict=True)
-    root = Path(snapshots_root).resolve(strict=True)
+    snapshot = Path(snapshot)
+    root = Path(snapshots_root)
+    if snapshot.is_symlink() or root.is_symlink():
+        raise ValueError("Snapshot path or root cannot be a symlink")
+    snapshot = snapshot.resolve(strict=True)
+    root = root.resolve(strict=True)
     output = Path(output)
     if snapshot.parent != root or not snapshot.is_dir() or snapshot.is_symlink():
         raise ValueError("Source must be a direct child of the snapshots root")
