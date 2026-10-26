@@ -23,7 +23,8 @@ def execute(snapshot, snapshots_root, output_dir, url, token, lock_path):
     if not lock_path.parent.is_dir():
         raise ValueError("Lock directory must exist")
     # O_NOFOLLOW prevents symlink substitution between check and open.
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)\n    fd = os.open(lock_path, flags, 0o600)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(lock_path, flags, 0o600)
     with os.fdopen(fd, "a+b") as lock:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
