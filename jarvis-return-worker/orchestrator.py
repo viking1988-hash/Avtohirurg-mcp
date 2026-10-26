@@ -157,6 +157,11 @@ class Orchestrator:
             raise RuntimeError('CRM intake store is unavailable')
         return self.intake_store.events(source_id)
 
+    def reconcile_crm_intake(self,source_id,expected_version,outcome,evidence,actor,external_lead_id=None):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.reconcile(source_id,expected_version,outcome,evidence,actor,external_lead_id)
+
     def read_crm_operation(self,event_id):
         return self.repository.get_crm_operation(event_id)
 
