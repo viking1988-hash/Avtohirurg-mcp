@@ -134,8 +134,19 @@ def test_unknown_crm_outcome_is_held_for_human_reconciliation(repository):
         assert saved["state"] == "RECONCILIATION_REQUIRED"
         assert saved["reconciliation_reason"] == "synthetic_timeout"
         assert store.claim("synthetic-unknown-worker") is None
+
+        reconciled = store.reconcile(
+            source_id, saved["version"], "delivered",
+            "synthetic operator verified CRM record", "synthetic-human", "501",
+        )
+        assert reconciled["state"] == "DELIVERED_CONFIRMED"
+        assert reconciled["status"] == "crm_lead_saved_operator_confirmed"
+        final = store.get_operation(source_id)
+        assert final["provider_receipt"] is None
+        assert final["reconciled_by"] == "synthetic-human"
         assert [event["action"] for event in store.events(source_id)] == [
-            "prepared", "approved", "claimed", "reconciliation_required"
+            "prepared", "approved", "claimed", "reconciliation_required",
+            "reconciled_delivered"
         ]
     finally:
         with repository.connection() as conn:
