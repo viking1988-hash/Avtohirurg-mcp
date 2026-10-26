@@ -37,6 +37,9 @@ class Config:
             or os.environ.get('RAILWAY_PROJECT_ID') != os.environ['JARVIS_SANDBOX_PROJECT_ID']
             or os.environ.get('RAILWAY_ENVIRONMENT_ID') != os.environ['JARVIS_SANDBOX_ENVIRONMENT_ID']):
             raise ValueError('worker requires the exact Railway Sandbox project and environment')
+        if (os.environ.get('RAILWAY_PROJECT_ID') == 'cee2fad7-8d02-4a3b-a70c-09dee0312cf1'
+            and not cls.isolated_e2e()):
+            raise ValueError('disposable E2E project must use fake transport and isolated identity')
         transport = os.environ.get('JARVIS_TRANSPORT', 'fake')
         if transport not in ('fake', 'telegram'):
             raise ValueError('unsupported transport')
