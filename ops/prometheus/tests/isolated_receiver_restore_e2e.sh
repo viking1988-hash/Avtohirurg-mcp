@@ -7,9 +7,8 @@ PROMTOOL="$3"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 ARCHIVE="$TMP/snapshot.tar.gz"
-python3 ops/prometheus/package_completed_snapshot.py "$SNAPSHOT_DIR" "$SNAPSHOTS_ROOT" "$ARCHIVE"
 SNAPSHOT_ID="$(basename "$SNAPSHOT_DIR")"
-ARCHIVE="$ARCHIVE" SNAPSHOT_ID="$SNAPSHOT_ID" PROMTOOL="$PROMTOOL" python3 - <<'PY'
+ARCHIVE="$ARCHIVE" SNAPSHOT_ID="$SNAPSHOT_ID" SNAPSHOT_DIR="$SNAPSHOT_DIR" SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" PROMTOOL="$PROMTOOL" python3 - <<'PY'
 import hashlib
 import os
 import pathlib
@@ -20,10 +19,9 @@ import threading
 from http.server import ThreadingHTTPServer
 sys.path.insert(0, str(pathlib.Path("ops/prometheus").resolve()))
 import backup_receiver
-import upload_verified_archive
+import backup_once
 archive = pathlib.Path(os.environ["ARCHIVE"])
-with tarfile.open(archive, "r:gz") as tar:
-    blocks = {pathlib.PurePosixPath(m.name).parts[1] for m in tar if len(pathlib.PurePosixPath(m.name).parts) > 1}
+blocks = {p.name for p in pathlib.Path(os.environ["SNAPSHOT_DIR"]).iterdir() if p.is_dir()}
 if not blocks:
     raise RuntimeError("No blocks in synthetic snapshot")
 with tempfile.TemporaryDirectory() as backup:
@@ -32,7 +30,7 @@ with tempfile.TemporaryDirectory() as backup:
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        result = upload_verified_archive.upload(archive, f"http://127.0.0.1:{server.server_port}/v1/upload", "x"*32, os.environ["SNAPSHOT_ID"], len(blocks))
+        result = backup_once.run(os.environ["SNAPSHOT_DIR"], os.environ["SNAPSHOTS_ROOT"], archive, f"http://127.0.0.1:{server.server_port}/v1/upload", "x"*32)
         assert result["status"] == "verified", result
         assert result["restore_test"] == "promtool-tsdb-analyze-pass", result
         assert result["sha256"] == hashlib.sha256(archive.read_bytes()).hexdigest()
