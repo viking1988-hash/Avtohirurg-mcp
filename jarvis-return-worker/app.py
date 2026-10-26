@@ -9,7 +9,7 @@ from .queue import QueueRepository
 from .transport import FakeTransport, TelegramTransport
 from .dispatcher import TransportDispatcher
 from .orchestrator import Orchestrator
-from .worker import Worker, CRMOperationWorker, EmailOperationWorker
+from .worker import Worker, CRMOperationWorker, CRMIntakeOperationWorker, EmailOperationWorker
 from .lease import RecoveryWorker
 from .api import router
 from .health import ready
@@ -17,6 +17,7 @@ from .events import EventBus
 from .outbox import OutboxReplay, ReplayWorker
 from .crm import CRMAdapter, CRMProvider
 from .crm_intake_store import CRMIntakeStore
+from .crm_intake import CRMIntakeProvider
 from .email_adapter import EmailAdapter
 from .email_provider import EmailProvider
 
@@ -53,6 +54,13 @@ def make_dispatcher(config, repository):
             raise ValueError('CRM Sandbox endpoint and token must be configured together')
         dispatcher.register('crm',CRMProvider(crm_url,crm_token,
             int(os.environ.get('JARVIS_CRM_TIMEOUT_SECONDS','8'))),enabled=True)
+    intake_url=os.environ.get('JARVIS_CRM_INTAKE_STAGING_URL','')
+    intake_key=os.environ.get('JARVIS_CRM_INTAKE_API_KEY','')
+    if intake_url or intake_key:
+        if not intake_url or not intake_key:
+            raise ValueError('CRM intake staging endpoint and API key must be configured together')
+        dispatcher.register('crm-intake',CRMIntakeProvider(intake_url,intake_key,
+            int(os.environ.get('JARVIS_CRM_INTAKE_TIMEOUT_SECONDS','8'))),enabled=True)
     email_host=os.environ.get('JARVIS_EMAIL_SANDBOX_SMTP_HOST','')
     if email_host:
         dispatcher.register('email',EmailProvider(email_host,
@@ -90,6 +98,8 @@ async def lifespan(app):
            asyncio.create_task(replay_worker.run())]
     if 'crm' in dispatcher.names():
         loops.append(asyncio.create_task(CRMOperationWorker(orchestrator,stop).run()))
+    if 'crm-intake' in dispatcher.names():
+        loops.append(asyncio.create_task(CRMIntakeOperationWorker(orchestrator,stop).run()))
     if 'email' in dispatcher.names():
         loops.append(asyncio.create_task(EmailOperationWorker(orchestrator,stop).run()))
     app.state.config,app.state.repository,app.state.stop,app.state.orchestrator=config,repo,stop,orchestrator
