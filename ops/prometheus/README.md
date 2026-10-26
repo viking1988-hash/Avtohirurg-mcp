@@ -13,6 +13,15 @@ GitHub Actions has passed the disposable synthetic snapshot -> archive -> real H
 
 ---
 
+## Verified implementation status (2026-10-26)
+
+- GitHub Actions at commit `4643eb7`: both workflows passed.
+- Disposable Prometheus snapshot -> `backup_once.py` -> authenticated receiver -> restored blocks -> real `promtool` is covered by CI.
+- `backup_cycle.py` is a **single invocation only**, disabled unless `PROMETHEUS_BACKUP_SCHEDULER_ENABLED=true`. It uses a nonblocking file lock, does not retry automatically, does not create snapshots, and does not delete local archives.
+- `snapshot_controller.py` remains a loopback-only prototype, **not** integrated into the Railway Prometheus image or startup command.
+- **Not verified:** live Railway TSDB snapshot, private authenticated transfer between Railway services, real restore from the live TSDB, scheduled invocation, retention policy, or safe admin-API isolation in deployed topology.
+- Do **not** configure Railway cron, expose the Prometheus Admin API, change existing service branches, or deploy this draft until those items have independent acceptance evidence.
+
 # Prometheus Staging backup automation
 
 ## What this draft implements
