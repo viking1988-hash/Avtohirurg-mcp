@@ -110,6 +110,128 @@ class CRMIntakeStore:
             )
             return _public(approved)
 
+    def claim(self, owner):
+        if not isinstance(owner, str) or not owner.strip():
+            raise ValueError("CRM intake lease owner required")
+        with self.repository.connection() as conn:
+            expired = conn.execute(
+                """UPDATE jarvis_crm_intake_requests
+                   SET state='RECONCILIATION_REQUIRED',
+                       reconciliation_reason='lease_expired_after_claim',
+                       lease_owner=NULL,lease_until=NULL,version=version+1,
+                       updated_at=clock_timestamp()
+                   WHERE state='PROCESSING' AND lease_until<clock_timestamp()
+                   RETURNING source_id,correlation_id""",
+            ).fetchall()
+            for row in expired:
+                conn.execute(
+                    """INSERT INTO jarvis_crm_intake_events
+                       (source_id,action,actor,correlation_id,reason)
+                       VALUES (%s,'reconciliation_required',%s,%s,'lease_expired_after_claim')""",
+                    (row["source_id"], owner, row["correlation_id"]),
+                )
+            row = conn.execute(
+                """SELECT * FROM jarvis_crm_intake_requests
+                   WHERE state='PENDING' AND next_attempt_at<=clock_timestamp()
+                   ORDER BY created_at,source_id FOR UPDATE SKIP LOCKED LIMIT 1""",
+            ).fetchone()
+            if not row:
+                return None
+            claimed = conn.execute(
+                """UPDATE jarvis_crm_intake_requests
+                   SET state='PROCESSING',lease_owner=%s,
+                       lease_until=clock_timestamp()+(%s*interval '1 second'),
+                       attempt_count=attempt_count+1,version=version+1,
+                       updated_at=clock_timestamp()
+                   WHERE source_id=%s RETURNING *""",
+                (owner, self.repository.config.lease_seconds, row["source_id"]),
+            ).fetchone()
+            conn.execute(
+                """INSERT INTO jarvis_crm_intake_events
+                   (source_id,action,actor,correlation_id)
+                   VALUES (%s,'claimed',%s,%s)""",
+                (row["source_id"], owner, row["correlation_id"]),
+            )
+            return claimed
+
+    def _owned(self, conn, source_id, owner, attempt):
+        row = conn.execute(
+            "SELECT * FROM jarvis_crm_intake_requests WHERE source_id=%s FOR UPDATE",
+            (source_id,),
+        ).fetchone()
+        now = conn.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
+        if (not row or row["state"] != "PROCESSING" or row["lease_owner"] != owner
+                or row["attempt_count"] != attempt or row["lease_until"] <= now):
+            raise Conflict("stale CRM intake lease or fencing token")
+        return row
+
+    def finish(self, source_id, owner, attempt, result):
+        lead_id = result.get("lead_id")
+        receipt = result.get("receipt_id")
+        status = result.get("status")
+        if not lead_id or not receipt or not status:
+            raise Conflict("CRM intake lead ID, receipt, and status required")
+        with self.repository.connection() as conn:
+            row = self._owned(conn, source_id, owner, attempt)
+            saved = conn.execute(
+                """UPDATE jarvis_crm_intake_requests
+                   SET state='DONE',external_lead_id=%s,provider_receipt=%s,
+                       external_status=%s,reconciliation_reason=NULL,
+                       lease_owner=NULL,lease_until=NULL,version=version+1,
+                       updated_at=clock_timestamp()
+                   WHERE source_id=%s RETURNING *""",
+                (str(lead_id)[:256], str(receipt)[:512], str(status)[:80], source_id),
+            ).fetchone()
+            conn.execute(
+                """INSERT INTO jarvis_crm_intake_events
+                   (source_id,action,actor,correlation_id,reason)
+                   VALUES (%s,'completed',%s,%s,'CRM receipt persisted')""",
+                (source_id, owner, row["correlation_id"]),
+            )
+            return _public(saved)
+
+    def fail(self, source_id, owner, attempt, classification, reason):
+        from .transport import Classification
+        kind = Classification(classification)
+        with self.repository.connection() as conn:
+            row = self._owned(conn, source_id, owner, attempt)
+            retry = kind == Classification.RETRYABLE and attempt < self.repository.config.max_attempts
+            if retry:
+                state, action = "PENDING", "retry_scheduled"
+                reconciliation_reason = None
+                delay = min(2 ** max(0, attempt - 1), 3600)
+            elif kind == Classification.PERMANENT or kind == Classification.RETRYABLE:
+                state, action = "FAILED", "failed"
+                reconciliation_reason = None
+                delay = 0
+            else:
+                state, action = "RECONCILIATION_REQUIRED", "reconciliation_required"
+                reconciliation_reason = str(reason or "provider_outcome_unknown")[:200]
+                delay = 0
+            saved = conn.execute(
+                """UPDATE jarvis_crm_intake_requests
+                   SET state=%s,reconciliation_reason=%s,
+                       lease_owner=NULL,lease_until=NULL,
+                       next_attempt_at=clock_timestamp()+(%s*interval '1 second'),
+                       version=version+1,updated_at=clock_timestamp()
+                   WHERE source_id=%s RETURNING *""",
+                (state, reconciliation_reason, delay, source_id),
+            ).fetchone()
+            conn.execute(
+                """INSERT INTO jarvis_crm_intake_events
+                   (source_id,action,actor,correlation_id,reason)
+                   VALUES (%s,%s,%s,%s,%s)""",
+                (source_id, action, owner, row["correlation_id"], str(reason or action)[:200]),
+            )
+            return _public(saved)
+
+    def get_operation(self, source_id):
+        with self.repository.connection() as conn:
+            return conn.execute(
+                "SELECT * FROM jarvis_crm_intake_requests WHERE source_id=%s",
+                (source_id,),
+            ).fetchone()
+
     def get(self, source_id):
         with self.repository.connection() as conn:
             row = conn.execute(
