@@ -9,11 +9,12 @@ from .transport import Classification, DeliveryError
 
 
 class Orchestrator:
-    def __init__(self, repository, dispatcher, policy=None, event_bus=None):
+    def __init__(self, repository, dispatcher, policy=None, event_bus=None, intake_store=None):
         self.repository=repository
         self.dispatcher=dispatcher
         self.policy=policy or PolicyEngine()
         self.event_bus=event_bus or EventBus()
+        self.intake_store=intake_store
 
     def enqueue(self, *args, **kwargs): return self.repository.enqueue(*args, **kwargs)
     def list_tasks(self, limit=100): return self.repository.list(limit)
@@ -130,6 +131,26 @@ class Orchestrator:
                 logging.getLogger(__name__).warning('Email operation fenced')
             except Exception:
                 logging.getLogger(__name__).warning('Email operation state unavailable')
+
+    def prepare_crm_intake(self,payload,correlation_id,actor):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.prepare(payload,correlation_id,actor)
+
+    def approve_crm_intake(self,source_id,expected_version,actor):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.approve(source_id,expected_version,actor)
+
+    def read_crm_intake(self,source_id):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.get(source_id)
+
+    def read_crm_intake_events(self,source_id):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.events(source_id)
 
     def read_crm_operation(self,event_id):
         return self.repository.get_crm_operation(event_id)
