@@ -1,3 +1,19 @@
+# Deployment status: NOT READY (verified 2026-10-26)
+
+**Do not activate the wiring below on the existing Railway Prometheus service.**
+The checked-in `jarvis-return-worker/monitoring/start-prometheus.sh` still launches
+Prometheus without a snapshot controller or admin API, and
+`Dockerfile.worker-private-monitoring-sandbox` has no snapshot proxy/controller.
+The private backup receiver exists, but no verified snapshot source has been
+integrated in this branch. Enabling `PROMETHEUS_SNAPSHOT_ADMIN_API=true` by
+itself does not implement a snapshot mechanism. Do not enable an unauthenticated
+admin API on the private network listener.
+
+The GitHub Actions checks pass on the current HEAD, but do **not** demonstrate
+live staging snapshot creation or recovery. Keep PR Draft and do not deploy.
+
+---
+
 # Prometheus Staging backup automation
 
 ## What this draft implements
