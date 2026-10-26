@@ -7,6 +7,7 @@ from psycopg.types.json import Jsonb
 
 from .crm_intake import normalize_intake
 from .queue import Conflict
+from .outbox import append_event
 
 
 _CORRELATION_ID = re.compile(r"^[A-Za-z0-9:_-]{1,128}$")
@@ -67,6 +68,12 @@ class CRMIntakeStore:
                        (source_id,action,actor,correlation_id,reason)
                        VALUES (%s,'prepared',%s,%s,'approval required before CRM dispatch')""",
                     (payload["source_id"], actor.strip(), correlation_id),
+                )
+                append_event(
+                    conn, aggregate_id=payload["source_id"], aggregate_type="crm_intake",
+                    event_type="CRMLeadIntakePrepared", event_version=1,
+                    payload={"source_id": payload["source_id"], "request_fingerprint": fingerprint},
+                    correlation_id=correlation_id, causation_id=payload["source_id"],
                 )
                 return _public(inserted)
             existing = conn.execute(
@@ -305,3 +312,26 @@ class CRMIntakeStore:
                 (source_id,),
             ).fetchall()
             return rows
+
+
+class CRMIntakeAdapter:
+    """Outbox subscriber validating the atomic intake request projection.
+
+    PII remains only in jarvis_crm_intake_requests; the outbox carries a source
+    reference and fingerprint. This handler performs no network I/O.
+    """
+    subscriber_name = "jarvis.crm-intake-adapter"
+
+    @staticmethod
+    def handle(conn, event):
+        payload = event.get("payload") or {}
+        row = conn.execute(
+            """SELECT request_fingerprint FROM jarvis_crm_intake_requests
+               WHERE source_id=%s""",
+            (payload.get("source_id"),),
+        ).fetchone()
+        if not row or row["request_fingerprint"] != payload.get("request_fingerprint"):
+            raise ValueError("CRM intake outbox request projection mismatch")
+
+    def register(self, registry):
+        registry.register(self.subscriber_name, "CRMLeadIntakePrepared", self.handle, version=1)
