@@ -22,7 +22,13 @@ if [ ! -d "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" ] || [ -L "$PROMETHEUS_SNAPSHOT_T
   echo "REFUSED: disposable TSDB directory must exist and not be symlinked" >&2
   exit 2
 fi
-exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml \
+# Test override is allowed only when the executable is a regular file.
+PROM_BIN="${PROMETHEUS_DISPOSABLE_TEST_BIN:-/bin/prometheus}"
+if [ ! -f "$PROM_BIN" ] || [ -L "$PROM_BIN" ] || [ ! -x "$PROM_BIN" ]; then
+  echo "REFUSED: invalid disposable Prometheus executable" >&2
+  exit 2
+fi
+exec "$PROM_BIN" --config.file="${PROMETHEUS_DISPOSABLE_TEST_CONFIG:-/etc/prometheus/prometheus.yml}" \
   --storage.tsdb.path="$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" \
   --web.listen-address=127.0.0.1:19091 \
   --web.enable-admin-api
