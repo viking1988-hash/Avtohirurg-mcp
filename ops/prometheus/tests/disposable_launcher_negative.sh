@@ -27,4 +27,12 @@ trap 'rm -rf /tmp/prometheus-disposable-ci-path-$; rm -f /tmp/prometheus-disposa
 expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR=/tmp/prometheus-disposable-ci-path-$/../prometheus-disposable-ci-path-$ sh "$script"
 expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR=/tmp/prometheus-disposable-ci-path-$/. sh "$script"
 expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR=/tmp/prometheus-disposable-ci-path-$/ sh "$script"
+# Config overrides must not escape the disposable data directory.
+testdir="/tmp/prometheus-disposable-config-$"
+mkdir -p "$testdir"
+trap 'rm -rf "$testdir"; rm -f /tmp/prometheus-disposable-ci-link-$; rm -rf /tmp/prometheus-disposable-ci-path-$; rm -rf "$tmp"' EXIT
+printf 'global: {}\n' >"$tmp/outside.yml"
+ln -s "$tmp/outside.yml" "$testdir/linked.yml"
+expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR="$testdir" PROMETHEUS_DISPOSABLE_TEST_CONFIG="$tmp/outside.yml" sh "$script"
+expect_refusal env PROMETHEUS_DISPOSABLE_SNAPSHOT_TEST=true PROMETHEUS_SNAPSHOT_TEST_DATA_DIR="$testdir" PROMETHEUS_DISPOSABLE_TEST_CONFIG="$testdir/linked.yml" sh "$script"
 echo "DISPOSABLE_SNAPSHOT_LAUNCHER_NEGATIVE_PASS"
