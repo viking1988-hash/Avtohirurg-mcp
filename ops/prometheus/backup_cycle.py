@@ -22,8 +22,7 @@ def execute(snapshot, snapshots_root, output_dir, url, token, lock_path):
         raise ValueError("Lock file must not be a symlink")
     if not lock_path.parent.is_dir():
         raise ValueError("Lock directory must exist")
-    with lock_path.open("a+b") as lock:
-        try:
+    # O_NOFOLLOW prevents symlink substitution between check and open.\n    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)\n    fd = os.open(lock_path, flags, 0o600)\n    with os.fdopen(fd, "a+b") as lock:\n        try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RuntimeError("Another backup cycle is active") from exc
