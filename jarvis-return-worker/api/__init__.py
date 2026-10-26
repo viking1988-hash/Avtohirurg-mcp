@@ -30,7 +30,21 @@ class Reconciliation(TaskID):
 class CRMIntakeRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
     payload: dict
-    correlation_id: str=Field(min_length=1,max_length=128,pattern=r'^[A-Za-z0-9:_-]+    model_config=ConfigDict(extra='forbid')
+    correlation_id: str=Field(min_length=1,max_length=128,pattern=r'^[A-Za-z0-9:_-]+$')
+
+class CRMIntakeApproval(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+
+class CRMIntakeReconciliation(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version: int=Field(ge=0)
+    outcome: str=Field(pattern=r'^(delivered|not_delivered)$')
+    evidence: str=Field(min_length=5,max_length=1000)
+    external_lead_id: str|None=Field(default=None,max_length=256)
+
+class CRMReconciliation(BaseModel):
+    model_config=ConfigDict(extra='forbid')
     expected_version: int=Field(ge=0)
 
 class EmailCancel(BaseModel):
