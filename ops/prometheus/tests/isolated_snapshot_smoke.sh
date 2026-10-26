@@ -52,3 +52,8 @@ if [ "$SNAPSHOT_COUNT" -ne 1 ]; then
   exit 1
 fi
 echo "ISOLATED_SNAPSHOT_PASS: one synthetic snapshot created on disposable TSDB"
+
+if [ -n "${PROMTOOL_BIN:-}" ]; then
+  SNAPSHOT_DIR="$(find "$ROOT/tsdb/snapshots" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  sh ops/prometheus/tests/isolated_receiver_restore_e2e.sh "$SNAPSHOT_DIR" "$ROOT/tsdb/snapshots" "$PROMTOOL_BIN"
+fi
