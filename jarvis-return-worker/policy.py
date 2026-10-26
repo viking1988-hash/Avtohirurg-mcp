@@ -42,6 +42,23 @@ class PolicyEngine:
         return PolicyDecision('dispatch' if allowed else 'reconcile',
                               'crm_operation_valid' if allowed else 'crm_operation_integrity')
 
+    def crm_intake_operation(self,operation):
+        allowed=(operation.get('state')=='PROCESSING'
+                 and bool(operation.get('source_id'))
+                 and bool(operation.get('approved_by'))
+                 and bool(operation.get('approved_at'))
+                 and operation.get('payload',{}).get('source_id')==operation.get('source_id'))
+        return PolicyDecision('dispatch' if allowed else 'reject',
+                              'crm_intake_approved' if allowed else 'crm_intake_approval_integrity')
+
+    def crm_intake_delivery_failure(self,error,operation):
+        if isinstance(error,DeliveryError):
+            if error.classification==Classification.RETRYABLE:
+                return PolicyDecision('retry','crm_intake_confirmed_rejection')
+            if error.classification==Classification.PERMANENT:
+                return PolicyDecision('fail','crm_intake_permanent_rejection')
+        return PolicyDecision('reconcile','crm_intake_outcome_unknown')
+
     def crm_delivery_failure(self,error,operation):
         if isinstance(error,DeliveryError):
             if error.classification==Classification.RETRYABLE:
