@@ -22,3 +22,13 @@ jobs:
         run: python -m unittest discover -s ops/prometheus/tests -v
       - name: Build isolated backup helper image
         run: docker build -f ops/prometheus/Dockerfile.backup-helper -t prometheus-backup-helper:test .
+      - name: Disposable Prometheus snapshot API smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull prom/prometheus:v3.5.0
+          cid="$(docker create prom/prometheus:v3.5.0)"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/bin/prometheus" "$RUNNER_TEMP/prometheus"
+          chmod +x "$RUNNER_TEMP/prometheus"
+          PROMETHEUS_BIN="$RUNNER_TEMP/prometheus" sh ops/prometheus/tests/isolated_snapshot_smoke.sh
