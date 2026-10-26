@@ -28,16 +28,24 @@ async def run_probe(repo, orchestrator):
                 break
         else:
             raise RuntimeError('timed out waiting for delivery')
+        expected_receipt = 'sandbox:receipt:' + task_id + ':' + prepared['action_fingerprint']
+        if task['state'] != 'DONE' or task['delivery_receipt'] != expected_receipt:
+            raise RuntimeError('fake provider receipt or DONE state mismatch')
+        # Repeating the exact enqueue must not create a second delivery.
+        await asyncio.to_thread(orchestrator.enqueue, task_id, 'sandbox:fake',
+                                'synthetic PR47 disposable test; no customer data', task_id)
+        await asyncio.sleep(2)
         with repo.connection() as conn:
-            receipt = conn.execute(
-                'SELECT count(*) AS n FROM jarvis_fake_receipts WHERE task_id=%s',
+            row = conn.execute(
+                'SELECT state,attempt_count,delivery_receipt FROM jarvis_return_actions WHERE task_id=%s',
+                (task_id,)).fetchone()
+            count = conn.execute(
+                'SELECT count(*) AS n FROM jarvis_return_actions WHERE task_id=%s',
                 (task_id,)).fetchone()['n']
-            attempts = conn.execute(
-                'SELECT attempt_count FROM jarvis_return_actions WHERE task_id=%s',
-                (task_id,)).fetchone()['attempt_count']
-        if task['state'] != 'DONE' or receipt != 1 or attempts != 1:
-            raise RuntimeError(f'invalid outcome state={task["state"]} receipts={receipt} attempts={attempts}')
-        log.warning('PR47_DISPOSABLE_E2E_PASS state=DONE fake_receipts=1 attempts=1')
+        if (row['state'] != 'DONE' or row['attempt_count'] != 1
+                or row['delivery_receipt'] != expected_receipt or count != 1):
+            raise RuntimeError('duplicate enqueue altered delivered task')
+        log.warning('PR47_DISPOSABLE_E2E_PASS state=DONE durable_receipt=1 attempts=1 tasks=1')
     except Exception:
         log.exception('PR47_DISPOSABLE_E2E_FAIL')
         raise
