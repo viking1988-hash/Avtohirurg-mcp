@@ -160,3 +160,25 @@ def test_orchestrator_checks_provider_status_only_for_unknown_operation(repo):
  assert provider.calls==[{"method":"POST","path":"/events","correlation_id":repo.get_webhook_operation(eid)["correlation_id"],
    "request_id":claim["request_id"],"idempotency_key":"jarvis-webhook:"+eid}]
  assert repo.get_webhook_operation(eid)["state"]=="RECONCILIATION_REQUIRED"
+
+
+def test_webhook_remaining_lease_budget_fenced_in_postgres(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-budget")
+ assert claim is not None and claim["event_id"]==eid
+ with repo.connection() as c:
+  c.execute("""UPDATE jarvis_webhook_operations
+    SET lease_until=clock_timestamp()+interval '10 seconds'
+    WHERE event_id=%s""",(eid,))
+ with pytest.raises(Conflict,match="insufficient Webhook lease remaining"):
+  repo.verify_webhook_dispatch_lease(eid,"worker-budget",
+    claim["attempt_count"],claim["version"],20)
+ assert repo.verify_webhook_dispatch_lease(eid,"worker-budget",
+    claim["attempt_count"],claim["version"],0)
+ with repo.connection() as c:
+  c.execute("""UPDATE jarvis_webhook_operations
+    SET lease_until=clock_timestamp()-interval '1 second'
+    WHERE event_id=%s""",(eid,))
+ with pytest.raises(Conflict,match="stale Webhook lease"):
+  repo.verify_webhook_dispatch_lease(eid,"worker-budget",
+    claim["attempt_count"],claim["version"],0)
