@@ -654,10 +654,16 @@ class QueueRepository:
             raise Conflict('stale Webhook lease or fencing token')
         return row
 
-    def verify_webhook_dispatch_lease(self,event_id,owner,attempt,version):
-        """Fail closed if an operation lost its lease before an HTTP attempt."""
+    def verify_webhook_dispatch_lease(self,event_id,owner,attempt,version,min_remaining_seconds=0):
+        """Require a live fenced claim with enough time for a bounded HTTP attempt."""
+        if not 0 <= min_remaining_seconds <= self.config.lease_seconds:
+            raise Conflict('invalid Webhook remaining lease budget')
         with self.connection() as c:
-            self._webhook_owned(c,event_id,owner,attempt,version)
+            row=self._webhook_owned(c,event_id,owner,attempt,version)
+            remaining=c.execute("""SELECT EXTRACT(EPOCH FROM (%s::timestamptz -
+                clock_timestamp())) AS seconds""",(row['lease_until'],)).fetchone()['seconds']
+            if remaining <= min_remaining_seconds:
+                raise Conflict('insufficient Webhook lease remaining for HTTP attempt')
         return True
 
     def finish_webhook_operation(self,event_id,owner,attempt,version,result):
