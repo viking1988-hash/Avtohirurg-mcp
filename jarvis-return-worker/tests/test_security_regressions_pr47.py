@@ -98,5 +98,30 @@ class WebhookReceiptConcurrencyTests(unittest.TestCase):
         self.assertIn("hashtextextended(%s, 0)", source)
 
 
+class WebhookLeaseBudgetTests(unittest.TestCase):
+    def test_short_lease_rejected_for_webhook_retry_budget(self):
+        from jarvis_return_worker.config import Config
+        from unittest.mock import patch
+        config = Config(database_url="postgresql://jarvis_sandbox:password@jarvis-sandbox-postgres.railway.internal/jarvis_return_queue_test",
+                        read_token="r"*40, approval_token="a"*40, operator_id="ci-human",
+                        worker_id="ci", lease_seconds=30, heartbeat_seconds=5)
+        with patch.dict("os.environ", {"JARVIS_WEBHOOK_BASE_URL":"https://example.test",
+                                        "JARVIS_WEBHOOK_TIMEOUT_SECONDS":"8",
+                                        "JARVIS_WEBHOOK_MAX_RETRIES":"2"}):
+            with self.assertRaisesRegex(ValueError, "Webhook delivery budget exceeds lease"):
+                config.validate()
+
+    def test_adequate_lease_accepted_for_webhook_retry_budget(self):
+        from jarvis_return_worker.config import Config
+        from unittest.mock import patch
+        config = Config(database_url="postgresql://jarvis_sandbox:password@jarvis-sandbox-postgres.railway.internal/jarvis_return_queue_test",
+                        read_token="r"*40, approval_token="a"*40, operator_id="ci-human",
+                        worker_id="ci", lease_seconds=90, heartbeat_seconds=5)
+        with patch.dict("os.environ", {"JARVIS_WEBHOOK_BASE_URL":"https://example.test",
+                                        "JARVIS_WEBHOOK_TIMEOUT_SECONDS":"8",
+                                        "JARVIS_WEBHOOK_MAX_RETRIES":"2"}):
+            config.validate()
+
+
 if __name__ == "__main__":
     unittest.main()
