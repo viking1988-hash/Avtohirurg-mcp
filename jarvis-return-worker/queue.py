@@ -668,6 +668,11 @@ class QueueRepository:
         with self.connection() as c:
             row=self._webhook_owned(c,event_id,owner,attempt,version)
             response_id=result.get('response_id')
+            if response_id:
+                # Serialize all completions for the same provider response ID.
+                # The transaction-scoped lock is held until receipt/state commit.
+                c.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                          ("jarvis-webhook-response:"+str(response_id),))
             duplicate=(c.execute("""SELECT event_id FROM jarvis_webhook_operations
                 WHERE response_id=%s AND event_id<>%s""",(response_id,event_id)).fetchone() if response_id else None)
             if duplicate:
