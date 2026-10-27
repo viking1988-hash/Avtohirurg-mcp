@@ -654,6 +654,12 @@ class QueueRepository:
             raise Conflict('stale Webhook lease or fencing token')
         return row
 
+    def verify_webhook_dispatch_lease(self,event_id,owner,attempt,version):
+        """Fail closed if an operation lost its lease before an HTTP attempt."""
+        with self.connection() as c:
+            self._webhook_owned(c,event_id,owner,attempt,version)
+        return True
+
     def finish_webhook_operation(self,event_id,owner,attempt,version,result):
         from psycopg.types.json import Jsonb
         request_id=result.get('request_id'); status=int(result.get('http_status') or 0)
