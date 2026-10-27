@@ -732,6 +732,9 @@ class QueueRepository:
             if row['version']!=expected_version: raise Conflict('stale Webhook operation version')
             state='DONE' if outcome=='delivered' else 'FAILED'
             receipt=evidence.get('receipt')
+            if outcome=='delivered' and receipt is None and evidence.get('response_id'):
+                # A provider response ID is durable delivery evidence, not an empty receipt.
+                receipt={'response_id': str(evidence['response_id'])}
             safe_evidence={key:evidence[key] for key in
                 ('response_id','provider_status','receipt','reason','source') if key in evidence}
             saved=c.execute("""UPDATE jarvis_webhook_operations SET state=%s,
