@@ -37,9 +37,25 @@ def _project_event(conn,event):
 def _create_dispatch_intent(conn,event):
     """Project an approved event into a durable, version-bound delivery intent."""
     payload=event["payload"]
-    if (event["event_type"]!="TaskApproved" or payload.get("new_state")!="APPROVED"
-        or not payload.get("approved_at") or not payload.get("approved_fingerprint")):
-        raise ValueError("approved event is missing its approval binding")
+    if event["event_type"]!="TaskApproved" or payload.get("new_state")!="APPROVED":
+        raise ValueError("invalid TaskApproved dispatch event")
+    if not payload.get("approved_at") or not payload.get("approved_fingerprint"):
+        # Historical approval is not authorization for a new dispatch.
+        from .audit import record
+        row=conn.execute("SELECT * FROM jarvis_return_actions WHERE task_id=%s FOR UPDATE",
+                         (event["aggregate_id"],)).fetchone()
+        if row and row["state"]=="APPROVED":
+            updated=conn.execute("""UPDATE jarvis_return_actions
+                SET state='READY',approved_by=NULL,approved_at=NULL,
+                    approval_expires_at=NULL,approved_fingerprint=NULL,
+                    lease_owner=NULL,lease_until=NULL,
+                    version=version+1,updated_at=clock_timestamp()
+                WHERE task_id=%s RETURNING *""",(event["aggregate_id"],)).fetchone()
+            record(conn,row,updated,"requeue_requires_fresh_approval",
+                   "jarvis.lifecycle-projector",
+                   metadata={"reason":"legacy_approval_event_missing_binding",
+                             "outbox_event_id":str(event["event_id"])})
+        return
     provider=payload.get("provider") or "fake"
     conn.execute("""INSERT INTO jarvis_provider_dispatch_intents
         (event_id,task_id,approved_at,approved_fingerprint,provider)
