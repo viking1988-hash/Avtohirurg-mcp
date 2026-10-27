@@ -694,7 +694,18 @@ class QueueRepository:
     def fail_webhook_operation(self,event_id,owner,attempt,version,classification,reason,retry_after=None,details=None):
         from .transport import Classification
         kind=Classification(classification); details=details or {}
-        delay=max(1,min(int(retry_after or 1),3600))
+        from datetime import datetime, timezone
+        from email.utils import parsedate_to_datetime
+        try:
+            delay=float(retry_after)
+        except (TypeError, ValueError):
+            try:
+                date=parsedate_to_datetime(retry_after)
+                if date.tzinfo is None: raise ValueError('timezone required')
+                delay=(date-datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError, IndexError):
+                delay=1
+        delay=max(1,min(int(delay),3600))
         state='PENDING' if kind==Classification.RETRYABLE else ('FAILED' if kind==Classification.PERMANENT else 'RECONCILIATION_REQUIRED')
         why=None if state!='RECONCILIATION_REQUIRED' else str(reason or 'webhook_outcome_unknown')[:200]
         with self.connection() as c:
