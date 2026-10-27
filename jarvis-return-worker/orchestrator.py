@@ -365,6 +365,8 @@ class Orchestrator:
                   operation['event_id'],owner,operation['attempt_count'],operation['version'],
                   Classification.UNKNOWN,decision.reason)
                 return
+            await asyncio.to_thread(self.repository.verify_webhook_dispatch_lease,
+                operation['event_id'],owner,operation['attempt_count'],operation['version'])
             provider=self.dispatcher.dispatch('webhook')
             transport_dispatch('webhook');provider_call('webhook','send')
             payload={'method':operation['method'],'path':operation['path'],
