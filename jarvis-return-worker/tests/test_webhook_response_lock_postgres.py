@@ -1,6 +1,6 @@
-"""PostgreSQL concurrency regression for duplicate webhook response IDs.
+"""PostgreSQL transaction-lock regression for webhook response-ID fencing.
 
-Requires the isolated CI PostgreSQL database; never connects to production.
+Uses only the isolated GitHub Actions PostgreSQL database.
 """
 import os
 import threading
@@ -11,7 +11,7 @@ from jarvis_return_worker.queue import QueueRepository
 
 
 class DuplicateResponseIdDatabaseTests(unittest.TestCase):
-    def test_two_transactions_serialize_duplicate_provider_response_id(self):
+    def test_second_connection_cannot_acquire_response_lock_before_commit(self):
         url = os.environ.get("JARVIS_WORKER_CI_DATABASE_URL")
         if not url:
             self.skipTest("isolated CI PostgreSQL URL not configured")
@@ -19,34 +19,42 @@ class DuplicateResponseIdDatabaseTests(unittest.TestCase):
                                                 lease_seconds=30, heartbeat_seconds=5,
                                                 max_attempts=3))
         repo.migrate()
-        response_id = "ci-concurrent-response-id"
-        barrier = threading.Barrier(2)
+        key = "jarvis-webhook-response:ci-concurrent-response-id"
+        first_acquired = threading.Event()
+        allow_commit = threading.Event()
         results = []
         errors = []
 
-        def competitor():
+        def first():
             try:
                 with repo.connection() as conn:
-                    barrier.wait(timeout=5)
-                    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                                 ("jarvis-webhook-response:" + response_id,))
-                    # Once the lock is held, the other transaction cannot enter
-                    # the duplicate check until this transaction commits.
-                    row = conn.execute("SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0)) AS acquired",
-                                       ("jarvis-webhook-response:" + response_id,)).fetchone()
-                    results.append(bool(row["acquired"]))
+                    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+                    first_acquired.set()
+                    if not allow_commit.wait(timeout=8):
+                        raise TimeoutError("second connection did not check lock")
             except Exception as exc:
                 errors.append(exc)
 
-        a = threading.Thread(target=competitor)
-        b = threading.Thread(target=competitor)
-        a.start()
-        b.start()
-        a.join(timeout=12)
-        b.join(timeout=12)
-        self.assertFalse(a.is_alive() or b.is_alive(), "concurrent lock attempt hung")
+        thread = threading.Thread(target=first)
+        thread.start()
+        try:
+            self.assertTrue(first_acquired.wait(timeout=5), "first lock not acquired")
+            with repo.connection() as conn:
+                blocked = conn.execute(
+                    "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0)) AS acquired",
+                    (key,)).fetchone()
+                results.append(bool(blocked["acquired"]))
+            self.assertEqual(results, [False], "duplicate response lock was not exclusive")
+        finally:
+            allow_commit.set()
+            thread.join(timeout=10)
+        self.assertFalse(thread.is_alive(), "first transaction did not finish")
         self.assertFalse(errors, errors)
-        self.assertEqual(results, [True, True])
+        with repo.connection() as conn:
+            acquired = conn.execute(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0)) AS acquired",
+                (key,)).fetchone()
+            self.assertTrue(acquired["acquired"], "lock was not released on commit")
 
 
 if __name__ == "__main__":
