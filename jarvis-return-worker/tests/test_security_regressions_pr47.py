@@ -85,5 +85,18 @@ class LegacyApprovalTests(unittest.TestCase):
         self.assertEqual(conn.execute.call_count, 1)
 
 
+class WebhookReceiptConcurrencyTests(unittest.TestCase):
+    def test_duplicate_response_id_uses_transaction_scoped_lock(self):
+        from jarvis_return_worker.queue import QueueRepository
+        import inspect
+        source = inspect.getsource(QueueRepository.finish_webhook_operation)
+        lock_pos = source.index("pg_advisory_xact_lock")
+        duplicate_pos = source.index("SELECT event_id FROM jarvis_webhook_operations")
+        done_pos = source.index("state='DONE'")
+        self.assertLess(lock_pos, duplicate_pos)
+        self.assertLess(duplicate_pos, done_pos)
+        self.assertIn("hashtextextended(%s, 0)", source)
+
+
 if __name__ == "__main__":
     unittest.main()
