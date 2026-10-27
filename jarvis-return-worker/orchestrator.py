@@ -365,8 +365,15 @@ class Orchestrator:
                   operation['event_id'],owner,operation['attempt_count'],operation['version'],
                   Classification.UNKNOWN,decision.reason)
                 return
+            # Reserve the complete HTTP retry/timeout budget before sending.
+            # A claim delayed in the worker queue must not send near lease expiry.
+            import os
+            timeout=float(os.environ.get('JARVIS_WEBHOOK_TIMEOUT_SECONDS','8'))
+            retries=int(os.environ.get('JARVIS_WEBHOOK_MAX_RETRIES','2'))
+            remaining_budget=(retries+1)*timeout+retries*10+5
             await asyncio.to_thread(self.repository.verify_webhook_dispatch_lease,
-                operation['event_id'],owner,operation['attempt_count'],operation['version'])
+                operation['event_id'],owner,operation['attempt_count'],operation['version'],
+                remaining_budget)
             provider=self.dispatcher.dispatch('webhook')
             transport_dispatch('webhook');provider_call('webhook','send')
             payload={'method':operation['method'],'path':operation['path'],
