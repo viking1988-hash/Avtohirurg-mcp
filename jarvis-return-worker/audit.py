@@ -45,7 +45,8 @@ def append_audit_outbox(conn, audit_event_id, before, after, action, provider=No
         "new_state": after.get("state"),
         "aggregate_version": after.get("version"),
         "provider": provider or after.get("provider") or (
-            "telegram" if str(after.get("destination_key", "")).startswith("sandbox:telegram:") else "fake"
+            "telegram" if str(after.get("destination_key", "")).startswith("sandbox:telegram:") else
+            "http" if str(after.get("destination_key", "")).startswith("sandbox:http:") else "fake"
         ),
         "reason": reason,
     }
