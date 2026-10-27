@@ -1,5 +1,7 @@
 """Bounded privacy-safe HTTP client."""
 import json,logging,random,time,uuid
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError,URLError
 from urllib.request import HTTPRedirectHandler,Request,build_opener
 from .transport import Classification,DeliveryError
@@ -17,6 +19,9 @@ class HTTPClient:
   if corr:h["X-Correlation-ID"]=corr
   if idempotency_key:h["Idempotency-Key"]=str(idempotency_key)
   if encoded is not None:h["Content-Type"]="application/json"
+  reserved={"x-request-id","x-correlation-id","idempotency-key","content-type","content-length","transfer-encoding","host","connection"}
+  if any(str(key).lower() in reserved for key in (headers or {})):
+   raise DeliveryError(Classification.PERMANENT,"webhook_reserved_header_override")
   h.update(headers or {})
   started=time.monotonic();retries=0;safe=method=="GET"
   while True:
@@ -25,11 +30,11 @@ class HTTPClient:
    req=Request(url,data=encoded,headers=h,method=method);status,rh,raw=None,{},b""
    try:
     response=self._opener(req,timeout=self.timeout_seconds)
-    try:status=int(response.status);rh=dict(response.headers.items()) if getattr(response,"headers",None) else {};raw=response.read(32768)
+    try:status=int(response.status);rh=response.headers if getattr(response,"headers",None) is not None else {};raw=response.read(32768)
     finally:
      close=getattr(response,"close",None)
      if close:close()
-   except HTTPError as exc:status=int(exc.code);rh=dict(exc.headers.items()) if exc.headers else {};raw=exc.read(32768)
+   except HTTPError as exc:status=int(exc.code);rh=exc.headers if exc.headers is not None else {};raw=exc.read(32768)
    except (TimeoutError,URLError,OSError):
     elapsed=time.monotonic()-started
     if safe and retries<self.max_retries:
@@ -52,8 +57,15 @@ class HTTPClient:
    self._observe(cls,elapsed);self._log(rid,corr,method,status,retries,elapsed,cls.value.lower())
    raise DeliveryError(cls,code,rh.get("Retry-After") if status==429 else None,details={"request_id":rid,"http_status":status,"retry_count":retries,"duration_ms":round(elapsed*1000,2)})
  def _delay(self,n,value):
-  try:d=float(value)
-  except (TypeError,ValueError):d=self.backoff_seconds*2**(n-1)*(.75+self._random()*.5)
+  try:
+   d=float(value)
+  except (TypeError,ValueError):
+   try:
+    date=parsedate_to_datetime(value)
+    if date.tzinfo is None:raise ValueError("timezone required")
+    d=(date-datetime.now(timezone.utc)).total_seconds()
+   except (TypeError,ValueError,OverflowError,IndexError):
+    d=self.backoff_seconds*2**(n-1)*(.75+self._random()*.5)
   return max(0,min(10,d))
  @staticmethod
  def _receipt(raw):
