@@ -123,5 +123,30 @@ class WebhookLeaseBudgetTests(unittest.TestCase):
             config.validate()
 
 
+class WebhookRemainingLeaseTests(unittest.TestCase):
+    def test_rejects_claim_with_insufficient_remaining_budget(self):
+        from jarvis_return_worker.queue import QueueRepository, Conflict
+        from datetime import datetime, timedelta, timezone
+        from contextlib import contextmanager
+        repo = QueueRepository(Mock(lease_seconds=90))
+        conn = Mock()
+        row = {"lease_until":datetime.now(timezone.utc)+timedelta(seconds=2)}
+        conn.execute.return_value.fetchone.return_value = {"seconds":2}
+        @contextmanager
+        def fake_connection():
+            yield conn
+        repo.connection = fake_connection
+        repo._webhook_owned = Mock(return_value=row)
+        with self.assertRaisesRegex(Conflict,"insufficient Webhook lease remaining"):
+            repo.verify_webhook_dispatch_lease("event","owner",1,1,49)
+        repo._webhook_owned.assert_called_once()
+
+    def test_rejects_budget_larger_than_configured_lease(self):
+        from jarvis_return_worker.queue import QueueRepository, Conflict
+        repo = QueueRepository(Mock(lease_seconds=30))
+        with self.assertRaisesRegex(Conflict,"invalid Webhook remaining lease budget"):
+            repo.verify_webhook_dispatch_lease("event","owner",1,1,50)
+
+
 if __name__ == "__main__":
     unittest.main()
