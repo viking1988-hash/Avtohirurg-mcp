@@ -54,5 +54,36 @@ class DispatchFenceTests(unittest.IsolatedAsyncioTestCase):
         repo.verify_webhook_dispatch_lease.assert_called_once()
 
 
+class LegacyApprovalTests(unittest.TestCase):
+    def test_legacy_event_requires_fresh_human_approval(self):
+        from jarvis_return_worker.app import _create_dispatch_intent
+        conn = Mock()
+        old = {"task_id": "legacy-task", "state": "APPROVED",
+               "correlation_id": "legacy-corr"}
+        new = {**old, "state": "READY", "version": 2}
+        conn.execute.return_value.fetchone.side_effect = [old, new]
+        event = {"event_id": "legacy-event", "aggregate_id": "legacy-task",
+                 "event_type": "TaskApproved",
+                 "payload": {"new_state": "APPROVED"}}
+        with patch("jarvis_return_worker.audit.record") as audit:
+            _create_dispatch_intent(conn, event)
+        sql = [call.args[0] for call in conn.execute.call_args_list]
+        self.assertTrue(any("approved_fingerprint=NULL" in statement for statement in sql))
+        self.assertFalse(any("INSERT INTO jarvis_provider_dispatch_intents" in statement
+                             for statement in sql))
+        audit.assert_called_once()
+        self.assertEqual(audit.call_args.args[3], "requeue_requires_fresh_approval")
+
+    def test_legacy_event_does_not_change_nonapproved_task(self):
+        from jarvis_return_worker.app import _create_dispatch_intent
+        conn = Mock()
+        conn.execute.return_value.fetchone.return_value = {"state": "DONE"}
+        event = {"event_id": "old", "aggregate_id": "done-task",
+                 "event_type": "TaskApproved",
+                 "payload": {"new_state": "APPROVED"}}
+        _create_dispatch_intent(conn, event)
+        self.assertEqual(conn.execute.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
