@@ -151,6 +151,28 @@ class DispatchFenceTests(unittest.IsolatedAsyncioTestCase):
 
 
 
+    async def test_webhook_provider_lookup_failure_never_marks_success(self):
+        from jarvis_return_worker.orchestrator import Orchestrator
+        repo = Mock()
+        dispatcher = Mock()
+        dispatcher.dispatch.side_effect = RuntimeError("provider unavailable")
+        orchestrator = object.__new__(Orchestrator)
+        orchestrator.repository = repo
+        orchestrator.dispatcher = dispatcher
+        orchestrator.policy = Mock()
+        orchestrator.policy.webhook_operation.return_value.action = "dispatch"
+        operation = {"event_id":"lookup-error", "attempt_count":1, "version":2,
+                     "method":"POST", "path":"/test", "idempotency_key":"key"}
+        with patch.dict("os.environ", {"JARVIS_WEBHOOK_BASE_URL":""}):
+            await orchestrator.process_webhook_operation(operation,"worker")
+        repo.verify_webhook_dispatch_lease.assert_called_once()
+        repo.finish_webhook_operation.assert_not_called()
+        repo.fail_webhook_operation.assert_called_once()
+        self.assertEqual(repo.fail_webhook_operation.call_args.args[5],
+                         "webhook_outcome_unknown")
+
+
+
 class LegacyApprovalTests(unittest.TestCase):
     def test_legacy_event_requires_fresh_human_approval(self):
         from jarvis_return_worker.app import _create_dispatch_intent
