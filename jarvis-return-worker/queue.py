@@ -748,10 +748,11 @@ class QueueRepository:
             return c.execute("SELECT * FROM jarvis_webhook_operations WHERE event_id=%s",(event_id,)).fetchone()
 
     def resolve_webhook_reconciliation(self,event_id,actor,expected_version,outcome,evidence):
-        if not actor or outcome not in ('delivered','not_delivered'):
+        if not isinstance(actor,str) or not actor.strip() or outcome not in ('delivered','not_delivered'):
             raise Conflict('authenticated operator and valid outcome required')
-        evidence=evidence or {}
-        if outcome=='delivered' and not (evidence.get('receipt') or evidence.get('response_id')):
+        if evidence is None: evidence={}
+        if not isinstance(evidence,dict): raise Conflict('invalid Webhook reconciliation evidence')
+        if outcome=='delivered' and not (evidence.get('receipt') or (isinstance(evidence.get('response_id'),str) and evidence['response_id'].strip())):
             raise Conflict('delivery evidence required')
         from psycopg.types.json import Jsonb
         with self.connection() as c:
