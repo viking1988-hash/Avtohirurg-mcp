@@ -9,6 +9,14 @@ import os
 import urllib.parse
 import urllib.error
 import urllib.request
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_LOOPBACK_OPENER = urllib.request.build_opener(_NoRedirect())
 import unittest
 import uuid
 
@@ -36,7 +44,7 @@ class DisposableReceiverContract(unittest.TestCase):
         data = None if body is None else json.dumps(body).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=3) as response:
+            with _LOOPBACK_OPENER.open(req, timeout=3) as response:
                 return response.status, json.load(response)
         except urllib.error.HTTPError as exc:
             return exc.code, json.load(exc)
