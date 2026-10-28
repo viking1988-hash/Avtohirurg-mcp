@@ -182,3 +182,18 @@ def test_webhook_remaining_lease_budget_fenced_in_postgres(repo):
  with pytest.raises(Conflict,match="stale Webhook lease"):
   repo.verify_webhook_dispatch_lease(eid,"worker-budget",
     claim["attempt_count"],claim["version"],0)
+
+
+def test_webhook_lease_fencing_rejects_stale_version_and_owner(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-original")
+ assert claim is not None and claim["event_id"]==eid
+ for owner,attempt,version in (
+     ("worker-other",claim["attempt_count"],claim["version"]),
+     ("worker-original",claim["attempt_count"]+1,claim["version"]),
+     ("worker-original",claim["attempt_count"],claim["version"]+1),
+ ):
+  with pytest.raises(Conflict,match="stale Webhook lease"):
+   repo.verify_webhook_dispatch_lease(eid,owner,attempt,version,0)
+ assert repo.verify_webhook_dispatch_lease(
+  eid,"worker-original",claim["attempt_count"],claim["version"],0)
