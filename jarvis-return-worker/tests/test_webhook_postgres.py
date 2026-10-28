@@ -392,3 +392,20 @@ def test_webhook_reconciliation_rejects_delivery_without_receipt_or_response_id(
  unchanged=repo.get_webhook_operation(eid)
  assert unchanged["state"]=="RECONCILIATION_REQUIRED"
  assert unchanged["version"]==saved["version"]
+
+
+def test_webhook_unknown_outcome_cannot_be_completed_by_stale_worker(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-unknown-late")
+ assert claim is not None
+ repo.fail_webhook_operation(
+  eid,"worker-unknown-late",claim["attempt_count"],claim["version"],
+  Classification.UNKNOWN,"network_outcome_unknown")
+ saved=repo.get_webhook_operation(eid)
+ assert saved["state"]=="RECONCILIATION_REQUIRED"
+ with pytest.raises(Conflict,match="stale Webhook lease"):
+  repo.finish_webhook_operation(
+    eid,"worker-unknown-late",claim["attempt_count"],claim["version"],receipt(eid))
+ unchanged=repo.get_webhook_operation(eid)
+ assert unchanged["state"]=="RECONCILIATION_REQUIRED"
+ assert unchanged["response_id"] is None
