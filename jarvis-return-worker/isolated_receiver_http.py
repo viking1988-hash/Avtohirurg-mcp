@@ -5,10 +5,16 @@ from tests/test_receiver_idempotency_reference.py and a local HTTP server.
 The HTTP auth token is provided explicitly; never bind to a public interface.
 """
 import hmac
+import importlib.util
+import pathlib
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from tests.test_receiver_idempotency_reference import ReceiverInbox
+_reference_path = pathlib.Path(__file__).resolve().parent / 'tests' / 'test_receiver_idempotency_reference.py'
+_spec = importlib.util.spec_from_file_location('isolated_receiver_reference', _reference_path)
+_reference = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_reference)
+ReceiverInbox = _reference.ReceiverInbox
 
 
 def make_handler(database_path, token):
