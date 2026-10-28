@@ -449,3 +449,20 @@ def test_webhook_reconciliation_with_response_id_persists_durable_receipt(repo):
  assert saved["receipt"]["response_id"]=="synthetic-provider-response"
  assert saved["version"]==pending["version"]+1
  assert repo.claim_webhook_operation("worker-retry") is None
+
+
+def test_webhook_reconciliation_not_delivered_closes_without_retry(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-not-delivered")
+ assert claim is not None
+ repo.fail_webhook_operation(
+  eid,"worker-not-delivered",claim["attempt_count"],claim["version"],
+  Classification.UNKNOWN,"network_outcome_unknown")
+ pending=repo.get_webhook_operation(eid)
+ assert pending["state"]=="RECONCILIATION_REQUIRED"
+ saved=repo.resolve_webhook_reconciliation(
+  eid,"operator",pending["version"],"not_delivered",
+  {"reason":"verified-not-delivered","source":"isolated-ci"})
+ assert saved["state"]=="FAILED"
+ assert saved["version"]==pending["version"]+1
+ assert repo.claim_webhook_operation("worker-retry") is None
