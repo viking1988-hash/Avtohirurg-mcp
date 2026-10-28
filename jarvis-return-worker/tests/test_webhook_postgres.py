@@ -305,3 +305,19 @@ def test_webhook_reconciliation_blocks_stale_success_receipt(repo):
  assert saved["state"]=="RECONCILIATION_REQUIRED"
  assert saved["response_id"] is None
  assert repo.claim_webhook_operation("worker-another") is None
+
+
+def test_webhook_reconciliation_rejects_unverified_delivery(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-unknown")
+ assert claim is not None
+ repo.fail_webhook_operation(
+  eid,"worker-unknown",claim["attempt_count"],claim["version"],
+  Classification.UNKNOWN,"network_outcome_unknown")
+ saved=repo.get_webhook_operation(eid)
+ assert saved["state"]=="RECONCILIATION_REQUIRED"
+ with pytest.raises(Conflict,match="delivery evidence required"):
+  repo.resolve_webhook_reconciliation(
+    eid,"operator",saved["version"],"delivered",{})
+ assert repo.get_webhook_operation(eid)["state"]=="RECONCILIATION_REQUIRED"
+ assert repo.claim_webhook_operation("worker-retry") is None
