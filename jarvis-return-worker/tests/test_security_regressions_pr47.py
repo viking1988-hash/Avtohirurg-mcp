@@ -102,6 +102,29 @@ class DispatchFenceTests(unittest.IsolatedAsyncioTestCase):
 
 
 
+    async def test_fenced_send_verifies_before_provider_lookup(self):
+        from jarvis_return_worker.orchestrator import Orchestrator
+        calls = []
+        repo = Mock()
+        repo.verify_webhook_dispatch_lease.side_effect = lambda *args: calls.append("verify")
+        provider = Mock()
+        provider.send.side_effect = lambda *args: (calls.append("send") or {"response_id":"test-id"})
+        dispatcher = Mock()
+        dispatcher.dispatch.side_effect = lambda name: (calls.append("lookup") or provider)
+        orchestrator = object.__new__(Orchestrator)
+        orchestrator.repository = repo
+        orchestrator.dispatcher = dispatcher
+        orchestrator.policy = Mock()
+        orchestrator.policy.webhook_operation.return_value.action = "dispatch"
+        operation = {"event_id":"ordered", "attempt_count":1, "version":2,
+                     "method":"POST", "path":"/test", "idempotency_key":"key"}
+        with patch.dict("os.environ", {"JARVIS_WEBHOOK_BASE_URL":""}):
+            await orchestrator.process_webhook_operation(operation,"worker")
+        self.assertEqual(calls,["verify","lookup","send"])
+        repo.finish_webhook_operation.assert_called_once()
+
+
+
 class LegacyApprovalTests(unittest.TestCase):
     def test_legacy_event_requires_fresh_human_approval(self):
         from jarvis_return_worker.app import _create_dispatch_intent
