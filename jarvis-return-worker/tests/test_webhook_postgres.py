@@ -197,3 +197,19 @@ def test_webhook_lease_fencing_rejects_stale_version_and_owner(repo):
    repo.verify_webhook_dispatch_lease(eid,owner,attempt,version,0)
  assert repo.verify_webhook_dispatch_lease(
   eid,"worker-original",claim["attempt_count"],claim["version"],0)
+
+
+def test_webhook_reconciled_operation_cannot_dispatch_with_old_claim(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-paused")
+ assert claim is not None
+ with repo.connection() as c:
+  c.execute("""UPDATE jarvis_webhook_operations
+    SET lease_until=clock_timestamp()-interval '1 second'
+    WHERE event_id=%s""",(eid,))
+ assert repo.claim_webhook_operation("worker-recovery") is None
+ saved=repo.get_webhook_operation(eid)
+ assert saved["state"]=="RECONCILIATION_REQUIRED"
+ with pytest.raises(Conflict,match="stale Webhook lease"):
+  repo.verify_webhook_dispatch_lease(
+    eid,"worker-paused",claim["attempt_count"],claim["version"],0)
