@@ -286,3 +286,22 @@ def test_webhook_reconciliation_blocks_reclaim_after_stale_failure(repo):
     Classification.RETRYABLE,"retry_requested")
  assert repo.get_webhook_operation(eid)["state"]=="RECONCILIATION_REQUIRED"
  assert repo.claim_webhook_operation("worker-retry") is None
+
+
+def test_webhook_reconciliation_blocks_stale_success_receipt(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-delayed-success")
+ assert claim is not None
+ with repo.connection() as c:
+  c.execute("""UPDATE jarvis_webhook_operations
+    SET lease_until=clock_timestamp()-interval '1 second'
+    WHERE event_id=%s""",(eid,))
+ assert repo.claim_webhook_operation("worker-recovery") is None
+ assert repo.get_webhook_operation(eid)["state"]=="RECONCILIATION_REQUIRED"
+ with pytest.raises(Conflict,match="stale Webhook lease"):
+  repo.finish_webhook_operation(
+    eid,"worker-delayed-success",claim["attempt_count"],claim["version"],receipt(eid))
+ saved=repo.get_webhook_operation(eid)
+ assert saved["state"]=="RECONCILIATION_REQUIRED"
+ assert saved["response_id"] is None
+ assert repo.claim_webhook_operation("worker-another") is None
