@@ -357,3 +357,21 @@ def test_webhook_reconciliation_rejects_unauthenticated_operator(repo):
  unchanged=repo.get_webhook_operation(eid)
  assert unchanged["state"]=="RECONCILIATION_REQUIRED"
  assert unchanged["version"]==saved["version"]
+
+
+def test_webhook_reconciliation_rejects_invalid_outcome(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-invalid-outcome")
+ assert claim is not None
+ repo.fail_webhook_operation(
+  eid,"worker-invalid-outcome",claim["attempt_count"],claim["version"],
+  Classification.UNKNOWN,"network_outcome_unknown")
+ saved=repo.get_webhook_operation(eid)
+ assert saved["state"]=="RECONCILIATION_REQUIRED"
+ with pytest.raises(Conflict,match="valid outcome required"):
+  repo.resolve_webhook_reconciliation(
+    eid,"operator",saved["version"],"retry",{"response_id":"synthetic-response"})
+ unchanged=repo.get_webhook_operation(eid)
+ assert unchanged["state"]=="RECONCILIATION_REQUIRED"
+ assert unchanged["version"]==saved["version"]
+ assert repo.claim_webhook_operation("worker-retry") is None
