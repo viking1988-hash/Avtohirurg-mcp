@@ -250,3 +250,22 @@ def test_webhook_expired_claim_cannot_record_success(repo):
  assert saved["response_id"] is None
  assert repo.claim_webhook_operation("worker-recovery") is None
  assert repo.get_webhook_operation(eid)["state"]=="RECONCILIATION_REQUIRED"
+
+
+def test_webhook_expired_claim_cannot_schedule_retry(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-expired-failure")
+ assert claim is not None
+ with repo.connection() as c:
+  c.execute("""UPDATE jarvis_webhook_operations
+    SET lease_until=clock_timestamp()-interval '1 second'
+    WHERE event_id=%s""",(eid,))
+ with pytest.raises(Conflict,match="stale Webhook lease"):
+  repo.fail_webhook_operation(
+    eid,"worker-expired-failure",claim["attempt_count"],claim["version"],
+    Classification.RETRYABLE,"timeout")
+ saved=repo.get_webhook_operation(eid)
+ assert saved["state"]=="PROCESSING"
+ assert saved["attempt_count"]==claim["attempt_count"]
+ assert repo.claim_webhook_operation("worker-recovery") is None
+ assert repo.get_webhook_operation(eid)["state"]=="RECONCILIATION_REQUIRED"
