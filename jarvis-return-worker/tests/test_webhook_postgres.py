@@ -409,3 +409,24 @@ def test_webhook_unknown_outcome_cannot_be_completed_by_stale_worker(repo):
  unchanged=repo.get_webhook_operation(eid)
  assert unchanged["state"]=="RECONCILIATION_REQUIRED"
  assert unchanged["response_id"] is None
+
+
+def test_webhook_reconciliation_rejects_whitespace_and_malformed_evidence(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-invalid-evidence")
+ assert claim is not None
+ repo.fail_webhook_operation(
+  eid,"worker-invalid-evidence",claim["attempt_count"],claim["version"],
+  Classification.UNKNOWN,"network_outcome_unknown")
+ saved=repo.get_webhook_operation(eid)
+ for actor,evidence in (
+     ("   ",{"response_id":"provider-id"}),
+     ("operator",{"response_id":"   "}),
+     ("operator",["not-a-mapping"]),
+ ):
+  with pytest.raises(Conflict):
+   repo.resolve_webhook_reconciliation(
+    eid,actor,saved["version"],"delivered",evidence)
+ unchanged=repo.get_webhook_operation(eid)
+ assert unchanged["state"]=="RECONCILIATION_REQUIRED"
+ assert unchanged["version"]==saved["version"]
