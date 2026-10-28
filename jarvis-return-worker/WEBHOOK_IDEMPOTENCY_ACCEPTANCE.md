@@ -33,3 +33,12 @@
 Record receiver implementation location and version, endpoint identity, test harness and logs, actual request/receipt correlation, deduplication retention policy, and independent human security approval in issue #68. CI on this sender repository alone is insufficient.
 
 **Operational guardrail:** until the receiver contract is proven, use fake-only isolated E2E. Do not enable real Webhook sends, merge PR #47, or deploy to the original Jarvis Sandbox or Production.
+
+
+## Receiver discovery and decision gate (2026-10-28)
+
+GitHub code search for `Idempotency-Key`, `webhook/status`, and `jarvis-webhook` returned no matches in the available indexed scope; this is **not evidence of absence** because feature branches and unindexed/private code may be omitted. The linked account exposes `Avtohirurg-mcp` and `Avtohirurg-CRM`, but neither is established as the actual receiving endpoint.
+
+Before enabling any real HTTP transport, the operator must identify the configured `JARVIS_WEBHOOK_BASE_URL` **without disclosing credentials**, map its service to the authoritative source repository/deployment, and provide an isolated receiver test endpoint. Do not guess the receiver from repository names, change live configuration, or send a probing mutating request.
+
+**Fail-closed decision:** if receiver identity or deduplication semantics cannot be established, retain fake-only delivery and manual reconciliation for uncertain outcomes. An unverified receiver must not be treated as idempotent merely because the sender supplies an `Idempotency-Key` header.
