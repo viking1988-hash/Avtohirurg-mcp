@@ -7,6 +7,7 @@ cannot be contacted by this harness.
 import json
 import os
 import urllib.parse
+import urllib.error
 import urllib.request
 import unittest
 import uuid
