@@ -199,6 +199,32 @@ class DispatchFenceTests(unittest.IsolatedAsyncioTestCase):
 
 
 
+    async def test_webhook_send_failure_with_lost_lease_does_not_overwrite_state(self):
+        from jarvis_return_worker.orchestrator import Orchestrator
+        from jarvis_return_worker.queue import Conflict
+        from jarvis_return_worker.transport import Classification, DeliveryError
+        repo = Mock()
+        repo.fail_webhook_operation.side_effect = Conflict("stale Webhook lease")
+        provider = Mock()
+        provider.send.side_effect = DeliveryError(Classification.UNKNOWN,"webhook_network_outcome_unknown")
+        dispatcher = Mock()
+        dispatcher.dispatch.return_value = provider
+        orchestrator = object.__new__(Orchestrator)
+        orchestrator.repository = repo
+        orchestrator.dispatcher = dispatcher
+        orchestrator.policy = Mock()
+        orchestrator.policy.webhook_operation.return_value.action = "dispatch"
+        operation = {"event_id":"lost-during-send", "attempt_count":1, "version":2,
+                     "method":"POST", "path":"/test", "idempotency_key":"key"}
+        with patch.dict("os.environ", {"JARVIS_WEBHOOK_BASE_URL":""}):
+            await orchestrator.process_webhook_operation(operation,"worker")
+        repo.verify_webhook_dispatch_lease.assert_called_once()
+        provider.send.assert_called_once()
+        repo.finish_webhook_operation.assert_not_called()
+        repo.fail_webhook_operation.assert_called_once()
+
+
+
 class LegacyApprovalTests(unittest.TestCase):
     def test_legacy_event_requires_fresh_human_approval(self):
         from jarvis_return_worker.app import _create_dispatch_intent
