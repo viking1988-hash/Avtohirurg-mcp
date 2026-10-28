@@ -125,6 +125,32 @@ class DispatchFenceTests(unittest.IsolatedAsyncioTestCase):
 
 
 
+    async def test_fenced_send_never_looks_up_provider_after_lease_conflict(self):
+        from jarvis_return_worker.orchestrator import Orchestrator
+        from jarvis_return_worker.queue import Conflict
+        calls = []
+        repo = Mock()
+        def reject(*args):
+            calls.append("verify")
+            raise Conflict("stale Webhook lease")
+        repo.verify_webhook_dispatch_lease.side_effect = reject
+        repo.fail_webhook_operation.side_effect = Conflict("stale Webhook lease")
+        dispatcher = Mock()
+        orchestrator = object.__new__(Orchestrator)
+        orchestrator.repository = repo
+        orchestrator.dispatcher = dispatcher
+        orchestrator.policy = Mock()
+        orchestrator.policy.webhook_operation.return_value.action = "dispatch"
+        operation = {"event_id":"fenced", "attempt_count":1, "version":2,
+                     "method":"POST", "path":"/test", "idempotency_key":"key"}
+        with patch.dict("os.environ", {"JARVIS_WEBHOOK_BASE_URL":""}):
+            await orchestrator.process_webhook_operation(operation,"worker")
+        self.assertEqual(calls,["verify"])
+        dispatcher.dispatch.assert_not_called()
+        repo.finish_webhook_operation.assert_not_called()
+
+
+
 class LegacyApprovalTests(unittest.TestCase):
     def test_legacy_event_requires_fresh_human_approval(self):
         from jarvis_return_worker.app import _create_dispatch_intent
