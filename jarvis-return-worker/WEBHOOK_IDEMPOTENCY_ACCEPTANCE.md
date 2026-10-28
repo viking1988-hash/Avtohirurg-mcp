@@ -42,3 +42,16 @@ GitHub code search for `Idempotency-Key`, `webhook/status`, and `jarvis-webhook`
 Before enabling any real HTTP transport, the operator must identify the configured `JARVIS_WEBHOOK_BASE_URL` **without disclosing credentials**, map its service to the authoritative source repository/deployment, and provide an isolated receiver test endpoint. Do not guess the receiver from repository names, change live configuration, or send a probing mutating request.
 
 **Fail-closed decision:** if receiver identity or deduplication semantics cannot be established, retain fake-only delivery and manual reconciliation for uncertain outcomes. An unverified receiver must not be treated as idempotent merely because the sender supplies an `Idempotency-Key` header.
+
+
+## Railway HTTP Sandbox sink — source-level finding (2026-10-28)
+
+Read-only inspection of the deployed `jarvis-http-sandbox-sink` service's Railway `deploy.startCommand` (Bun function, `ghcr.io/railwayapp/function-bun:1.4.4`) in `Avtohirurg-Jarvis-Sandbox / staging` found:
+
+- `messages` and `byKey` are process-local `Map` objects. Neither idempotency state nor receipts survive process restart; no shared transactional storage is present.
+- `POST /messages` checks the key before parsing the request body and replays the previous response for a duplicate key **without comparing the new body**. Same-key/different-payload conflict detection is absent.
+- `PATCH /messages/:id` requires an idempotency header but does not deduplicate by it; `POST /messages/:id/cancel` does not require the header.
+- `GET /messages/:id` looks up a provider message ID, not a stable sender operation identity. No authenticated receipt lookup by `Idempotency-Key` is implemented.
+- Single-process JavaScript request scheduling does not prove cross-replica, crash-recovery, or durable exactly-once business effects.
+
+**Disposition: FAIL for P1 receiver acceptance.** This sink is an isolated HTTP test double, not a production-safe idempotent receiver. Do not point real Webhook delivery at it as evidence of exactly-once effects. No HTTP requests or Railway configuration changes were made during inspection. Independent review and a durable receiver implementation remain necessary.
