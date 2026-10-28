@@ -107,6 +107,47 @@ class ReceiverInboxTests(unittest.TestCase):
         self.assertEqual(self.send(principal="sender-2")[0], 201)
         self.assertEqual(self.inbox.effect_count(), 2)
 
+    def test_two_workers_with_overlapping_leases_commit_once(self):
+        # Both workers may reach the receiver; only the receiver's transaction fences effects.
+        gate = threading.Barrier(2)
+        def worker(_):
+            gate.wait(timeout=10)
+            return ReceiverInbox(self.path).submit(
+                "sender-1", "POST", "/messages", "same-operation", {"value": 1}
+            )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(worker, range(2)))
+        self.assertEqual(sorted(code for code, _ in results), [200, 201])
+        self.assertEqual(self.inbox.effect_count(), 1)
+
+    def test_failed_transaction_rolls_back_key_and_effect(self):
+        with sqlite3.connect(self.path) as db:
+            db.execute("""
+                CREATE TRIGGER reject_receipt BEFORE INSERT ON inbox
+                BEGIN SELECT RAISE(ABORT, 'synthetic receipt write failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.send()
+        self.assertEqual(self.inbox.effect_count(), 0)
+        self.assertIsNone(self.inbox.receipt("sender-1", "event-1"))
+        with sqlite3.connect(self.path) as db:
+            db.execute("DROP TRIGGER reject_receipt")
+        self.assertEqual(self.send()[0], 201)
+        self.assertEqual(self.inbox.effect_count(), 1)
+
+    def test_concurrent_conflicting_payload_never_overwrites_first(self):
+        gate = threading.Barrier(2)
+        def worker(value):
+            gate.wait(timeout=10)
+            return ReceiverInbox(self.path).submit(
+                "sender-1", "POST", "/messages", "conflict-key", {"value": value}
+            )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(worker, (1, 2)))
+        self.assertEqual(sorted(code for code, _ in results), [201, 409])
+        self.assertEqual(self.inbox.effect_count(), 1)
+        self.assertIsNotNone(self.inbox.receipt("sender-1", "conflict-key"))
+
     def test_missing_identity_or_key_rejected(self):
         for principal, key in (("", "event-1"), ("sender-1", "")):
             with self.assertRaises(ValueError):
