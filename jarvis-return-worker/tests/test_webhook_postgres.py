@@ -466,3 +466,25 @@ def test_webhook_reconciliation_not_delivered_closes_without_retry(repo):
  assert saved["state"]=="FAILED"
  assert saved["version"]==pending["version"]+1
  assert repo.claim_webhook_operation("worker-retry") is None
+
+
+def test_webhook_reconciliation_cannot_be_applied_twice(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-double-reconcile")
+ assert claim is not None
+ repo.fail_webhook_operation(
+  eid,"worker-double-reconcile",claim["attempt_count"],claim["version"],
+  Classification.UNKNOWN,"network_outcome_unknown")
+ pending=repo.get_webhook_operation(eid)
+ first=repo.resolve_webhook_reconciliation(
+  eid,"operator",pending["version"],"delivered",
+  {"response_id":"synthetic-provider-response"})
+ assert first["state"]=="DONE"
+ with pytest.raises(Conflict,match="not awaiting reconciliation"):
+  repo.resolve_webhook_reconciliation(
+   eid,"operator",pending["version"],"not_delivered",
+   {"reason":"conflicting-decision"})
+ unchanged=repo.get_webhook_operation(eid)
+ assert unchanged["state"]=="DONE"
+ assert unchanged["version"]==first["version"]
+ assert unchanged["response_id"]=="synthetic-provider-response"
