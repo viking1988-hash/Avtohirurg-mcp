@@ -49,6 +49,34 @@ class DisposableReceiverContract(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             return exc.code, json.load(exc)
 
+    def test_loopback_contract_rejects_external_redirect(self):
+        # A malicious/misconfigured local receiver must not redirect the harness
+        # to a real webhook endpoint. The custom opener must not follow 30x.
+        import http.server
+        import threading
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", "https://example.invalid/never-contact")
+                self.end_headers()
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            request = urllib.request.Request(
+                "http://127.0.0.1:%d/" % server.server_port,
+                headers={"Authorization": "Bearer disposable-test-only"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                _LOOPBACK_OPENER.open(request, timeout=3)
+            self.assertEqual(caught.exception.code, 302)
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
     def test_durable_replay_and_conflict(self):
         key = "disposable-" + uuid.uuid4().hex
         first = self.request("POST", "/messages", {"synthetic": True}, key)
