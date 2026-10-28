@@ -213,3 +213,22 @@ def test_webhook_reconciled_operation_cannot_dispatch_with_old_claim(repo):
  with pytest.raises(Conflict,match="stale Webhook lease"):
   repo.verify_webhook_dispatch_lease(
     eid,"worker-paused",claim["attempt_count"],claim["version"],0)
+
+
+def test_webhook_budget_validation_does_not_mutate_claim(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-readonly")
+ assert claim is not None
+ before=repo.get_webhook_operation(eid)
+ with pytest.raises(Conflict,match="invalid Webhook remaining lease budget"):
+  repo.verify_webhook_dispatch_lease(
+    eid,"worker-readonly",claim["attempt_count"],claim["version"],-1)
+ with pytest.raises(Conflict,match="invalid Webhook remaining lease budget"):
+  repo.verify_webhook_dispatch_lease(
+    eid,"worker-readonly",claim["attempt_count"],claim["version"],
+    repo.config.lease_seconds+1)
+ after=repo.get_webhook_operation(eid)
+ assert after["state"]==before["state"]=="PROCESSING"
+ assert after["version"]==before["version"]
+ assert after["attempt_count"]==before["attempt_count"]
+ assert after["lease_owner"]==before["lease_owner"]
