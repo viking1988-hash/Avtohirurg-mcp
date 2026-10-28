@@ -232,3 +232,21 @@ def test_webhook_budget_validation_does_not_mutate_claim(repo):
  assert after["version"]==before["version"]
  assert after["attempt_count"]==before["attempt_count"]
  assert after["lease_owner"]==before["lease_owner"]
+
+
+def test_webhook_expired_claim_cannot_record_success(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation("worker-expired")
+ assert claim is not None
+ with repo.connection() as c:
+  c.execute("""UPDATE jarvis_webhook_operations
+    SET lease_until=clock_timestamp()-interval '1 second'
+    WHERE event_id=%s""",(eid,))
+ with pytest.raises(Conflict,match="stale Webhook lease"):
+  repo.finish_webhook_operation(
+    eid,"worker-expired",claim["attempt_count"],claim["version"],receipt(eid))
+ saved=repo.get_webhook_operation(eid)
+ assert saved["state"]=="PROCESSING"
+ assert saved["response_id"] is None
+ assert repo.claim_webhook_operation("worker-recovery") is None
+ assert repo.get_webhook_operation(eid)["state"]=="RECONCILIATION_REQUIRED"
