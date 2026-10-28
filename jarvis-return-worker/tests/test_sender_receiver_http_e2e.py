@@ -39,7 +39,6 @@ class SenderToReceiverE2ETests(unittest.TestCase):
     def test_real_sender_client_header_and_receipt_replay(self):
         # Exercise the actual sender HTTPClient, not a hand-built idempotency header.
         from jarvis_return_worker.http_client import HTTPClient
-        from jarvis_return_worker.http_provider import HTTPProvider
         # HTTPClient uses urllib; this receiver is bound to loopback only.
         client = HTTPClient(timeout_seconds=3, max_retries=0)
         url = "http://127.0.0.1:%d/messages" % self.server.server_port
