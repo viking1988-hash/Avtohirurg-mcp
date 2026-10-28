@@ -36,6 +36,32 @@ class SenderToReceiverE2ETests(unittest.TestCase):
         self.addCleanup(self.server.shutdown)
         self.addCleanup(self.thread.join, 5)
 
+    def test_lost_response_then_receipt_lookup_and_replay(self):
+        from jarvis_return_worker.http_client import HTTPClient
+        client = HTTPClient(timeout_seconds=3, max_retries=0)
+        url = "http://127.0.0.1:%d/messages" % self.server.server_port
+        headers = {"Authorization": "Bearer test-receiver-token-123456"}
+        # Commit the request, then deliberately discard its response to simulate
+        # a client-side crash or connection loss after receiver commit.
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+        connection.request("POST", "/messages", body=json.dumps({"synthetic": True}),
+                           headers={**headers, "Idempotency-Key": "lost-response",
+                                    "Content-Type": "application/json"})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 201)
+        connection.close()  # Do not consume response body: outcome is unknown to sender.
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM effects").fetchone()[0], 1)
+        receipt = client.request("GET",
+                                 "http://127.0.0.1:%d/receipts/lost-response" % self.server.server_port,
+                                 headers=headers)
+        self.assertEqual(receipt["http_status"], 200)
+        replay = client.request("POST", url, body={"synthetic": True}, headers=headers,
+                                idempotency_key="lost-response")
+        self.assertEqual(replay["http_status"], 200)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM effects").fetchone()[0], 1)
+
     def test_real_sender_client_header_and_receipt_replay(self):
         # Exercise the actual sender HTTPClient, not a hand-built idempotency header.
         from jarvis_return_worker.http_client import HTTPClient
