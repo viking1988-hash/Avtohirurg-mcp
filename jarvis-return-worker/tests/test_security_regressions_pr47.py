@@ -323,6 +323,22 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class HTTPResponseHeaderCaseTests(unittest.TestCase):
+    def test_lowercase_response_id_is_preserved(self):
+        from email.message import Message
+        from unittest.mock import Mock
+        from jarvis_return_worker.http_client import HTTPClient
+        headers = Message()
+        headers["x-response-id"] = "synthetic-response-id"
+        response = Mock(status=200, headers=headers)
+        response.read.return_value = b'{"receipt_id":"synthetic-receipt"}'
+        client = HTTPClient(opener=lambda request, timeout: response)
+        result = client.request("POST", "https://example.test/synthetic",
+                                body={"synthetic": True},
+                                idempotency_key="synthetic-key")
+        self.assertEqual(result["response_id"], "synthetic-response-id")
+
+
 class ReturnWorkerDispatchFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_claim_never_invokes_provider(self):
         from jarvis_return_worker.orchestrator import Orchestrator
