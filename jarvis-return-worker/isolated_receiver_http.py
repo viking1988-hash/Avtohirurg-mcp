@@ -1,8 +1,8 @@
 """Fake-only HTTP receiver for isolated idempotency E2E.
 
-Not configured in Railway. No external transport. Uses the SQLite inbox reference
+Synthetic-only receiver. No external transport. Uses the SQLite inbox reference
 from tests/test_receiver_idempotency_reference.py and a local HTTP server.
-The HTTP auth token is provided explicitly; never bind to a public interface.
+The HTTP auth token is provided explicitly; deploy only on private networking.
 """
 import hmac
 import importlib.util
@@ -53,6 +53,8 @@ def make_handler(database_path, token):
             return self.reply(status, result)
 
         def do_GET(self):
+            if self.path == "/ready":
+                return self.reply(200, {"status": "ready"})
             if not self.authenticate():
                 return self.reply(401, {"error": "unauthorized"})
             if not self.path.startswith("/receipts/"):
