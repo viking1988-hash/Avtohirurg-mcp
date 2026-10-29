@@ -170,3 +170,58 @@ def test_dispatch_fence_rejects_recovered_stale_worker(repo):
         repo.verify_dispatch_lease(id,'worker-a',task['attempt_count'])
     assert repo.recover('recovery') == 1
     assert repo.get(id)['state'] == 'RECONCILIATION_REQUIRED'
+
+
+def test_separate_process_stale_sender_after_recovery_is_fenced(repo):
+    """Real OS child and parent use separate PostgreSQL connections; no real provider."""
+    import subprocess
+    import sys
+    task_id=make(repo)
+    task=repo.claim('worker-a')
+    repo.mark_delivery_started(task_id,'worker-a',task['attempt_count'])
+    child_code=r'''
+import os,sys
+from types import SimpleNamespace
+from jarvis_return_worker.queue import QueueRepository,Conflict
+r=QueueRepository(SimpleNamespace(database_url=os.environ['JARVIS_WORKER_CI_DATABASE_URL'],worker_id='worker-a',lease_seconds=30,heartbeat_seconds=5,max_attempts=3))
+task_id=sys.argv[1]; attempt=int(sys.argv[2])
+r.verify_dispatch_lease(task_id,'worker-a',attempt)
+print('FENCE_OK',flush=True)
+if sys.stdin.readline().strip()!='RESUME': sys.exit(3)
+# Synthetic external effect occurs AFTER the pre-send lease check has gone stale.
+print('SYNTHETIC_REMOTE_EFFECT',flush=True)
+try:
+    r.save_delivery_receipt(task_id,'worker-a',attempt,'late-synthetic-receipt')
+except Conflict:
+    print('LATE_RECEIPT_FENCED',flush=True)
+else:
+    sys.exit(4)
+try:
+    r.fail(task_id,'worker-a',attempt)
+except Conflict:
+    print('STALE_FAILURE_FENCED',flush=True)
+else:
+    sys.exit(5)
+'''
+    proc=subprocess.Popen([sys.executable,'-u','-c',child_code,task_id,str(task['attempt_count'])],
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
+        env=os.environ.copy())
+    try:
+        assert proc.stdout.readline().strip()=='FENCE_OK'
+        with repo.connection() as c:
+            c.execute("UPDATE jarvis_return_actions SET lease_until=now()-interval '1 minute',heartbeat_at=now()-interval '1 minute' WHERE task_id=%s",(task_id,))
+        assert repo.recover('worker-b')>=1
+        assert repo.get(task_id)['state']=='RECONCILIATION_REQUIRED'
+        assert repo.claim('worker-b') is None
+        proc.stdin.write('RESUME\\n'.replace('\\n','\n'))
+        proc.stdin.flush()
+        output,errors=proc.communicate(timeout=15)
+        assert proc.returncode==0,errors
+        assert output.splitlines()==['SYNTHETIC_REMOTE_EFFECT','LATE_RECEIPT_FENCED','STALE_FAILURE_FENCED']
+        row=repo.get(task_id)
+        assert row['state']=='RECONCILIATION_REQUIRED'
+        assert not row['delivery_receipt']
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate(timeout=5)
