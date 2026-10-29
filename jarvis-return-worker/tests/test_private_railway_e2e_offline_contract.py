@@ -64,7 +64,7 @@ class OfflineContract(unittest.TestCase):
             def open(self, req, timeout):
                 self.calls.append(req)
                 index = len(self.calls) - 1
-                status = self.statuses[index]
+                status = self.statuses[index] if index < len(self.statuses) else 200
                 receipt = {"receipt_id": "synthetic-1", "status": "COMMITTED"}
                 if mismatch and index == 1:
                     receipt["receipt_id"] = "unexpected"
@@ -72,7 +72,8 @@ class OfflineContract(unittest.TestCase):
                     raise CLIENT.urllib.error.HTTPError(
                         req.full_url, 409, "Conflict", {},
                         io.BytesIO(b'{"error":"idempotency_conflict"}'))
-                return ReadableResponse(status, {"effect_count": 1} if index == 4 else receipt)
+                is_audit = req.full_url.endswith("/audit/effects/" + req.get_header("Idempotency-key"))
+                return ReadableResponse(status, {"effect_count": 1} if is_audit else receipt)
         opener = Opener(statuses)
         env = {"JARVIS_PR47_DISPOSABLE_ONLY": "YES",
                "JARVIS_PR47_PRIVATE_E2E_APPROVED": "YES",
@@ -87,9 +88,9 @@ class OfflineContract(unittest.TestCase):
 
     def test_full_contract_and_same_key(self):
         opener, output = self.run_client()
-        self.assertEqual(len(opener.calls), 5)
+        self.assertEqual(len(opener.calls), 15)
         keys = {req.get_header("Idempotency-key") for req in opener.calls}
-        self.assertEqual(len(keys), 1)
+        self.assertEqual(len(keys), 2)
         self.assertNotIn("synthetic-only-0123456789-abcdef", output)
         self.assertIn("PR47_PRIVATE_HTTP_E2E_PASS", output)
 
