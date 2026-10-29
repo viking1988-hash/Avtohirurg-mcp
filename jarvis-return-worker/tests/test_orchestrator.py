@@ -211,3 +211,25 @@ def test_misclassified_policy_retry_cannot_bypass_unknown_provider_error():
     assert len(provider.calls)==1
     assert "retry" not in repo.calls
     assert repo.calls==["heartbeat","mark","fail"]
+
+
+def test_lease_expires_after_fence_before_provider_call_is_not_atomic():
+    """Document TOCTOU: a successful DB fence does not reserve a remote send."""
+    class LeaseExpiresAfterFence(Repo):
+        def __init__(self):
+            super().__init__()
+            self.expired=False
+        def verify_dispatch_lease(self,*args):
+            self.calls.append("fence")
+            self.expired=True  # Simulated lease expiry after the successful check.
+            return True
+    class ObservingProvider(Provider):
+        def send(self,task,key):
+            assert repo.expired
+            return super().send(task,key)
+    repo=LeaseExpiresAfterFence()
+    provider=ObservingProvider("alpha",error=DeliveryError(Classification.UNKNOWN,"lost_response"))
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert len(provider.calls)==1  # External effect may start after lease expiry.
+    assert "retry" not in repo.calls
+    assert repo.calls==["heartbeat","mark","fence","fail"]
