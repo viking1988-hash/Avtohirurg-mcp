@@ -207,3 +207,25 @@ def test_confirmation_api_rejects_reader_and_comment_only_evidence(repo):
             (task_id,)).fetchall()
     assert any(e["action"] == "reconcile_failed" and e["actor"] == "sandbox-operator"
                for e in events)
+
+
+@pytest.mark.parametrize("provider,receipt,message", [
+    ("telegram", "   ", None),
+    ("telegram", None, "   "),
+    ("telegram", "\\t", "\\n"),
+    ("   ", "valid-receipt", None),
+])
+def test_blank_delivery_evidence_is_rejected_and_audited(repo, provider, receipt, message):
+    task_id, row = uncertain(repo)
+    with pytest.raises(Conflict, match="delivery evidence"):
+        call(repo, task_id, "operator-a", "confirm-delivered", row,
+             provider=provider, provider_receipt=receipt,
+             provider_message_id=message, comment="synthetic review")
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["version"] == row["version"]
+    with repo.connection() as conn:
+        events = conn.execute(
+            "SELECT action FROM jarvis_return_action_events WHERE task_id=%s",
+            (task_id,)).fetchall()
+    assert any(event["action"] == "reconcile_failed" for event in events)
