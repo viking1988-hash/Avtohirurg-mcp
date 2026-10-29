@@ -408,6 +408,37 @@ class ReturnWorkerDispatchFenceTests(unittest.IsolatedAsyncioTestCase):
         repository.finish.assert_not_called()
         repository.fail.assert_called_once()
 
+    async def test_two_stale_workers_can_reach_provider_without_receiver_dedup(self):
+        """Demonstrate why DB fencing alone cannot promise exactly-once effects."""
+        import asyncio
+        from jarvis_return_worker.orchestrator import Orchestrator
+        from jarvis_return_worker.queue import Conflict
+        from threading import Barrier
+        barrier = Barrier(2, timeout=5)
+        sends = []
+        repository = Mock()
+        repository.verify_dispatch_lease.side_effect = lambda *args: barrier.wait()
+        repository.save_delivery_receipt.side_effect = Conflict("stale lease")
+        repository.fail.side_effect = Conflict("stale lease")
+        provider = Mock()
+        provider.provider = "fake"
+        provider.send.side_effect = lambda task, key: (
+            sends.append(key) or {"receipt_id": "synthetic-receipt"})
+        dispatcher = Mock()
+        dispatcher.dispatch.return_value = provider
+        orchestrator = Orchestrator(repository, dispatcher)
+        orchestrator.policy = Mock()
+        orchestrator.policy.approval.return_value.action = "send"
+        orchestrator.policy.delivery_failure.return_value.action = "reconcile"
+        task = {"task_id": "synthetic-race", "attempt_count": 1,
+                "destination_key": "sandbox:never-send",
+                "action_fingerprint": "same-action"}
+        await asyncio.gather(
+            orchestrator.process(dict(task), "worker-a"),
+            orchestrator.process(dict(task), "worker-b"))
+        self.assertEqual(sends, ["synthetic-race:same-action"] * 2)
+        repository.finish.assert_not_called()
+
     async def test_live_claim_checks_fence_before_provider(self):
         from jarvis_return_worker.orchestrator import Orchestrator
         from jarvis_return_worker.transport import Classification, DeliveryError
