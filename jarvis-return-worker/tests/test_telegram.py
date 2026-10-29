@@ -82,6 +82,7 @@ class Repo:
     def __init__(self): self.calls=[]
     def heartbeat(self,*args): self.calls.append('heartbeat')
     def mark_delivery_started(self,*args): self.calls.append('mark')
+    def verify_dispatch_lease(self,*args): return True
     def save_delivery_receipt(self,*args): self.calls.append(('receipt',args[-3:]))
     def finish(self,*args): self.calls.append('done')
     def fail(self,*args): self.calls.append(('fail',args))
