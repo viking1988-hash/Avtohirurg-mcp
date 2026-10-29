@@ -59,7 +59,7 @@ class ReadableResponse(FakeResponse):
 
 
 class OfflineContract(unittest.TestCase):
-    def run_client(self, statuses=(201, 200, 409, 200), mismatch=False):
+    def run_client(self, statuses=(201, 200, 409, 200), mismatch=False, phase="seed"):
         class Opener(FakeOpener):
             def open(self, req, timeout):
                 self.calls.append(req)
@@ -76,6 +76,7 @@ class OfflineContract(unittest.TestCase):
         opener = Opener(statuses)
         env = {"JARVIS_PR47_DISPOSABLE_ONLY": "YES",
                "JARVIS_PR47_PRIVATE_E2E_APPROVED": "YES",
+               "JARVIS_PR47_E2E_PHASE": phase,
                "JARVIS_RECEIVER_E2E_URL": URL,
                "JARVIS_RECEIVER_E2E_TOKEN": "synthetic-only-0123456789-abcdef"}
         with patch.dict(os.environ, env):
@@ -94,7 +95,19 @@ class OfflineContract(unittest.TestCase):
 
     def test_rejects_unexpected_initial_status(self):
         with self.assertRaises(AssertionError):
-            self.run_client(statuses=(200, 200, 409, 200))
+            self.run_client(statuses=(202, 200, 409, 200))
+
+    def test_seed_replay_allowed(self):
+        _, output = self.run_client(statuses=(200, 200, 409, 200))
+        self.assertIn("first_status=200", output)
+
+    def test_verify_requires_existing_receipt(self):
+        with self.assertRaises(AssertionError):
+            self.run_client(phase="verify", statuses=(201, 200, 409, 200))
+
+    def test_verify_existing_receipt(self):
+        _, output = self.run_client(phase="verify", statuses=(200, 200, 409, 200))
+        self.assertIn("phase=verify", output)
 
     def test_rejects_receipt_mismatch(self):
         with self.assertRaises(AssertionError):
