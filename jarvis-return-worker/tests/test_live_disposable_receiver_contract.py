@@ -22,6 +22,54 @@ def load(path, name):
 
 
 class LiveDisposableContractTests(unittest.TestCase):
+    def test_receipt_and_deduplication_survive_receiver_restart(self):
+        # Restart the HTTP server against the same durable SQLite file.
+        import json
+        import urllib.request
+        import urllib.error
+        import uuid
+        with tempfile.TemporaryDirectory() as temp:
+            dbpath = str(pathlib.Path(temp) / "receiver.sqlite3")
+            with sqlite3.connect(dbpath) as db:
+                db.execute("CREATE TABLE inbox (principal TEXT NOT NULL, idem_key TEXT NOT NULL, fingerprint TEXT NOT NULL, receipt TEXT NOT NULL, PRIMARY KEY (principal, idem_key))")
+                db.execute("CREATE TABLE effects (id INTEGER PRIMARY KEY, principal TEXT NOT NULL, idem_key TEXT NOT NULL)")
+            receiver = load("isolated_receiver_http.py", "receiver_restart_contract")
+            token = "disposable-restart-test-token-123456"
+            key = "restart-" + uuid.uuid4().hex
+            body = json.dumps({"synthetic": True}).encode("utf-8")
+            def request(port, method, path, payload=None):
+                req = urllib.request.Request(
+                    "http://127.0.0.1:%d%s" % (port, path),
+                    data=payload,
+                    headers={"Authorization": "Bearer " + token,
+                             "Idempotency-Key": key,
+                             "Content-Type": "application/json"},
+                    method=method)
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    return response.status, json.load(response)
+            server = receiver.serve_local(dbpath, token)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                status, receipt = request(server.server_port, "POST", "/messages", body)
+                self.assertEqual(status, 201)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+            server = receiver.serve_local(dbpath, token)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                self.assertEqual(request(server.server_port, "POST", "/messages", body), (200, receipt))
+                self.assertEqual(request(server.server_port, "GET", "/receipts/" + key), (200, receipt))
+                with sqlite3.connect(dbpath) as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM effects").fetchone()[0], 1)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
     def test_contract_runs_against_loopback_server(self):
         with tempfile.TemporaryDirectory() as temp:
             dbpath = str(pathlib.Path(temp) / "receiver.sqlite3")
