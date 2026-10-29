@@ -62,8 +62,8 @@ def main():
     assert conflict[0] == 409, "changed payload must conflict"
     receipt = call("GET", "/receipts/" + key)
     assert receipt == (200, first[1]), "stored receipt mismatch"
-    print("PR47_PRIVATE_HTTP_E2E_PASS: 201/200/409/200; receipt stable; synthetic only")
-    print("NOTE: persistence across Railway restart and effect count require separate verification")
+    print("PR47_PRIVATE_HTTP_E2E_PASS: phase=" + phase + "; first_status=" + str(first[0]) + "; replay=200; conflict=409; receipt_get=200; synthetic only")
+    print("NOTE: effect count requires independent database-side verification")
 
 
 if __name__ == "__main__":
