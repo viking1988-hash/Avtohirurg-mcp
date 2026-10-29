@@ -8,7 +8,6 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 
 
 class ReceiverInbox:
@@ -81,6 +80,7 @@ class ReceiverInboxTests(unittest.TestCase):
         def worker(_):
             barrier.wait(timeout=10)
             return self.send()
+        from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=8) as pool:
             results = list(pool.map(worker, range(8)))
         self.assertEqual(sorted(code for code, _ in results), [200] * 7 + [201])
@@ -115,6 +115,7 @@ class ReceiverInboxTests(unittest.TestCase):
             return ReceiverInbox(self.path).submit(
                 "sender-1", "POST", "/messages", "same-operation", {"value": 1}
             )
+        from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(worker, range(2)))
         self.assertEqual(sorted(code for code, _ in results), [200, 201])
@@ -142,6 +143,7 @@ class ReceiverInboxTests(unittest.TestCase):
             return ReceiverInbox(self.path).submit(
                 "sender-1", "POST", "/messages", "conflict-key", {"value": value}
             )
+        from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(worker, (1, 2)))
         self.assertEqual(sorted(code for code, _ in results), [201, 409])
