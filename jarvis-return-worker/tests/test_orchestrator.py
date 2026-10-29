@@ -283,3 +283,18 @@ def test_stale_worker_receipt_and_failure_are_fenced_after_remote_send():
     assert repo.calls==["heartbeat","mark","stale_receipt_rejected","stale_failure_rejected"]
     assert "finish" not in repo.calls
     assert "retry" not in repo.calls
+
+
+def test_worker_cancelled_at_dispatch_fence_does_not_send_or_clear_marker():
+    """Cancellation at the dispatch boundary must not erase uncertain-send evidence."""
+    class CancelAtFenceRepo(Repo):
+        def verify_dispatch_lease(self,*args):
+            self.calls.append("fence")
+            raise asyncio.CancelledError()
+    repo=CancelAtFenceRepo()
+    provider=Provider("alpha")
+    with pytest.raises(asyncio.CancelledError):
+        run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert provider.calls==[]
+    assert repo.calls==["heartbeat","mark","fence"]
+    assert "retry" not in repo.calls
