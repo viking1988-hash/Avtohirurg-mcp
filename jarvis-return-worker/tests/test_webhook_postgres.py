@@ -499,3 +499,10 @@ def test_stale_webhook_claim_is_fenced_before_dispatch(repo):
   c.execute("UPDATE jarvis_webhook_operations SET lease_until=clock_timestamp()-interval '1 second' WHERE event_id=%s",(eid,))
  with pytest.raises(Conflict):
   repo.verify_webhook_dispatch_lease(eid,'worker-a',claim['attempt_count'],claim['version'],0)
+
+
+def test_webhook_dispatch_rejects_budget_larger_than_lease(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation('budget-worker')
+ with pytest.raises(Conflict,match='invalid Webhook remaining lease budget'):
+  repo.verify_webhook_dispatch_lease(eid,'budget-worker',claim['attempt_count'],claim['version'],repo.config.lease_seconds+1)
