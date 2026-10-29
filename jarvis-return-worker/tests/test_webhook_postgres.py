@@ -553,3 +553,26 @@ def test_webhook_budget_rejection_never_calls_provider(repo,monkeypatch):
  asyncio.run(Orchestrator(repo,dispatcher).process_webhook_operation(claim,'budget-blocked-worker'))
  assert spy.calls==0
  assert repo.get_webhook_operation(eid)['state']=='RECONCILIATION_REQUIRED'
+
+
+def test_webhook_bounded_http_budget_allows_single_synthetic_send(repo,monkeypatch):
+ import asyncio
+ from jarvis_return_worker.dispatcher import TransportDispatcher
+ from jarvis_return_worker.orchestrator import Orchestrator
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation('bounded-budget-worker')
+ class SpyProvider:
+  provider='webhook'
+  calls=0
+  def send(self,payload,key):
+   self.calls+=1
+   return receipt(eid)
+ spy=SpyProvider()
+ dispatcher=TransportDispatcher()
+ dispatcher.register('webhook',spy)
+ monkeypatch.setenv('JARVIS_WEBHOOK_BASE_URL','https://synthetic.invalid')
+ monkeypatch.setenv('JARVIS_WEBHOOK_TIMEOUT_SECONDS','1')
+ monkeypatch.setenv('JARVIS_WEBHOOK_MAX_RETRIES','0')
+ asyncio.run(Orchestrator(repo,dispatcher).process_webhook_operation(claim,'bounded-budget-worker'))
+ assert spy.calls==1
+ assert repo.get_webhook_operation(eid)['state']=='DONE'
