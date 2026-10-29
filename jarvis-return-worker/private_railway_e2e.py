@@ -32,7 +32,12 @@ def main():
     if len(token) < 24:
         raise SystemExit("STOP: synthetic token missing")
     opener = urllib.request.build_opener(NoRedirect(), urllib.request.ProxyHandler({}))
-    key = "pr47-private-" + uuid.uuid4().hex
+    key = os.environ.get("JARVIS_PR47_E2E_KEY", "pr47-durable-20261029-a")
+    if not key.startswith("pr47-durable-"):
+        raise SystemExit("STOP: deterministic key must use the synthetic pr47-durable prefix")
+    phase = os.environ.get("JARVIS_PR47_E2E_PHASE", "seed")
+    if phase not in ("seed", "verify"):
+        raise SystemExit("STOP: phase must be seed or verify")
     headers = {"Authorization": "Bearer " + token,
                "Idempotency-Key": key, "Content-Type": "application/json"}
 
@@ -47,7 +52,10 @@ def main():
             return error.code, json.load(error)
 
     first = call("POST", "/messages", {"synthetic": True})
-    assert first[0] == 201, "initial request must create receipt"
+    if phase == "seed":
+        assert first[0] == 201, "seed phase must create a new receipt"
+    else:
+        assert first[0] == 200, "verify phase must replay the durable receipt after restart"
     second = call("POST", "/messages", {"synthetic": True})
     assert second == (200, first[1]), "replay must return identical receipt"
     conflict = call("POST", "/messages", {"synthetic": False})
