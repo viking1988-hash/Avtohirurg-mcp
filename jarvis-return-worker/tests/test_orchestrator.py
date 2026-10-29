@@ -185,3 +185,29 @@ def test_policy_engine_error_fails_closed_before_provider_call():
     run(core)
     assert provider.calls==[]
     assert repo.calls==["fail"]
+
+
+def test_expired_dispatch_lease_never_calls_external_provider():
+    from jarvis_return_worker.queue import Conflict
+    class ExpiredRepo(Repo):
+        def verify_dispatch_lease(self,*args):
+            self.calls.append("fence")
+            raise Conflict("lease expired at dispatch boundary")
+    repo=ExpiredRepo()
+    provider=Provider("alpha")
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert provider.calls==[]
+    assert repo.calls==["heartbeat","mark","fence","fail"]
+
+
+def test_misclassified_policy_retry_cannot_bypass_unknown_provider_error():
+    from jarvis_return_worker.policy import PolicyDecision
+    class UnsafePolicy(PolicyEngine):
+        def delivery_failure(self,error,task):
+            return PolicyDecision("retry","incorrect_retry_decision")
+    repo=Repo()
+    provider=Provider("alpha",error=DeliveryError(Classification.UNKNOWN,"ambiguous_timeout"))
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True)),policy=UnsafePolicy()))
+    assert len(provider.calls)==1
+    assert "retry" not in repo.calls
+    assert repo.calls==["heartbeat","mark","fail"]
