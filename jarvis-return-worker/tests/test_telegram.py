@@ -111,3 +111,34 @@ def test_worker_unknown_does_not_auto_retry():
     assert not any(isinstance(x,tuple) and x[0]=='retry' for x in repo.calls)
     assert any(isinstance(x,tuple) and x[0]=='fail' for x in repo.calls)
 
+
+
+@pytest.mark.parametrize('body,status,classification',[
+    ({'ok':True,'result':{'message_id':51,'chat':{'id':999}}},200,Classification.UNKNOWN),
+    ({'ok':True,'result':{'chat':{'id':int(CHAT)}}},200,Classification.UNKNOWN),
+    ({'ok':False,'description':'synthetic rejected'},200,Classification.PERMANENT),
+    ({'ok':False,'description':'synthetic upstream failure'},503,Classification.UNKNOWN),
+    ({'ok':False,'parameters':{'retry_after':4}},429,Classification.RETRYABLE),
+])
+def test_telegram_p1_response_mapping_never_invents_receipt(body,status,classification):
+    """All transport responses are synthetic; no Telegram request leaves the process."""
+    with patch('jarvis_return_worker.transport.urlopen',return_value=response(body,status)) as call:
+        with pytest.raises(DeliveryError) as err:
+            TelegramTransport(TOKEN,CHAT).deliver(task())
+    assert err.value.classification==classification
+    assert TOKEN not in str(err.value)
+    assert call.call_count==1
+
+
+def test_telegram_p1_unreadable_accepted_response_is_unknown_not_retryable():
+    class InvalidJSON:
+        status=200
+        def read(self,n): return b'{not valid json'
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+    with patch('jarvis_return_worker.transport.urlopen',return_value=InvalidJSON()) as call:
+        with pytest.raises(DeliveryError) as err:
+            TelegramTransport(TOKEN,CHAT).deliver(task())
+    assert err.value.classification==Classification.UNKNOWN
+    assert err.value.code=='telegram_response_unreadable'
+    assert call.call_count==1
