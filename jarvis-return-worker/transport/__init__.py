@@ -120,7 +120,7 @@ class TelegramTransport:
             if status < 200 or status >= 300 or data.get('ok') is not True:
                 code = 'telegram_request_rejected'
                 classification = Classification.PERMANENT
-                if status == 429:
+                if status == 429 or (200 <= status < 300):
                     classification = Classification.UNKNOWN
                     code = 'telegram_rate_limit_outcome_unknown'
                 elif status >= 500:
