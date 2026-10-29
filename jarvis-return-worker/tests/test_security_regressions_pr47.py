@@ -347,6 +347,37 @@ class ReturnWorkerDispatchFenceTests(unittest.IsolatedAsyncioTestCase):
         repository.save_delivery_receipt.assert_not_called()
         repository.finish.assert_not_called()
 
+    async def test_lease_lost_after_pre_send_check_never_claims_exactly_once(self):
+        """A stale sender can reach the provider after a successful pre-send check.
+
+        This documents the non-atomic external-effect boundary; receiver-side
+        idempotency or manual reconciliation is required.
+        """
+        from jarvis_return_worker.orchestrator import Orchestrator
+        from jarvis_return_worker.queue import Conflict
+        repository = Mock()
+        calls = []
+        repository.verify_dispatch_lease.side_effect = lambda *args: calls.append("fence_ok")
+        repository.save_delivery_receipt.side_effect = Conflict("lease expired after send")
+        repository.fail.side_effect = Conflict("stale lease")
+        dispatcher = Mock()
+        provider = Mock()
+        provider.provider = "fake"
+        provider.send.side_effect = lambda *args: (
+            calls.append("external_effect") or {"receipt_id": "synthetic-receipt"})
+        dispatcher.dispatch.return_value = provider
+        orchestrator = Orchestrator(repository, dispatcher)
+        orchestrator.policy = Mock()
+        orchestrator.policy.approval.return_value.action = "send"
+        orchestrator.policy.delivery_failure.return_value.action = "reconcile"
+        task = {"task_id": "synthetic-post-fence-race", "attempt_count": 1,
+                "destination_key": "sandbox:never-send",
+                "action_fingerprint": "test-only"}
+        await orchestrator.process(task, "stale-owner")
+        self.assertEqual(calls, ["fence_ok", "external_effect"])
+        repository.finish.assert_not_called()
+        repository.fail.assert_called_once()
+
     async def test_live_claim_checks_fence_before_provider(self):
         from jarvis_return_worker.orchestrator import Orchestrator
         from jarvis_return_worker.transport import Classification, DeliveryError
