@@ -52,7 +52,7 @@ def test_chat_allowlist_blocks_any_non_test_destination_before_network():
     call.assert_not_called()
 
 @pytest.mark.parametrize('error,classification',[
-    (HTTPError('https://api.telegram.org/redacted',429,'rate limited',Message(),io.BytesIO(b'{"parameters":{"retry_after":7}}')),Classification.RETRYABLE),
+    (HTTPError('https://api.telegram.org/redacted',429,'rate limited',Message(),io.BytesIO(b'{"parameters":{"retry_after":7}}')),Classification.UNKNOWN),
     (HTTPError('https://api.telegram.org/redacted',500,'server',Message(),io.BytesIO(b'{}')),Classification.UNKNOWN),
     (HTTPError('https://api.telegram.org/redacted',401,'unauthorized',Message(),io.BytesIO(b'{}')),Classification.PERMANENT),
     (HTTPError('https://api.telegram.org/redacted',400,'bad chat',Message(),io.BytesIO(b'{}')),Classification.PERMANENT),
@@ -66,7 +66,7 @@ def test_error_classification_and_token_not_in_exception(error,classification):
     assert err.value.classification==classification
     assert TOKEN not in str(err.value)
     assert call.call_count==1  # No automatic replay on any response or network error.
-    if classification==Classification.RETRYABLE:
+    if err.value.code=='telegram_rate_limit_outcome_unknown':
         assert err.value.retry_after==7
 
 def test_metrics_export_required_names():
@@ -118,7 +118,7 @@ def test_worker_unknown_does_not_auto_retry():
     ({'ok':True,'result':{'chat':{'id':int(CHAT)}}},200,Classification.UNKNOWN),
     ({'ok':False,'description':'synthetic rejected'},200,Classification.PERMANENT),
     ({'ok':False,'description':'synthetic upstream failure'},503,Classification.UNKNOWN),
-    ({'ok':False,'parameters':{'retry_after':4}},429,Classification.RETRYABLE),
+    ({'ok':False,'parameters':{'retry_after':4}},429,Classification.UNKNOWN),
 ])
 def test_telegram_p1_response_mapping_never_invents_receipt(body,status,classification):
     """All transport responses are synthetic; no Telegram request leaves the process."""
