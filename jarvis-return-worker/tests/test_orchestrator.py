@@ -233,3 +233,34 @@ def test_lease_expires_after_fence_before_provider_call_is_not_atomic():
     assert len(provider.calls)==1  # External effect may start after lease expiry.
     assert "retry" not in repo.calls
     assert repo.calls==["heartbeat","mark","fence","fail"]
+
+
+def test_two_workers_shared_marker_blocks_second_external_send():
+    """Two orchestrators share a synthetic durable marker; only one reaches provider."""
+    from jarvis_return_worker.queue import Conflict
+    import threading
+    class SharedMarkerRepo(Repo):
+        def __init__(self):
+            super().__init__()
+            self.lock=threading.Lock()
+            self.started=False
+        def mark_delivery_started(self,*args):
+            with self.lock:
+                if self.started:
+                    raise Conflict("delivery marker already persisted")
+                self.started=True
+                self.calls.append("mark")
+        def verify_dispatch_lease(self,*args):
+            assert self.started
+            return True
+    repo=SharedMarkerRepo()
+    provider=Provider("alpha",error=DeliveryError(Classification.UNKNOWN,"lost_response"))
+    first=Orchestrator(repo,dispatcher(("alpha",provider,True)))
+    second=Orchestrator(repo,dispatcher(("alpha",provider,True)))
+    async def both():
+        await asyncio.gather(first.process(approved_task(),"test-worker"),
+                             second.process(approved_task(),"test-worker"))
+    asyncio.run(both())
+    assert len(provider.calls)==1
+    assert repo.calls.count("mark")==1
+    assert "retry" not in repo.calls
