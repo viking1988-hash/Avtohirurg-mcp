@@ -488,3 +488,14 @@ def test_webhook_reconciliation_cannot_be_applied_twice(repo):
  assert unchanged["state"]=="DONE"
  assert unchanged["version"]==first["version"]
  assert unchanged["response_id"]=="synthetic-provider-response"
+
+
+def test_stale_webhook_claim_is_fenced_before_dispatch(repo):
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation('worker-a')
+ assert claim['event_id']==eid
+ repo.verify_webhook_dispatch_lease(eid,'worker-a',claim['attempt_count'],claim['version'],0)
+ with repo.connection() as c:
+  c.execute("UPDATE jarvis_webhook_operations SET lease_until=clock_timestamp()-interval '1 second' WHERE event_id=%s",(eid,))
+ with pytest.raises(Conflict):
+  repo.verify_webhook_dispatch_lease(eid,'worker-a',claim['attempt_count'],claim['version'],0)
