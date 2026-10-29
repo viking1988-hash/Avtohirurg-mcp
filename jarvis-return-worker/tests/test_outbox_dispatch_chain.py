@@ -234,3 +234,16 @@ def test_mock_telegram_response_lost_is_reviewed_without_resend(repo,caplog):
     assert "confirm-delivered" in actions
     assert mock_sink["accepted"]==1
     assert "mock-token-never-logged" not in caplog.text
+
+
+def test_legacy_approval_event_is_idempotent_and_requires_new_approval(repo):
+    suffix=uuid.uuid4().hex
+    task_id,_=prepare(repo,suffix)
+    legacy={'event_id':uuid.uuid4(),'aggregate_id':task_id,'event_type':'TaskApproved','payload':{'new_state':'APPROVED'}}
+    with repo.connection() as conn:
+        _create_dispatch_intent(conn,legacy)
+        _create_dispatch_intent(conn,legacy)
+    with repo.connection() as conn:
+        row=conn.execute('SELECT state,approved_by,approved_fingerprint FROM jarvis_return_actions WHERE task_id=%s',(task_id,)).fetchone()
+        n=conn.execute('SELECT count(*) AS n FROM jarvis_provider_dispatch_intents WHERE task_id=%s',(task_id,)).fetchone()['n']
+    assert (row['state'],row['approved_by'],row['approved_fingerprint'],n)==('READY',None,None,0)
