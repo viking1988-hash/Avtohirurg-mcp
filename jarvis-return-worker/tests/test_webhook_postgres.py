@@ -506,3 +506,27 @@ def test_webhook_dispatch_rejects_budget_larger_than_lease(repo):
  claim=repo.claim_webhook_operation('budget-worker')
  with pytest.raises(Conflict,match='invalid Webhook remaining lease budget'):
   repo.verify_webhook_dispatch_lease(eid,'budget-worker',claim['attempt_count'],claim['version'],repo.config.lease_seconds+1)
+
+
+def test_concurrent_same_response_id_preserves_duplicate_receipt(repo):
+ from concurrent.futures import ThreadPoolExecutor
+ from threading import Barrier
+ eid1,_=materialize(repo)
+ eid2,_=materialize(repo)
+ first=repo.claim_webhook_operation('race-worker-a')
+ second=repo.claim_webhook_operation('race-worker-b')
+ assert {first['event_id'],second['event_id']}=={eid1,eid2}
+ barrier=Barrier(2)
+ def complete(claim,owner):
+  result=receipt(claim['event_id'])
+  result['response_id']='shared-race-'+str(uuid.uuid5(uuid.NAMESPACE_URL,str(eid1)))
+  barrier.wait(timeout=10)
+  return repo.finish_webhook_operation(claim['event_id'],owner,claim['attempt_count'],claim['version'],result)
+ with ThreadPoolExecutor(max_workers=2) as pool:
+  a=pool.submit(complete,first,'race-worker-a')
+  b=pool.submit(complete,second,'race-worker-b')
+  states=[a.result(timeout=20),b.result(timeout=20)]
+ assert sorted(x['state'] for x in states)==['DONE','RECONCILIATION_REQUIRED']
+ duplicate=next(x for x in states if x['state']=='RECONCILIATION_REQUIRED')
+ assert duplicate['reconciliation_reason']=='duplicate_provider_response_id'
+ assert duplicate['receipt']['duplicate_response_id']==next(x for x in states if x['state']=='DONE')['response_id']
