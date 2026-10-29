@@ -162,8 +162,11 @@ def test_dispatch_fence_rejects_recovered_stale_worker(repo):
     task=repo.claim('worker-a')
     repo.mark_delivery_started(id,'worker-a',task['attempt_count'])
     with repo.connection() as c:
-        c.execute("UPDATE jarvis_return_actions SET lease_until=clock_timestamp()-interval '1 second' WHERE task_id=%s",(id,))
+        c.execute("""UPDATE jarvis_return_actions
+            SET lease_until=clock_timestamp()-interval '1 minute',
+                heartbeat_at=clock_timestamp()-interval '1 minute'
+            WHERE task_id=%s""",(id,))
     with pytest.raises(Conflict):
         repo.verify_dispatch_lease(id,'worker-a',task['attempt_count'])
-    repo.recover('recovery')
-    assert repo.get(id)['state'] in ('PROCESSING', 'RECONCILIATION_REQUIRED')
+    assert repo.recover('recovery') == 1
+    assert repo.get(id)['state'] == 'RECONCILIATION_REQUIRED'
