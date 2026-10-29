@@ -12,6 +12,7 @@ from jarvis_return_worker.crm_intake_store import CRMIntakeAdapter, CRMIntakeSto
 from jarvis_return_worker.dispatcher import TransportDispatcher
 from jarvis_return_worker.events import EventBus
 from jarvis_return_worker.orchestrator import Orchestrator
+from jarvis_return_worker.provider import ProviderAdapter
 from jarvis_return_worker.outbox import OutboxReplay
 from jarvis_return_worker.queue import QueueRepository
 from jarvis_return_worker.worker import CRMIntakeOperationWorker
@@ -133,7 +134,7 @@ def main():
         "followup_consent": False,
     }
     try:
-        provider = CRMIntakeProvider(crm_url, crm_key, timeout_seconds=8)
+        provider = ProviderAdapter(CRMIntakeProvider(crm_url, crm_key, timeout_seconds=8))
         dispatcher = TransportDispatcher()
         dispatcher.register("crm-intake", provider, enabled=True)
         store.prepare(payload, CORRELATION_ID, actor="synthetic-e2e-intake")
