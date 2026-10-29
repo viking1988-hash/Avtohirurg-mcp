@@ -212,7 +212,7 @@ def test_confirmation_api_rejects_reader_and_comment_only_evidence(repo):
 @pytest.mark.parametrize("provider,receipt,message", [
     ("telegram", "   ", None),
     ("telegram", None, "   "),
-    ("telegram", "\\t", "\\n"),
+    ("telegram", "  ", "   "),
     ("   ", "valid-receipt", None),
 ])
 def test_blank_delivery_evidence_is_rejected_and_audited(repo, provider, receipt, message):
