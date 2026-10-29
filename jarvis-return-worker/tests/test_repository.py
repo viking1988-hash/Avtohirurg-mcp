@@ -203,9 +203,13 @@ except Conflict:
 else:
     sys.exit(5)
 '''
+    from pathlib import Path
+    child_env=os.environ.copy()
+    worker_root=str(Path(__file__).resolve().parents[1])
+    child_env['PYTHONPATH']=os.pathsep.join(filter(None,[worker_root,child_env.get('PYTHONPATH','')]))
     proc=subprocess.Popen([sys.executable,'-u','-c',child_code,task_id,str(task['attempt_count'])],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
-        env=os.environ.copy())
+        env=child_env)
     try:
         assert proc.stdout.readline().strip()=='FENCE_OK'
         with repo.connection() as c:
