@@ -161,3 +161,20 @@ def test_reconciliation_metrics_export_persisted_counters(repo):
                    "delivery_rejected_total", "reconciliation_required_total",
                    "manual_review_total", "provider_unknown_total"):
         assert f"#{' HELP'} {metric}" in output
+
+
+def test_comment_alone_cannot_confirm_delivery_and_rejection_is_audited(repo):
+    task_id, row = uncertain(repo)
+    with pytest.raises(Conflict, match="delivery evidence"):
+        call(repo, task_id, "operator-a", "confirm-delivered", row,
+             provider="telegram", comment="message probably delivered")
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["version"] == row["version"]
+    with repo.connection() as conn:
+        events = conn.execute(
+            "SELECT action, actor, metadata FROM jarvis_return_action_events "
+            "WHERE task_id=%s ORDER BY event_id", (task_id,)).fetchall()
+    assert any(e["action"] == "reconcile_failed" and e["actor"] == "operator-a"
+               and e["metadata"].get("requested_action") == "confirm-delivered"
+               for e in events)
