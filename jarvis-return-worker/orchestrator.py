@@ -379,8 +379,10 @@ class Orchestrator:
               'body':operation.get('request_body'),'correlation_id':operation.get('correlation_id'),
               'request_id':operation.get('request_id')}
             def fenced_send():
-                # Keep the final lease check adjacent to send in one worker thread.
-                # This narrows the scheduling window; it is not an atomic external fence.
+                # The final lease check narrows the scheduling window but cannot
+                # atomically fence an external HTTP side effect. The receiver MUST
+                # persist idempotency keys before acknowledging requests; a stale
+                # sender may still reach the receiver after lease expiration.
                 self.repository.verify_webhook_dispatch_lease(
                     operation['event_id'],owner,operation['attempt_count'],operation['version'],
                     remaining_budget)
