@@ -142,3 +142,13 @@ def test_telegram_p1_unreadable_accepted_response_is_unknown_not_retryable():
     assert err.value.classification==Classification.UNKNOWN
     assert err.value.code=='telegram_response_unreadable'
     assert call.call_count==1
+
+
+def test_telegram_contradictory_http_success_has_distinct_unknown_code():
+    with patch('jarvis_return_worker.transport.urlopen', return_value=response({'ok': False, 'description': 'synthetic rejection'}, 200)) as call:
+        with pytest.raises(DeliveryError) as err:
+            TelegramTransport(TOKEN, CHAT).deliver(task())
+    assert err.value.classification == Classification.UNKNOWN
+    assert err.value.code == 'telegram_contradictory_response_unknown'
+    assert TOKEN not in str(err.value)
+    call.assert_called_once()
