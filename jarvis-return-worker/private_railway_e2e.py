@@ -87,7 +87,7 @@ def main():
         outcomes = list(pool.map(concurrent_send, range(8)))
     statuses = sorted(status for status, _ in outcomes)
     # A repeat run may replay an already committed synthetic operation.
-    assert statuses in ([201] + [200] * 7, [200] * 8), (
+    assert statuses in ([200] * 7 + [201], [200] * 8), (
         "concurrent duplicate HTTP statuses invalid: " + repr(statuses))
     receipts = {payload.get("receipt_id") for _, payload in outcomes}
     assert len(receipts) == 1 and None not in receipts, (
