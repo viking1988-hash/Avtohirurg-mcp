@@ -9,6 +9,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -64,6 +66,36 @@ def main():
     assert receipt == (200, first[1]), "stored receipt mismatch"
     audit = call("GET", "/audit/effects/" + key)
     assert audit == (200, {"effect_count": 1}), "exactly one durable effect required"
+    # Independent synthetic key: eight real overlapping requests to the deployed
+    # private HTTP receiver, not just concurrent in-process SQLite calls.
+    concurrent_key = key + "-concurrent-v1"
+    concurrent_headers = dict(headers, **{"Idempotency-Key": concurrent_key})
+    gate = threading.Barrier(8, timeout=15)
+
+    def concurrent_send(_):
+        gate.wait()
+        req = urllib.request.Request(
+            base + "/messages", data=b'{"concurrent":true}',
+            headers=concurrent_headers, method="POST")
+        try:
+            with opener.open(req, timeout=15) as resp:
+                return resp.status, json.load(resp)
+        except urllib.error.HTTPError as error:
+            return error.code, json.load(error)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        outcomes = list(pool.map(concurrent_send, range(8)))
+    statuses = sorted(status for status, _ in outcomes)
+    # A repeat run may replay an already committed synthetic operation.
+    assert statuses in ([201] + [200] * 7, [200] * 8), (
+        "concurrent duplicate HTTP statuses invalid: " + repr(statuses))
+    receipts = {payload.get("receipt_id") for _, payload in outcomes}
+    assert len(receipts) == 1 and None not in receipts, (
+        "concurrent requests did not share one durable receipt")
+    concurrent_audit = call("GET", "/audit/effects/" + concurrent_key)
+    assert concurrent_audit == (200, {"effect_count": 1}), (
+        "concurrent HTTP requests produced duplicate persisted effects")
+    print("PR47_CONCURRENT_PRIVATE_HTTP_E2E_PASS: requests=8; persisted_effects=1; synthetic only")
     print("PR47_EFFECT_COUNT_PASS: exactly one persisted effect for synthetic key")
     print("PR47_PRIVATE_HTTP_E2E_PASS: phase=" + phase + "; first_status=" + str(first[0]) + "; replay=200; conflict=409; receipt_get=200; receipt_id=" + str(first[1].get("receipt_id")) + "; synthetic only")
     print("NOTE: effect count verified via authenticated private HTTP endpoint querying mounted SQLite; no separate out-of-band SQL session")
