@@ -211,7 +211,10 @@ else:
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
         env=child_env)
     try:
-        assert proc.stdout.readline().strip()=='FENCE_OK'
+        first_line=proc.stdout.readline().strip()
+        if first_line!='FENCE_OK':
+            stderr=proc.stderr.read()
+            pytest.fail(f'child process did not reach dispatch fence (exit={proc.poll()}): {stderr[-2000:]}')
         with repo.connection() as c:
             c.execute("UPDATE jarvis_return_actions SET lease_until=now()-interval '1 minute',heartbeat_at=now()-interval '1 minute' WHERE task_id=%s",(task_id,))
         assert repo.recover('worker-b')>=1
