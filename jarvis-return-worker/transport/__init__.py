@@ -98,8 +98,8 @@ class TelegramTransport:
                     retry_after = data.get('parameters', {}).get('retry_after')
                 except Exception:
                     pass
-                _telegram_result('retryable', elapsed)
-                raise DeliveryError(Classification.RETRYABLE, 'telegram_rate_limited', retry_after) from None
+                _telegram_result('unknown', elapsed)
+                raise DeliveryError(Classification.UNKNOWN, 'telegram_rate_limit_outcome_unknown', retry_after) from None
             if 400 <= exc.code < 500:
                 _telegram_result('permanent', elapsed)
                 raise DeliveryError(Classification.PERMANENT, 'telegram_request_rejected') from None
@@ -121,8 +121,8 @@ class TelegramTransport:
                 code = 'telegram_request_rejected'
                 classification = Classification.PERMANENT
                 if status == 429:
-                    classification = Classification.RETRYABLE
-                    code = 'telegram_rate_limited'
+                    classification = Classification.UNKNOWN
+                    code = 'telegram_rate_limit_outcome_unknown'
                 elif status >= 500:
                     classification = Classification.UNKNOWN
                     code = 'telegram_server_outcome_unknown'
