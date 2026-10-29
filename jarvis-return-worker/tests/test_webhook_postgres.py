@@ -576,3 +576,30 @@ def test_webhook_bounded_http_budget_allows_single_synthetic_send(repo,monkeypat
  asyncio.run(Orchestrator(repo,dispatcher).process_webhook_operation(claim,'bounded-budget-worker'))
  assert spy.calls==1
  assert repo.get_webhook_operation(eid)['state']=='DONE'
+
+
+def test_webhook_accepted_without_receipt_never_becomes_done(repo,monkeypatch):
+ import asyncio
+ from jarvis_return_worker.dispatcher import TransportDispatcher
+ from jarvis_return_worker.orchestrator import Orchestrator
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation('missing-receipt-worker')
+ class AmbiguousProvider:
+  provider='webhook'
+  calls=0
+  def send(self,payload,key):
+   self.calls+=1
+   result=receipt(eid)
+   result['receipt']=None
+   return result
+ provider=AmbiguousProvider()
+ dispatcher=TransportDispatcher()
+ dispatcher.register('webhook',provider)
+ monkeypatch.setenv('JARVIS_WEBHOOK_BASE_URL','https://synthetic.invalid')
+ monkeypatch.setenv('JARVIS_WEBHOOK_TIMEOUT_SECONDS','1')
+ monkeypatch.setenv('JARVIS_WEBHOOK_MAX_RETRIES','0')
+ asyncio.run(Orchestrator(repo,dispatcher).process_webhook_operation(claim,'missing-receipt-worker'))
+ assert provider.calls==1
+ saved=repo.get_webhook_operation(eid)
+ assert saved['state']=='RECONCILIATION_REQUIRED'
+ assert repo.claim_webhook_operation('retry-after-missing-receipt') is None
