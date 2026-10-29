@@ -298,3 +298,44 @@ def test_worker_cancelled_at_dispatch_fence_does_not_send_or_clear_marker():
     assert provider.calls==[]
     assert repo.calls==["heartbeat","mark","fence"]
     assert "retry" not in repo.calls
+
+
+@pytest.mark.parametrize("failure", [
+    "accepted_then_response_lost",
+    "timeout_after_possible_acceptance",
+    "http_500_ambiguous",
+    "worker_crash_during_send",
+])
+def test_telegram_p1_ambiguous_acceptance_never_auto_resends(failure):
+    """Synthetic remote acceptance can precede loss of local acknowledgement.
+
+    This tests only orchestration policy; it does not call Telegram or prove
+    remote exactly-once semantics.
+    """
+    repo=Repo()
+    class AcceptedButUnconfirmed(Provider):
+        def __init__(self):
+            super().__init__("alpha")
+            self.synthetic_remote_effects=0
+        def send(self,task,key):
+            self.calls.append((task["task_id"],key))
+            self.synthetic_remote_effects+=1
+            if failure=="worker_crash_during_send":
+                raise SystemExit("synthetic process interruption")
+            raise DeliveryError(Classification.UNKNOWN,failure)
+    provider=AcceptedButUnconfirmed()
+    core=Orchestrator(repo,dispatcher(("alpha",provider,True)))
+    if failure=="worker_crash_during_send":
+        with pytest.raises(SystemExit,match="synthetic process interruption"):
+            run(core)
+    else:
+        run(core)
+    assert provider.synthetic_remote_effects==1
+    assert len(provider.calls)==1
+    assert repo.calls[:2]==["heartbeat","mark"]
+    assert "receipt" not in repo.calls
+    assert "finish" not in repo.calls
+    assert "retry" not in repo.calls
+    assert not core.policy.may_resend(
+        {**approved_task(),"delivery_started_at":NOW},
+        Classification.UNKNOWN)
