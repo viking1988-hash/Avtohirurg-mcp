@@ -128,6 +128,20 @@ class QueueRepository:
             record(c,b,r,'heartbeat',owner)
             return r
 
+    def verify_dispatch_lease(self, task_id, owner, attempt):
+        """Recheck database ownership immediately before invoking a provider.
+
+        This is a best-effort pre-send fence, not an atomic external-effect
+        boundary. Receiver-side idempotency remains mandatory.
+        """
+        with self.connection() as c:
+            row = self._owned(c, task_id, owner, attempt)
+            if not valid_approval(row):
+                raise Conflict('approval invalid at dispatch boundary')
+            if not row.get('delivery_started_at'):
+                raise Conflict('delivery boundary not recorded')
+        return True
+
     def mark_delivery_started(self, task_id, owner, attempt, provider=None):
         """Persist the external-effect boundary before invoking any transport."""
         with self.connection() as c:
