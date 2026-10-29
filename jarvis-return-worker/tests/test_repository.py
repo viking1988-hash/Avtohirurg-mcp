@@ -180,8 +180,14 @@ def test_separate_process_stale_sender_after_recovery_is_fenced(repo):
     task=repo.claim('worker-a')
     repo.mark_delivery_started(task_id,'worker-a',task['attempt_count'])
     child_code=r'''
-import os,sys
+import os,sys,importlib.util
+from pathlib import Path
 from types import SimpleNamespace
+root=Path(sys.argv[3])
+spec=importlib.util.spec_from_file_location('jarvis_return_worker',root/'__init__.py',submodule_search_locations=[str(root)])
+module=importlib.util.module_from_spec(spec)
+sys.modules['jarvis_return_worker']=module
+spec.loader.exec_module(module)
 from jarvis_return_worker.queue import QueueRepository,Conflict
 r=QueueRepository(SimpleNamespace(database_url=os.environ['JARVIS_WORKER_CI_DATABASE_URL'],worker_id='worker-a',lease_seconds=30,heartbeat_seconds=5,max_attempts=3))
 task_id=sys.argv[1]; attempt=int(sys.argv[2])
@@ -207,7 +213,7 @@ else:
     child_env=os.environ.copy()
     worker_root=str(Path(__file__).resolve().parents[1])
     child_env['PYTHONPATH']=os.pathsep.join(filter(None,[worker_root,child_env.get('PYTHONPATH','')]))
-    proc=subprocess.Popen([sys.executable,'-u','-c',child_code,task_id,str(task['attempt_count'])],
+    proc=subprocess.Popen([sys.executable,'-u','-c',child_code,task_id,str(task['attempt_count']),worker_root],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
         env=child_env)
     try:
