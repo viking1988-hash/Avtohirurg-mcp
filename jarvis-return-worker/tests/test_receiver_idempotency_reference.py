@@ -150,6 +150,53 @@ class ReceiverInboxTests(unittest.TestCase):
         self.assertEqual(self.inbox.effect_count(), 1)
         self.assertIsNotNone(self.inbox.receipt("sender-1", "conflict-key"))
 
+    def test_real_http_concurrent_duplicate_and_conflict(self):
+        """Exercise the threaded HTTP receiver, not just ReceiverInbox.submit."""
+        import http.client
+        from concurrent.futures import ThreadPoolExecutor
+        from http.server import ThreadingHTTPServer
+        import importlib.util
+        from pathlib import Path
+
+        receiver_path = Path(__file__).resolve().parents[1] / "isolated_receiver_http.py"
+        spec = importlib.util.spec_from_file_location("pr47_http_receiver_test", receiver_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        token = "synthetic-private-test-token-only"
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", 0), module.make_handler(self.path, token))
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        def request(body, key="pr47-durable-concurrent"):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+            try:
+                connection.request("POST", "/messages",
+                                   body=json.dumps(body).encode("utf-8"),
+                                   headers={"Authorization": "Bearer " + token,
+                                            "Idempotency-Key": key,
+                                            "Content-Type": "application/json"})
+                response = connection.getresponse()
+                return response.status, json.loads(response.read())
+            finally:
+                connection.close()
+
+        gate = threading.Barrier(8, timeout=10)
+        def duplicate(_):
+            gate.wait()
+            return request({"synthetic": 1})
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(duplicate, range(8)))
+        self.assertEqual(sorted(code for code, _ in results), [200] * 7 + [201])
+        self.assertEqual(len({value["receipt_id"] for _, value in results}), 1)
+        self.assertEqual(self.inbox.effect_count(), 1)
+        self.assertEqual(request({"synthetic": 2})[0], 409)
+        self.assertEqual(request({"synthetic": 1})[0], 200)
+        self.assertEqual(self.inbox.effect_count(), 1)
+
     def test_missing_identity_or_key_rejected(self):
         for principal, key in (("", "event-1"), ("sender-1", "")):
             with self.assertRaises(ValueError):
