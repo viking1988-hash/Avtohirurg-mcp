@@ -530,3 +530,26 @@ def test_concurrent_same_response_id_preserves_duplicate_receipt(repo):
  duplicate=next(x for x in states if x['state']=='RECONCILIATION_REQUIRED')
  assert duplicate['reconciliation_reason']=='duplicate_provider_response_id'
  assert duplicate['receipt']['duplicate_response_id']==next(x for x in states if x['state']=='DONE')['response_id']
+
+
+def test_webhook_budget_rejection_never_calls_provider(repo,monkeypatch):
+ import asyncio
+ from jarvis_return_worker.dispatcher import TransportDispatcher
+ from jarvis_return_worker.orchestrator import Orchestrator
+ eid,_=materialize(repo)
+ claim=repo.claim_webhook_operation('budget-blocked-worker')
+ class SpyProvider:
+  provider='webhook'
+  calls=0
+  def send(self,*args):
+   self.calls+=1
+   raise AssertionError('provider must not be called without sufficient lease')
+ spy=SpyProvider()
+ dispatcher=TransportDispatcher()
+ dispatcher.register('webhook',spy)
+ monkeypatch.setenv('JARVIS_WEBHOOK_BASE_URL','https://synthetic.invalid')
+ monkeypatch.setenv('JARVIS_WEBHOOK_TIMEOUT_SECONDS','8')
+ monkeypatch.setenv('JARVIS_WEBHOOK_MAX_RETRIES','2')
+ asyncio.run(Orchestrator(repo,dispatcher).process_webhook_operation(claim,'budget-blocked-worker'))
+ assert spy.calls==0
+ assert repo.get_webhook_operation(eid)['state']=='RECONCILIATION_REQUIRED'
