@@ -145,3 +145,25 @@ def test_restart_repository_never_resends_completed_action(repo):
     restarted=QueueRepository(repo.config)
     assert restarted.get(id)['state']=='DONE'
     assert restarted.claim('worker-after-restart') is None
+
+def test_dispatch_fence_rejects_expired_lease_after_start(repo):
+    id=make(repo)
+    task=repo.claim('worker-a')
+    repo.mark_delivery_started(id,'worker-a',task['attempt_count'])
+    assert repo.verify_dispatch_lease(id,'worker-a',task['attempt_count']) is True
+    with repo.connection() as c:
+        c.execute("UPDATE jarvis_return_actions SET lease_until=clock_timestamp()-interval '1 second' WHERE task_id=%s",(id,))
+    with pytest.raises(Conflict):
+        repo.verify_dispatch_lease(id,'worker-a',task['attempt_count'])
+
+
+def test_dispatch_fence_rejects_recovered_stale_worker(repo):
+    id=make(repo)
+    task=repo.claim('worker-a')
+    repo.mark_delivery_started(id,'worker-a',task['attempt_count'])
+    with repo.connection() as c:
+        c.execute("UPDATE jarvis_return_actions SET lease_until=clock_timestamp()-interval '1 second' WHERE task_id=%s",(id,))
+    repo.recover('recovery')
+    with pytest.raises(Conflict):
+        repo.verify_dispatch_lease(id,'worker-a',task['attempt_count'])
+    assert repo.get(id)['state']=='RECONCILIATION_REQUIRED'
