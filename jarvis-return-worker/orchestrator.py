@@ -277,7 +277,9 @@ class Orchestrator:
         except Exception as exc:
             decision=self.policy.delivery_failure(exc,task)
             try:
-                if decision.action=="retry" and self.policy.may_resend(task,Classification.RETRYABLE):
+                if (decision.action=="retry" and isinstance(exc,DeliveryError)
+                        and exc.classification==Classification.RETRYABLE
+                        and self.policy.may_resend(task,exc.classification)):
                     await asyncio.to_thread(self.repository.retry_confirmed_rejection,task["task_id"],owner,task["attempt_count"],getattr(exc,"retry_after",None))
                     from .metrics import policy_retry
                     policy_retry()
