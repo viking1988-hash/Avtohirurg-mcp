@@ -178,3 +178,32 @@ def test_comment_alone_cannot_confirm_delivery_and_rejection_is_audited(repo):
     assert any(e["action"] == "reconcile_failed" and e["actor"] == "operator-a"
                and e["metadata"].get("requested_action") == "confirm-delivered"
                for e in events)
+
+
+def test_confirmation_api_rejects_reader_and_comment_only_evidence(repo):
+    task_id, row = uncertain(repo)
+    app = FastAPI()
+    app.include_router(router)
+    app.state.repository = repo
+    app.state.orchestrator = Orchestrator(repo, TransportDispatcher())
+    app.state.config = SimpleNamespace(read_token=READ_TOKEN, approval_token=APPROVAL_TOKEN,
+                                       operator_id="sandbox-operator")
+    path = f"/queue/{task_id}/confirm-delivered"
+    body = {"expected_version":row["version"], "reason":"reviewed synthetic channel",
+            "comment":"comment alone is not proof", "provider":"telegram"}
+    with TestClient(app) as client:
+        unauthenticated = client.post(path, json=body)
+        reader = client.post(path, headers={"Authorization":"Bearer "+READ_TOKEN}, json=body)
+        operator = client.post(path, headers={"Authorization":"Bearer "+APPROVAL_TOKEN}, json=body)
+    assert unauthenticated.status_code == 401
+    assert reader.status_code == 401
+    assert operator.status_code == 409
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["version"] == row["version"]
+    with repo.connection() as conn:
+        events = conn.execute(
+            "SELECT action,actor FROM jarvis_return_action_events WHERE task_id=%s",
+            (task_id,)).fetchall()
+    assert any(e["action"] == "reconcile_failed" and e["actor"] == "sandbox-operator"
+               for e in events)
