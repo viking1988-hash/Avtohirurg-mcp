@@ -253,7 +253,13 @@ class Orchestrator:
                 from .metrics import dispatcher_failure
                 dispatcher_failure(str(exc))
                 raise
-            result=await asyncio.to_thread(self._send,provider,task)
+            def fenced_provider_send():
+                # Keep the DB ownership check and provider invocation in one
+                # worker thread, minimizing (not eliminating) the TOCTOU gap.
+                self.repository.verify_dispatch_lease(
+                    task["task_id"], owner, task["attempt_count"])
+                return self._send(provider, task)
+            result=await asyncio.to_thread(fenced_provider_send)
             receipt=result.get("receipt_id") or result.get("receipt") or result.get("message_id")
             message_id=result.get("message_id")
             if not receipt:
