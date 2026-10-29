@@ -62,6 +62,9 @@ def main():
     assert conflict[0] == 409, "changed payload must conflict"
     receipt = call("GET", "/receipts/" + key)
     assert receipt == (200, first[1]), "stored receipt mismatch"
+    audit = call("GET", "/audit/effects/" + key)
+    assert audit == (200, {"effect_count": 1}), "exactly one durable effect required"
+    print("PR47_EFFECT_COUNT_PASS: exactly one persisted effect for synthetic key")
     print("PR47_PRIVATE_HTTP_E2E_PASS: phase=" + phase + "; first_status=" + str(first[0]) + "; replay=200; conflict=409; receipt_get=200; receipt_id=" + str(first[1].get("receipt_id")) + "; synthetic only")
     print("NOTE: effect count requires independent database-side verification")
 
