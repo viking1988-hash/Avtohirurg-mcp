@@ -72,7 +72,7 @@ class OfflineContract(unittest.TestCase):
                     raise CLIENT.urllib.error.HTTPError(
                         req.full_url, 409, "Conflict", {},
                         io.BytesIO(b'{"error":"idempotency_conflict"}'))
-                is_audit = req.full_url.endswith("/audit/effects/" + req.get_header("Idempotency-key"))
+                is_audit = "/audit/effects/" in req.full_url
                 return ReadableResponse(status, {"effect_count": 1} if is_audit else receipt)
         opener = Opener(statuses)
         env = {"JARVIS_PR47_DISPOSABLE_ONLY": "YES",
