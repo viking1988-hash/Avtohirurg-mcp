@@ -4,7 +4,6 @@ import os
 import pathlib
 import sqlite3
 from http.server import ThreadingHTTPServer
-from isolated_receiver_http import make_handler
 
 def main():
     if os.environ.get("JARVIS_PR47_DISPOSABLE_ONLY") != "YES":
@@ -21,6 +20,7 @@ def main():
     port = int(os.environ.get("PORT", "8080"))
     if not 1 <= port <= 65535:
         raise SystemExit("invalid port")
+    from isolated_receiver_http import make_handler
     # Private Railway networking only; do not attach a public domain.
     ThreadingHTTPServer(("0.0.0.0", port), make_handler(str(database), token)).serve_forever()
 
