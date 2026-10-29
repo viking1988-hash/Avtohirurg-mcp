@@ -77,14 +77,33 @@ def main():
         req = urllib.request.Request(
             base + "/messages", data=b'{"concurrent":true}',
             headers=concurrent_headers, method="POST")
+        # Each concurrent request owns its opener. Never replay an ambiguous
+        # network failure: audit the durable receiver state instead.
+        thread_opener = urllib.request.build_opener(
+            NoRedirect(), urllib.request.ProxyHandler({}))
         try:
-            with opener.open(req, timeout=15) as resp:
+            with thread_opener.open(req, timeout=15) as resp:
                 return resp.status, json.load(resp)
         except urllib.error.HTTPError as error:
             return error.code, json.load(error)
+        except (OSError, TimeoutError) as error:
+            return None, {"transport_error": type(error).__name__}
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         outcomes = list(pool.map(concurrent_send, range(8)))
+    # Always inspect durable state, including after connection resets. No
+    # automatic POST retry of an ambiguous external effect.
+    concurrent_audit = call("GET", "/audit/effects/" + concurrent_key)
+    concurrent_receipt = call("GET", "/receipts/" + concurrent_key)
+    assert concurrent_audit == (200, {"effect_count": 1}), (
+        "concurrent receiver audit failed: " + repr(concurrent_audit))
+    assert concurrent_receipt[0] == 200, (
+        "concurrent durable receipt missing: " + repr(concurrent_receipt))
+    failures = [item for item in outcomes if item[0] is None]
+    if failures:
+        print("PR47_CONCURRENT_HTTP_AMBIGUOUS: transport_failures=" +
+              str(len(failures)) + "; persisted_effects=1; manual reconciliation required")
+        raise AssertionError("ambiguous concurrent HTTP response; no automatic resend")
     statuses = sorted(status for status, _ in outcomes)
     # A repeat run may replay an already committed synthetic operation.
     assert statuses in ([200] * 7 + [201], [200] * 8), (
@@ -92,9 +111,8 @@ def main():
     receipts = {payload.get("receipt_id") for _, payload in outcomes}
     assert len(receipts) == 1 and None not in receipts, (
         "concurrent requests did not share one durable receipt")
-    concurrent_audit = call("GET", "/audit/effects/" + concurrent_key)
-    assert concurrent_audit == (200, {"effect_count": 1}), (
-        "concurrent HTTP requests produced duplicate persisted effects")
+    assert all(payload == concurrent_receipt[1] for _, payload in outcomes), (
+        "concurrent HTTP responses disagree with durable receipt")
     print("PR47_CONCURRENT_PRIVATE_HTTP_E2E_PASS: requests=8; persisted_effects=1; synthetic only")
     print("PR47_EFFECT_COUNT_PASS: exactly one persisted effect for synthetic key")
     print("PR47_PRIVATE_HTTP_E2E_PASS: phase=" + phase + "; first_status=" + str(first[0]) + "; replay=200; conflict=409; receipt_get=200; receipt_id=" + str(first[1].get("receipt_id")) + "; synthetic only")
