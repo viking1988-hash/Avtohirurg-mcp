@@ -212,7 +212,8 @@ else:
     from pathlib import Path
     child_env=os.environ.copy()
     worker_root=str(Path(__file__).resolve().parents[1])
-    child_env['PYTHONPATH']=os.pathsep.join(filter(None,[worker_root,child_env.get('PYTHONPATH','')]))
+    # Do not add worker_root to sys.path: queue.py shadows Python's stdlib queue,
+    # which psycopg imports. The child loads the package via importlib instead.
     proc=subprocess.Popen([sys.executable,'-u','-c',child_code,task_id,str(task['attempt_count']),worker_root],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
         env=child_env)
