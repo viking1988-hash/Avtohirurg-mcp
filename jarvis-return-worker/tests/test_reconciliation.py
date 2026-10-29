@@ -229,3 +229,20 @@ def test_blank_delivery_evidence_is_rejected_and_audited(repo, provider, receipt
             "SELECT action FROM jarvis_return_action_events WHERE task_id=%s",
             (task_id,)).fetchall()
     assert any(event["action"] == "reconcile_failed" for event in events)
+
+
+def test_uncertain_delivery_cannot_requeue_until_manual_resolution_and_fresh_approval(repo):
+    task_id, row = uncertain(repo)
+    with pytest.raises(Conflict):
+        repo.requeue(task_id, "operator-a")
+    assert repo.claim("another-worker") is None
+    confirmed = call(repo, task_id, "operator-a", "confirm-undelivered", row,
+                     comment="synthetic provider check found no delivery")
+    with pytest.raises(Conflict):
+        repo.requeue(task_id, "operator-a")
+    ready = call(repo, task_id, "operator-a", "request-new-approval", confirmed)
+    assert ready["state"] == "READY"
+    assert ready["approved_by"] is None
+    assert ready["approved_fingerprint"] is None
+    assert repo.claim("another-worker") is None
+    assert repo.get(task_id)["version"] == ready["version"]
