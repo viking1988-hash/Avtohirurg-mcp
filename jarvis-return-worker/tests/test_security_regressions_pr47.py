@@ -20,6 +20,20 @@ class HTTPClientSafetyTests(unittest.TestCase):
         result = client.request("POST", "https://example.test/webhook")
         self.assertEqual(result["response_id"], "provider-123")
 
+    def test_lowercase_retry_after_http_date_on_429(self):
+        from urllib.error import HTTPError
+        from io import BytesIO
+        headers = Message()
+        headers["retry-after"] = "Wed, 01 Jan 2099 00:00:00 GMT"
+        def opener(request, timeout):
+            raise HTTPError(request.full_url, 429, "rate limited", headers,
+                            BytesIO(b'{"error":"synthetic"}'))
+        client = HTTPClient(opener=opener, max_retries=0)
+        with self.assertRaises(DeliveryError) as raised:
+            client.request("POST", "https://example.test/webhook")
+        self.assertEqual(raised.exception.retry_after,
+                         "Wed, 01 Jan 2099 00:00:00 GMT")
+
     def test_reserved_headers_rejected_case_insensitively(self):
         client = HTTPClient(opener=lambda *args, **kwargs: self.fail("network attempted"))
         for header in ("idempotency-key", "X-REQUEST-ID", "Content-Length", "HOST"):
