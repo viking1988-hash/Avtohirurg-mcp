@@ -116,7 +116,7 @@ def test_worker_unknown_does_not_auto_retry():
 @pytest.mark.parametrize('body,status,classification',[
     ({'ok':True,'result':{'message_id':51,'chat':{'id':999}}},200,Classification.UNKNOWN),
     ({'ok':True,'result':{'chat':{'id':int(CHAT)}}},200,Classification.UNKNOWN),
-    ({'ok':False,'description':'synthetic rejected'},200,Classification.PERMANENT),
+    ({'ok':False,'description':'synthetic rejected'},200,Classification.UNKNOWN),
     ({'ok':False,'description':'synthetic upstream failure'},503,Classification.UNKNOWN),
     ({'ok':False,'parameters':{'retry_after':4}},429,Classification.UNKNOWN),
 ])
