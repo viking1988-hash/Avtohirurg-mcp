@@ -1,6 +1,7 @@
 """Disposable cross-system E2E for issue #77. Synthetic data only; never Production."""
 import asyncio
 import os
+import re
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -151,7 +152,12 @@ def main():
         orchestrator = Orchestrator(repo, dispatcher, event_bus=registry, intake_store=store)
         result = asyncio.run(run_worker_until_terminal(orchestrator, store, SOURCE_ID))
         if result["state"] != "DONE" or not result.get("external_lead_id"):
-            raise RuntimeError("worker_dispatch_not_receipt_confirmed")
+            events = store.events(SOURCE_ID)
+            failure_reason = next((event.get("reason", "") for event in reversed(events)
+                                   if event.get("action") in ("failed", "reconciliation_required")), "")
+            safe_reason = failure_reason if re.fullmatch(r"[a-zA-Z0-9_:-]{1,200}", failure_reason) else "redacted"
+            raise RuntimeError("worker_dispatch_not_receipt_confirmed state=" + str(result.get("state"))
+                               + " reason=" + safe_reason)
 
         with psycopg.connect(crm_database_url, connect_timeout=8) as pool:
             db_name = pool.execute("SELECT current_database() AS db").fetchone()[0]
