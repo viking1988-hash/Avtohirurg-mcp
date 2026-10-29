@@ -41,7 +41,7 @@ class LiveDisposableContractTests(unittest.TestCase):
                 suite = unittest.defaultTestLoader.loadTestsFromTestCase(contract.DisposableReceiverContract)
                 result = unittest.TestResult()
                 suite.run(result)
-                self.assertEqual(result.testsRun, 1)
+                self.assertEqual(result.testsRun, 2)
                 self.assertFalse(result.skipped, "contract must run, not skip")
                 self.assertFalse(result.errors, result.errors)
                 self.assertFalse(result.failures, result.failures)
