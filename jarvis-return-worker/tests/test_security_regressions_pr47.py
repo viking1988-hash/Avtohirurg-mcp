@@ -321,3 +321,50 @@ class WebhookRemainingLeaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReturnWorkerDispatchFenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stale_claim_never_invokes_provider(self):
+        from jarvis_return_worker.orchestrator import Orchestrator
+        from jarvis_return_worker.queue import Conflict
+        repository = Mock()
+        repository.verify_dispatch_lease.side_effect = Conflict("stale lease")
+        repository.fail.side_effect = Conflict("stale lease")
+        dispatcher = Mock()
+        provider = Mock()
+        dispatcher.dispatch.return_value = provider
+        orchestrator = Orchestrator(repository, dispatcher)
+        orchestrator.policy = Mock()
+        orchestrator.policy.approval.return_value.action = "send"
+        orchestrator.policy.delivery_failure.return_value.action = "reconcile"
+        task = {"task_id": "synthetic-stale", "attempt_count": 1,
+                "destination_key": "sandbox:never-send",
+                "action_fingerprint": "test-only"}
+        await orchestrator.process(task, "expired-owner")
+        repository.verify_dispatch_lease.assert_called_once_with(
+            "synthetic-stale", "expired-owner", 1)
+        provider.send.assert_not_called()
+        repository.save_delivery_receipt.assert_not_called()
+        repository.finish.assert_not_called()
+
+    async def test_live_claim_checks_fence_before_provider(self):
+        from jarvis_return_worker.orchestrator import Orchestrator
+        from jarvis_return_worker.transport import Classification, DeliveryError
+        calls = []
+        repository = Mock()
+        repository.verify_dispatch_lease.side_effect = lambda *args: calls.append("verify")
+        dispatcher = Mock()
+        provider = Mock()
+        provider.provider = "fake"
+        provider.send.side_effect = lambda *args: (calls.append("send") or
+            {"receipt_id": "synthetic-receipt"})
+        dispatcher.dispatch.return_value = provider
+        orchestrator = Orchestrator(repository, dispatcher)
+        orchestrator.policy = Mock()
+        orchestrator.policy.approval.return_value.action = "send"
+        task = {"task_id": "synthetic-live", "attempt_count": 1,
+                "destination_key": "sandbox:never-send",
+                "action_fingerprint": "test-only"}
+        await orchestrator.process(task, "live-owner")
+        self.assertEqual(calls, ["verify", "send"])
+        repository.finish.assert_called_once()
