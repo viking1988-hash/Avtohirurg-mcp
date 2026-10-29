@@ -66,7 +66,7 @@ def main():
     assert audit == (200, {"effect_count": 1}), "exactly one durable effect required"
     print("PR47_EFFECT_COUNT_PASS: exactly one persisted effect for synthetic key")
     print("PR47_PRIVATE_HTTP_E2E_PASS: phase=" + phase + "; first_status=" + str(first[0]) + "; replay=200; conflict=409; receipt_get=200; receipt_id=" + str(first[1].get("receipt_id")) + "; synthetic only")
-    print("NOTE: effect count requires independent database-side verification")
+    print("NOTE: effect count verified via authenticated private HTTP endpoint querying mounted SQLite; no separate out-of-band SQL session")
 
 
 if __name__ == "__main__":
