@@ -44,6 +44,12 @@ Request a new approval after confirmed non-delivery:
 
 The POST response contains the updated task and incremented version. Stale versions, duplicate confirmations, invalid transitions and concurrent conflicts return 409; callers must GET the current state before deciding what to do. Missing tasks return 404; repository outages return 503. Every accepted or rejected valid operation is written to the audit journal.
 
+CRM operations are inspected with authenticated `GET /crm/operations/{event_id}`.
+An authorized operator requests a read-only lookup with
+`POST /crm/operations/{event_id}/reconcile` and body
+`{"expected_version":0}`. An inconclusive lookup stays in
+`RECONCILIATION_REQUIRED`; stale versions return 409.
+
 
 ## Outbox metrics
 
@@ -61,3 +67,4 @@ The authenticated `/metrics` endpoint also exports:
 
 The durable totals are reconstructed from PostgreSQL after restart. Replay latency
 is process-local. See the [Transactional Outbox and Replay guide](transactional-outbox.md).
+

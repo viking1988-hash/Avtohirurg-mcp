@@ -58,6 +58,43 @@ jobs:
           receipt = FakeTransport(repo, 'restart-ci').deliver(task)
           repo.save_delivery_receipt(task_id, 'restart-ci', task['attempt_count'], receipt, 'restart-probe-message')
           repo.finish(task_id, 'restart-ci', task['attempt_count'], receipt)
+          from jarvis_return_worker.crm import CRMAdapter
+          from jarvis_return_worker.events import EventBus
+          from jarvis_return_worker.outbox import OutboxReplay, append_event
+          suffix = 'pg-restart-crm-probe'
+          with repo.connection() as conn:
+              crm_event_id = append_event(conn, aggregate_id=suffix, aggregate_type='booking',
+                  event_type='BookingCreated', event_version=1,
+                  payload={'booking_id':suffix,'synthetic':True},
+                  correlation_id=suffix, causation_id=suffix)
+          registry = EventBus()
+          CRMAdapter().register(registry)
+          crm_replay = OutboxReplay(repo,registry,owner='postgres-restart-crm-ci')
+          crm_replay.register_subscribers()
+          for _ in range(100):
+              if repo.get_crm_operation(crm_event_id): break
+              assert crm_replay.replay_one()
+          assert repo.get_crm_operation(crm_event_id)['state'] == 'PENDING'
+          assert repo.get_crm_operation(crm_event_id)['provider_receipt'] is None
+          from jarvis_return_worker.email_adapter import EmailAdapter
+          from jarvis_return_worker.events import EventBus
+          from jarvis_return_worker.orchestrator import Orchestrator
+          from jarvis_return_worker.outbox import OutboxReplay
+          email_service = Orchestrator(repo, __import__('jarvis_return_worker.dispatcher', fromlist=['TransportDispatcher']).TransportDispatcher())
+          email_event_id = email_service.request_email('ci@example.test','Restart probe','Synthetic sink only',
+              'email-pg-restart-corr','email-pg-restart-causation')
+          email_registry = EventBus()
+          EmailAdapter().register(email_registry)
+          email_replay = OutboxReplay(repo,email_registry,owner='postgres-restart-email-ci')
+          email_replay.register_subscribers()
+          for _ in range(100):
+              if repo.get_email_operation(email_event_id): break
+              assert email_replay.replay_one()
+          assert repo.get_email_operation(email_event_id)['state'] == 'PENDING'
+          with repo.connection() as conn:
+              assert conn.execute("""SELECT count(*) AS n FROM jarvis_processed_events
+                  WHERE event_id=%s AND subscriber_name='jarvis.email-adapter'""",
+                  (email_event_id,)).fetchone()['n'] == 1
           PY
           container_id="$(docker ps -q --filter ancestor=postgres:18 | head -n1)"
           test -n "$container_id"
@@ -85,6 +122,28 @@ jobs:
           assert row['state'] == 'DONE'
           assert row['external_message_id'] == 'restart-probe-message'
           assert repo.claim('after-restart') is None
+
+          with repo.connection() as conn:
+              email_event_id = conn.execute("""SELECT event_id FROM jarvis_outbox_events
+                  WHERE causation_id='email-pg-restart-causation'""").fetchone()['event_id']
+              email_row = conn.execute("SELECT state,receipt FROM jarvis_email_operations WHERE event_id=%s",
+                  (email_event_id,)).fetchone()
+              email_processed = conn.execute("""SELECT count(*) AS n FROM jarvis_processed_events
+                  WHERE event_id=%s AND subscriber_name='jarvis.email-adapter'""",
+                  (email_event_id,)).fetchone()['n']
+          assert email_row['state'] == 'PENDING' and email_row['receipt'] is None
+          assert email_processed == 1
+          from jarvis_return_worker.email_adapter import EmailAdapter
+          from jarvis_return_worker.events import EventBus
+          from jarvis_return_worker.outbox import OutboxReplay
+          email_registry = EventBus()
+          EmailAdapter().register(email_registry)
+          email_replay = OutboxReplay(repo,email_registry,owner='postgres-restart-email-after')
+          email_replay.register_subscribers()
+          assert email_replay.replay_one() is False
+          with repo.connection() as conn:
+              assert conn.execute("SELECT count(*) AS n FROM jarvis_email_operations WHERE event_id=%s",
+                  (email_event_id,)).fetchone()['n'] == 1
 
           from jarvis_return_worker.outbox import OutboxReplay, SubscriberRegistry
           from psycopg.types.json import Jsonb
@@ -114,10 +173,27 @@ jobs:
                     AND p.subscriber_name='jarvis.ci.restart-projection'""",
                   (task_id,)).fetchone()['n']
               assert durable == projected == 1
-          print('PostgreSQL restart recovery check: task receipt and outbox event survived; replay exactly once')
+          from jarvis_return_worker.crm import CRMAdapter
+          from jarvis_return_worker.events import EventBus
+          from jarvis_return_worker.outbox import OutboxReplay
+          with repo.connection() as conn:
+              crm_row = conn.execute("""SELECT o.state,o.provider_receipt,count(p.event_id) AS processed
+                  FROM jarvis_crm_operations o LEFT JOIN jarvis_processed_events p
+                    ON p.event_id=o.event_id AND p.subscriber_name='jarvis.crm-adapter'
+                  WHERE o.event_id=(SELECT event_id FROM jarvis_outbox_events WHERE causation_id='pg-restart-crm-probe')
+                  GROUP BY o.event_id""").fetchone()
+              assert crm_row['state'] == 'PENDING' and crm_row['provider_receipt'] is None
+              assert crm_row['processed'] == 1
+          registry = EventBus()
+          CRMAdapter().register(registry)
+          replay = OutboxReplay(repo,registry,owner='postgres-restart-crm-after')
+          replay.register_subscribers()
+          assert replay.replay_one() is False
+          print('PostgreSQL restart recovery check: task receipt, CRM intent and outbox marker survived; replay exactly once; no external CRM request')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: worker-test-results
           path: worker-test-results.xml
+
