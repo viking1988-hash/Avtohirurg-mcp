@@ -264,3 +264,22 @@ def test_two_workers_shared_marker_blocks_second_external_send():
     assert len(provider.calls)==1
     assert repo.calls.count("mark")==1
     assert "retry" not in repo.calls
+
+
+def test_stale_worker_receipt_and_failure_are_fenced_after_remote_send():
+    """A stale sender cannot commit a receipt or overwrite reconciliation state."""
+    from jarvis_return_worker.queue import Conflict
+    class StaleRepo(Repo):
+        def save_delivery_receipt(self,*args):
+            self.calls.append("stale_receipt_rejected")
+            raise Conflict("lease owner changed after remote send")
+        def fail(self,*args):
+            self.calls.append("stale_failure_rejected")
+            raise Conflict("reconciliation owned by recovery worker")
+    repo=StaleRepo()
+    provider=Provider("alpha")
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert len(provider.calls)==1
+    assert repo.calls==["heartbeat","mark","stale_receipt_rejected","stale_failure_rejected"]
+    assert "finish" not in repo.calls
+    assert "retry" not in repo.calls
