@@ -135,7 +135,7 @@ def mutate(repo, task_id, actor, action, expected_version, *, reason, comment=No
                 effective_provider = provider or before.get("provider")
                 effective_receipt = provider_receipt or before.get("provider_receipt")
                 effective_message = provider_message_id or before.get("provider_message_id")
-                if not effective_provider or not (effective_receipt or effective_message or comment):
+                if not effective_provider or not (effective_receipt or effective_message):
                     raise Conflict("provider and delivery evidence are required")
                 after = conn.execute(
                     """UPDATE jarvis_return_actions SET state='DELIVERED_CONFIRMED',
