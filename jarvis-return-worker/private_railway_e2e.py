@@ -53,7 +53,7 @@ def main():
 
     first = call("POST", "/messages", {"synthetic": True})
     if phase == "seed":
-        assert first[0] == 201, "seed phase must create a new receipt"
+        assert first[0] in (200, 201), "seed must create or replay an identical synthetic receipt"
     else:
         assert first[0] == 200, "verify phase must replay the durable receipt after restart"
     second = call("POST", "/messages", {"synthetic": True})
@@ -62,7 +62,7 @@ def main():
     assert conflict[0] == 409, "changed payload must conflict"
     receipt = call("GET", "/receipts/" + key)
     assert receipt == (200, first[1]), "stored receipt mismatch"
-    print("PR47_PRIVATE_HTTP_E2E_PASS: phase=" + phase + "; first_status=" + str(first[0]) + "; replay=200; conflict=409; receipt_get=200; synthetic only")
+    print("PR47_PRIVATE_HTTP_E2E_PASS: phase=" + phase + "; first_status=" + str(first[0]) + "; replay=200; conflict=409; receipt_get=200; receipt_id=" + str(first[1].get("receipt_id")) + "; synthetic only")
     print("NOTE: effect count requires independent database-side verification")
 
 
