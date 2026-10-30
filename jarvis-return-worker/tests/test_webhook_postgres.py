@@ -77,6 +77,23 @@ def test_unknown_reconciliation_is_optimistically_locked(repo):
  assert repo.claim_webhook_operation("worker") is None
 
 
+def test_retry_after_http_date_is_persisted_as_bounded_retry(repo):
+ from datetime import datetime,timedelta,timezone
+ from email.utils import format_datetime
+ eid,_=materialize(repo)
+ owner="retry-after-date-worker"
+ claim=repo.claim_webhook_operation(owner)
+ retry_at=datetime.now(timezone.utc)+timedelta(seconds=25)
+ saved=repo.fail_webhook_operation(eid,owner,claim["attempt_count"],claim["version"],
+   Classification.RETRYABLE,"webhook_rate_limited",
+   retry_after=format_datetime(retry_at,usegmt=True))
+ assert saved["state"]=="PENDING"
+ with repo.connection() as c:
+  remaining=c.execute("""SELECT extract(epoch from (next_attempt_at-clock_timestamp())) AS seconds
+    FROM jarvis_webhook_operations WHERE event_id=%s""",(eid,)).fetchone()["seconds"]
+ assert 15 <= remaining <= 26
+
+
 def test_duplicate_provider_response_is_reconciliation_required(repo):
  eid1,_=materialize(repo);eid2,_=materialize(repo)
  op1=repo.claim_webhook_operation("response-worker-a")
