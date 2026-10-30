@@ -74,7 +74,10 @@ def make_dispatcher(config, repository):
     # Keep the provider registry composable: selecting the primary transport
     # does not unregister other Sandbox providers that have credentials.
     dispatcher.register('fake',FakeTransport(float(os.environ.get('JARVIS_FAKE_DELAY_SECONDS','0'))),enabled=True)
-    if config.telegram_bot_token and config.telegram_test_chat_id:
+    # Real Telegram delivery is fail-closed until separately approved.
+    # Credentials alone must never enable an outbound transport.
+    telegram_opt_in=os.environ.get('JARVIS_TELEGRAM_OUTBOUND_APPROVED','').strip()=='1'
+    if telegram_opt_in and config.telegram_bot_token and config.telegram_test_chat_id:
         dispatcher.register('telegram',TelegramTransport(config.telegram_bot_token,config.telegram_test_chat_id,
             int(os.environ.get('JARVIS_TELEGRAM_TIMEOUT_SECONDS','10'))),enabled=True)
     if selected=='telegram':
