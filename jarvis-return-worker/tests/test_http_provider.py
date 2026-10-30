@@ -147,6 +147,7 @@ def test_http_metrics_are_rendered():
 def test_generic_http_provider_registers_alongside_existing_providers(monkeypatch):
     from jarvis_return_worker.app import make_dispatcher
     monkeypatch.setenv("JARVIS_TRANSPORT","fake")
+    monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED','1')
     monkeypatch.setenv("JARVIS_CRM_SANDBOX_URL","https://crm-sandbox.up.railway.app")
     monkeypatch.setenv("JARVIS_CRM_SANDBOX_TOKEN","synthetic-crm-token")
     monkeypatch.setenv("JARVIS_EMAIL_SANDBOX_SMTP_HOST","mailpit.railway.internal")
