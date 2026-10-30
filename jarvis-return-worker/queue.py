@@ -21,7 +21,10 @@ class QueueRepository:
         with psycopg.connect(self.config.database_url, connect_timeout=5, row_factory=dict_row,
                             options='-c statement_timeout=5000 -c lock_timeout=3000') as conn:
             identity = conn.execute('SELECT current_database() AS db,current_user AS role').fetchone()
-            if identity != {'db': 'jarvis_return_queue_test', 'role': 'jarvis_sandbox'}:
+            expected = ({'db': 'jarvis_pr47_e2e', 'role': 'jarvis_test'}
+                        if getattr(self.config, 'isolated_e2e', lambda: False)() else
+                        {'db': 'jarvis_return_queue_test', 'role': 'jarvis_sandbox'})
+            if identity != expected:
                 raise RuntimeError('server sandbox identity mismatch')
             yield conn
 

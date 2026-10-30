@@ -156,6 +156,11 @@ async def lifespan(app):
     app.state.config,app.state.repository,app.state.stop,app.state.orchestrator=config,repo,stop,orchestrator
     app.state.event_registry,app.state.outbox_replay=registry,replay
     app.state.loops=loops
+    if os.environ.get('JARVIS_PR47_E2E_PROBE') == '1':
+        if not Config.isolated_e2e():
+            raise RuntimeError('PR47 probe is restricted to disposable fake-only Railway identity')
+        from .pr47_probe import run_probe
+        loops.append(asyncio.create_task(run_probe(repo,orchestrator)))
     logging.getLogger(__name__).warning('sandbox worker ready transport=%s',os.environ.get('JARVIS_TRANSPORT','fake'))
     try:
         yield
