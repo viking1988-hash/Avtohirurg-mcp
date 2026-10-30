@@ -23,13 +23,36 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r jarvis-return-worker/requirements.txt pytest httpx
-      - run: |
+      - name: Run worker suite with isolated loopback receiver
+        run: |
           python - <<'CODE'
-          import os, subprocess
+          import importlib.util, os, pathlib, secrets, sqlite3, subprocess, tempfile, threading
           from urllib.parse import urlunsplit
-          env = dict(os.environ)
-          env['JARVIS_WORKER_CI_DATABASE_URL'] = urlunsplit(('postgresql', 'jarvis_sandbox@localhost:5432', '/jarvis_return_queue_test', '', ''))
-          subprocess.run(['pytest', '-q', 'jarvis-return-worker/tests', '--junitxml=worker-test-results.xml'], env=env, check=True)
+
+          receiver_path = pathlib.Path('jarvis-return-worker/isolated_receiver_http.py')
+          spec = importlib.util.spec_from_file_location('pr47_isolated_receiver', receiver_path)
+          receiver = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(receiver)
+
+          with tempfile.TemporaryDirectory(prefix='pr47-receiver-ci-') as tmp:
+              db_path = str(pathlib.Path(tmp) / 'receiver.sqlite3')
+              with sqlite3.connect(db_path) as conn:
+                  conn.execute('CREATE TABLE inbox (principal TEXT NOT NULL, idem_key TEXT NOT NULL, fingerprint TEXT NOT NULL, receipt TEXT NOT NULL, PRIMARY KEY (principal, idem_key))')
+                  conn.execute('CREATE TABLE effects (id INTEGER PRIMARY KEY, principal TEXT NOT NULL, idem_key TEXT NOT NULL)')
+              token = secrets.token_urlsafe(32)
+              server = receiver.serve_local(db_path, token)
+              thread = threading.Thread(target=server.serve_forever, daemon=True)
+              thread.start()
+              try:
+                  env = dict(os.environ)
+                  env['JARVIS_WORKER_CI_DATABASE_URL'] = urlunsplit(('postgresql', 'jarvis_sandbox@localhost:5432', '/jarvis_return_queue_test', '', ''))
+                  env['JARVIS_RECEIVER_E2E_URL'] = 'http://127.0.0.1:%d' % server.server_port
+                  env['JARVIS_RECEIVER_E2E_TOKEN'] = token
+                  subprocess.run(['pytest', '-q', 'jarvis-return-worker/tests', '--junitxml=worker-test-results.xml'], env=env, check=True)
+              finally:
+                  server.shutdown()
+                  thread.join(timeout=5)
+                  server.server_close()
           CODE
       - name: Verify receipt survives PostgreSQL restart
         run: |
