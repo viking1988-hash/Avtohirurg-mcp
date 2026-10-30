@@ -107,7 +107,10 @@ def make_dispatcher(config, repository):
             int(os.environ.get('JARVIS_HTTP_TIMEOUT_SECONDS','8'))),enabled=True)
     webhook_url=os.environ.get('JARVIS_WEBHOOK_BASE_URL','')
     webhook_token=os.environ.get('JARVIS_WEBHOOK_TOKEN','')
-    if webhook_url or webhook_token:
+    # Webhook delivery stays fail-closed until receiver idempotency is reviewed.
+    # Endpoint credentials alone must never enable an external side effect.
+    webhook_opt_in=os.environ.get('JARVIS_WEBHOOK_OUTBOUND_APPROVED','').strip()=='1'
+    if webhook_opt_in and (webhook_url or webhook_token):
         if not webhook_url:
             raise ValueError('Webhook endpoint is required when a Webhook token is configured')
         headers={'Authorization':'Bearer '+webhook_token} if webhook_token else {}
