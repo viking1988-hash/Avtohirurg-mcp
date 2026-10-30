@@ -339,3 +339,35 @@ def test_telegram_p1_ambiguous_acceptance_never_auto_resends(failure):
     assert not core.policy.may_resend(
         {**approved_task(),"delivery_started_at":NOW},
         Classification.UNKNOWN)
+
+
+def test_two_distinct_workers_after_successful_fences_can_both_reach_receiver():
+    """Security regression evidence: lease fencing alone does not deduplicate remote effects."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier=threading.Barrier(2,timeout=10)
+    lock=threading.Lock()
+    delivered=[]
+    class RaceRepo(Repo):
+        def mark_delivery_started(self,*args):
+            self.calls.append("mark")
+        def verify_dispatch_lease(self,*args):
+            barrier.wait()
+            return True
+    class RaceProvider(Provider):
+        def send(self,task,key):
+            with lock:
+                delivered.append((task["task_id"],key))
+            raise DeliveryError(Classification.UNKNOWN,"response_lost_after_acceptance")
+
+    repo=RaceRepo()
+    provider=RaceProvider("alpha")
+    def worker(owner):
+        asyncio.run(Orchestrator(repo,dispatcher(("alpha",provider,True))).process(
+            approved_task(),owner))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(worker,("worker-a","worker-b")))
+    assert len(delivered)==2, "Both sends are reachable without receiver dedup"
+    assert len({key for _,key in delivered})==1, "Idempotency key must remain stable"
+    assert "retry" not in repo.calls, "UNKNOWN must not trigger automatic resend"
