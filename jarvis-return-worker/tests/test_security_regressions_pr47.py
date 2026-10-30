@@ -460,3 +460,25 @@ class ReturnWorkerDispatchFenceTests(unittest.IsolatedAsyncioTestCase):
         await orchestrator.process(task, "live-owner")
         self.assertEqual(calls, ["verify", "send"])
         repository.finish.assert_called_once()
+
+class AuditProviderMappingTests(unittest.TestCase):
+    def test_http_approval_audit_uses_http_provider(self):
+        from jarvis_return_worker.audit import append_audit_outbox
+
+        after = {
+            "task_id": "synthetic-http-audit",
+            "state": "APPROVED",
+            "version": 4,
+            "destination_key": "sandbox:http:https://receiver.invalid/synthetic",
+            "correlation_id": "synthetic-correlation",
+            "approved_at": datetime(2026, 10, 30, tzinfo=timezone.utc),
+            "approved_fingerprint": "sha256:synthetic",
+        }
+        with patch("jarvis_return_worker.outbox.append_event",
+                   return_value={"event_id": "synthetic-event"}) as append_event:
+            result = append_audit_outbox(
+                object(), "synthetic-audit-event", None, after, "approve"
+            )
+
+        self.assertEqual(result, {"event_id": "synthetic-event"})
+        self.assertEqual(append_event.call_args.kwargs["payload"]["provider"], "http")
