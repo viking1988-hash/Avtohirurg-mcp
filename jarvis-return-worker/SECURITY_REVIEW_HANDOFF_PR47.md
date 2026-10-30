@@ -8,13 +8,15 @@ Security issue: https://github.com/viking1988-hash/Avtohirurg-mcp/issues/69
 
 Review the Jarvis Return Worker in the PR branch, focusing on Telegram/webhook external effects, approval binding, PostgreSQL fencing and reconciliation. Use synthetic fixtures, disposable PostgreSQL and fake receivers only. Do not use real customer data, Telegram bots/chats, or Production. Do not merge, deploy, enable outbound transports or resolve review threads without evidence.
 
-## Verified baseline (2026-10-30)
+## Verified baseline (2026-10-30, refreshed against current HEAD)
 
-Commit `d9413ea3dec8831e853f48ca4c81d5fc66d6bfa2`.
-- Worker CI: https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41057065848 — SUCCESS; 297 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart recovery PASS.
-- MCP check: https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41057065842 — SUCCESS.
-- PR Draft, not merged. At last review, 10 inline threads: 8 unresolved, 2 resolved; no independent APPROVED.
-- Telegram registration requires credentials and exact `JARVIS_TELEGRAM_OUTBOUND_APPROVED=1`. Flag unset by default. Do **not** set this flag outside synthetic isolated review.
+Commit `d77c635e2b181867b2e7f497bccc97112c16d92c`.
+- Worker CI: https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41066733687 — SUCCESS; 299 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart recovery PASS.
+- MCP check: https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41066733700 — SUCCESS.
+- The two skipped tests are disposable-receiver contract tests skipped because no receiver endpoint is configured; they are not evidence of receiver-side idempotency. The warning is the Starlette TestClient deprecated AnyIO BlockingPortal alias.
+- PR is open, Draft, and unmerged. Review status at this check: 10 inline threads, 8 unresolved and 2 resolved; no independent APPROVED review.
+- Telegram registration requires credentials and exact `JARVIS_TELEGRAM_OUTBOUND_APPROVED=1`; webhook registration requires exact `JARVIS_WEBHOOK_OUTBOUND_APPROVED=1`. Both flags are unset by default. Do **not** set either flag outside synthetic isolated review.
+- Current-head adversarial PostgreSQL regression `test_separate_process_stale_sender_after_recovery_is_fenced` confirms a worker paused after DB verification can still resume and cause a synthetic remote effect after recovery. Fencing rejects stale DB writes and prevents a new claim while reconciliation is required, but cannot revoke an already-authorized/in-flight external request. This is evidence of the residual TOCTOU, not exactly-once delivery.
 
 ## Required independent verification
 
