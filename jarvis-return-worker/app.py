@@ -9,7 +9,7 @@ from .queue import QueueRepository
 from .transport import FakeTransport, TelegramTransport
 from .dispatcher import TransportDispatcher
 from .orchestrator import Orchestrator
-from .worker import Worker, CRMOperationWorker, EmailOperationWorker
+from .worker import Worker, CRMOperationWorker, EmailOperationWorker, WebhookOperationWorker
 from .lease import RecoveryWorker
 from .api import router
 from .health import ready
@@ -19,6 +19,8 @@ from .crm import CRMAdapter, CRMProvider
 from .email_adapter import EmailAdapter
 from .email_provider import EmailProvider
 from .http_provider import HTTPProvider
+from .webhook_provider import WebhookProvider
+from .webhook_adapter import WebhookAdapter
 
 
 def _project_event(conn,event):
@@ -32,13 +34,50 @@ def _project_event(conn,event):
     )
 
 
+def _create_dispatch_intent(conn,event):
+    """Project an approved event into a durable, version-bound delivery intent."""
+    payload=event["payload"]
+    if event["event_type"]!="TaskApproved" or payload.get("new_state")!="APPROVED":
+        raise ValueError("invalid TaskApproved dispatch event")
+    if not payload.get("approved_at") or not payload.get("approved_fingerprint"):
+        # Historical approval is not authorization for a new dispatch.
+        from .audit import record
+        row=conn.execute("SELECT * FROM jarvis_return_actions WHERE task_id=%s FOR UPDATE",
+                         (event["aggregate_id"],)).fetchone()
+        if row and row["state"]=="APPROVED":
+            updated=conn.execute("""UPDATE jarvis_return_actions
+                SET state='READY',approved_by=NULL,approved_at=NULL,
+                    approval_expires_at=NULL,approved_fingerprint=NULL,
+                    lease_owner=NULL,lease_until=NULL,
+                    version=version+1,updated_at=clock_timestamp()
+                WHERE task_id=%s RETURNING *""",(event["aggregate_id"],)).fetchone()
+            record(conn,row,updated,"requeue_requires_fresh_approval",
+                   "jarvis.lifecycle-projector",
+                   metadata={"reason":"legacy_approval_event_missing_binding",
+                             "outbox_event_id":str(event["event_id"])})
+        return
+    provider=payload.get("provider") or "fake"
+    conn.execute("""INSERT INTO jarvis_provider_dispatch_intents
+        (event_id,task_id,approved_at,approved_fingerprint,provider)
+        SELECT %s,a.task_id,a.approved_at,a.approved_fingerprint,%s
+        FROM jarvis_return_actions a
+        WHERE a.task_id=%s AND a.state='APPROVED'
+          AND a.approved_at=%s AND a.approved_fingerprint=%s
+        ON CONFLICT DO NOTHING""",
+        (event["event_id"],provider,event["aggregate_id"],payload["approved_at"],
+         payload["approved_fingerprint"]))
+
+
 def make_dispatcher(config, repository):
     dispatcher=TransportDispatcher()
     selected=os.environ.get('JARVIS_TRANSPORT','fake')
     # Keep the provider registry composable: selecting the primary transport
     # does not unregister other Sandbox providers that have credentials.
     dispatcher.register('fake',FakeTransport(float(os.environ.get('JARVIS_FAKE_DELAY_SECONDS','0'))),enabled=True)
-    if config.telegram_bot_token and config.telegram_test_chat_id:
+    # Real Telegram delivery is fail-closed until separately approved.
+    # Credentials alone must never enable an outbound transport.
+    telegram_opt_in=os.environ.get('JARVIS_TELEGRAM_OUTBOUND_APPROVED','').strip()=='1'
+    if telegram_opt_in and config.telegram_bot_token and config.telegram_test_chat_id:
         dispatcher.register('telegram',TelegramTransport(config.telegram_bot_token,config.telegram_test_chat_id,
             int(os.environ.get('JARVIS_TELEGRAM_TIMEOUT_SECONDS','10'))),enabled=True)
     if selected=='telegram':
@@ -66,6 +105,18 @@ def make_dispatcher(config, repository):
             raise ValueError('HTTP Sandbox endpoint and token must be configured together')
         dispatcher.register('http',HTTPProvider(http_url,http_token,
             int(os.environ.get('JARVIS_HTTP_TIMEOUT_SECONDS','8'))),enabled=True)
+    webhook_url=os.environ.get('JARVIS_WEBHOOK_BASE_URL','')
+    webhook_token=os.environ.get('JARVIS_WEBHOOK_TOKEN','')
+    # Webhook delivery stays fail-closed until receiver idempotency is reviewed.
+    # Endpoint credentials alone must never enable an external side effect.
+    webhook_opt_in=os.environ.get('JARVIS_WEBHOOK_OUTBOUND_APPROVED','').strip()=='1'
+    if webhook_opt_in and (webhook_url or webhook_token):
+        if not webhook_url:
+            raise ValueError('Webhook endpoint is required when a Webhook token is configured')
+        headers={'Authorization':'Bearer '+webhook_token} if webhook_token else {}
+        dispatcher.register('webhook',WebhookProvider(webhook_url,
+            int(os.environ.get('JARVIS_WEBHOOK_TIMEOUT_SECONDS','8')),
+            int(os.environ.get('JARVIS_WEBHOOK_MAX_RETRIES','2')),headers=headers),enabled=True)
     return dispatcher
 
 
@@ -86,6 +137,8 @@ async def lifespan(app):
     registry.register("jarvis.lifecycle-projector","*",_project_event,version=1)
     CRMAdapter().register(registry)
     EmailAdapter().register(registry)
+    registry.register("jarvis.dispatcher-intent","TaskApproved",_create_dispatch_intent,version=1)
+    WebhookAdapter().register(registry)
     replay=OutboxReplay(repo,registry,owner=config.worker_id)
     orchestrator=Orchestrator(repo,dispatcher,event_bus=registry)
     transport=dispatcher.dispatch(os.environ.get('JARVIS_TRANSPORT','fake')).client
@@ -98,6 +151,8 @@ async def lifespan(app):
         loops.append(asyncio.create_task(CRMOperationWorker(orchestrator,stop).run()))
     if 'email' in dispatcher.names():
         loops.append(asyncio.create_task(EmailOperationWorker(orchestrator,stop).run()))
+    if 'webhook' in dispatcher.names():
+        loops.append(asyncio.create_task(WebhookOperationWorker(orchestrator,stop).run()))
     app.state.config,app.state.repository,app.state.stop,app.state.orchestrator=config,repo,stop,orchestrator
     app.state.event_registry,app.state.outbox_replay=registry,replay
     app.state.loops=loops

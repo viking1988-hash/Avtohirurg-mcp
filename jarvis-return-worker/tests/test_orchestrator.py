@@ -30,6 +30,7 @@ class Repo:
         self.config=type("Config",(),{"worker_id":"test-worker"})()
     def heartbeat(self,*args): self.calls.append("heartbeat")
     def mark_delivery_started(self,*args): self.calls.append("mark")
+    def verify_dispatch_lease(self,*args): return True
     def save_delivery_receipt(self,*args): self.calls.append("receipt")
     def finish(self,*args): self.calls.append("finish")
     def fail(self,*args): self.calls.append("fail")
@@ -184,3 +185,157 @@ def test_policy_engine_error_fails_closed_before_provider_call():
     run(core)
     assert provider.calls==[]
     assert repo.calls==["fail"]
+
+
+def test_expired_dispatch_lease_never_calls_external_provider():
+    from jarvis_return_worker.queue import Conflict
+    class ExpiredRepo(Repo):
+        def verify_dispatch_lease(self,*args):
+            self.calls.append("fence")
+            raise Conflict("lease expired at dispatch boundary")
+    repo=ExpiredRepo()
+    provider=Provider("alpha")
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert provider.calls==[]
+    assert repo.calls==["heartbeat","mark","fence","fail"]
+
+
+def test_misclassified_policy_retry_cannot_bypass_unknown_provider_error():
+    from jarvis_return_worker.policy import PolicyDecision
+    class UnsafePolicy(PolicyEngine):
+        def delivery_failure(self,error,task):
+            return PolicyDecision("retry","incorrect_retry_decision")
+    repo=Repo()
+    provider=Provider("alpha",error=DeliveryError(Classification.UNKNOWN,"ambiguous_timeout"))
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True)),policy=UnsafePolicy()))
+    assert len(provider.calls)==1
+    assert "retry" not in repo.calls
+    assert repo.calls==["heartbeat","mark","fail"]
+
+
+def test_lease_expires_after_fence_before_provider_call_is_not_atomic():
+    """Document TOCTOU: a successful DB fence does not reserve a remote send."""
+    class LeaseExpiresAfterFence(Repo):
+        def __init__(self):
+            super().__init__()
+            self.expired=False
+        def verify_dispatch_lease(self,*args):
+            self.calls.append("fence")
+            self.expired=True  # Simulated lease expiry after the successful check.
+            return True
+    class ObservingProvider(Provider):
+        def send(self,task,key):
+            assert repo.expired
+            return super().send(task,key)
+    repo=LeaseExpiresAfterFence()
+    provider=ObservingProvider("alpha",error=DeliveryError(Classification.UNKNOWN,"lost_response"))
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert len(provider.calls)==1  # External effect may start after lease expiry.
+    assert "retry" not in repo.calls
+    assert repo.calls==["heartbeat","mark","fence","fail"]
+
+
+def test_two_workers_shared_marker_blocks_second_external_send():
+    """Two orchestrators share a synthetic durable marker; only one reaches provider."""
+    from jarvis_return_worker.queue import Conflict
+    import threading
+    class SharedMarkerRepo(Repo):
+        def __init__(self):
+            super().__init__()
+            self.lock=threading.Lock()
+            self.started=False
+        def mark_delivery_started(self,*args):
+            with self.lock:
+                if self.started:
+                    raise Conflict("delivery marker already persisted")
+                self.started=True
+                self.calls.append("mark")
+        def verify_dispatch_lease(self,*args):
+            assert self.started
+            return True
+    repo=SharedMarkerRepo()
+    provider=Provider("alpha",error=DeliveryError(Classification.UNKNOWN,"lost_response"))
+    first=Orchestrator(repo,dispatcher(("alpha",provider,True)))
+    second=Orchestrator(repo,dispatcher(("alpha",provider,True)))
+    async def both():
+        await asyncio.gather(first.process(approved_task(),"test-worker"),
+                             second.process(approved_task(),"test-worker"))
+    asyncio.run(both())
+    assert len(provider.calls)==1
+    assert repo.calls.count("mark")==1
+    assert "retry" not in repo.calls
+
+
+def test_stale_worker_receipt_and_failure_are_fenced_after_remote_send():
+    """A stale sender cannot commit a receipt or overwrite reconciliation state."""
+    from jarvis_return_worker.queue import Conflict
+    class StaleRepo(Repo):
+        def save_delivery_receipt(self,*args):
+            self.calls.append("stale_receipt_rejected")
+            raise Conflict("lease owner changed after remote send")
+        def fail(self,*args):
+            self.calls.append("stale_failure_rejected")
+            raise Conflict("reconciliation owned by recovery worker")
+    repo=StaleRepo()
+    provider=Provider("alpha")
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert len(provider.calls)==1
+    assert repo.calls==["heartbeat","mark","stale_receipt_rejected","stale_failure_rejected"]
+    assert "finish" not in repo.calls
+    assert "retry" not in repo.calls
+
+
+def test_worker_cancelled_at_dispatch_fence_does_not_send_or_clear_marker():
+    """Cancellation at the dispatch boundary must not erase uncertain-send evidence."""
+    class CancelAtFenceRepo(Repo):
+        def verify_dispatch_lease(self,*args):
+            self.calls.append("fence")
+            raise asyncio.CancelledError()
+    repo=CancelAtFenceRepo()
+    provider=Provider("alpha")
+    with pytest.raises(asyncio.CancelledError):
+        run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert provider.calls==[]
+    assert repo.calls==["heartbeat","mark","fence"]
+    assert "retry" not in repo.calls
+
+
+@pytest.mark.parametrize("failure", [
+    "accepted_then_response_lost",
+    "timeout_after_possible_acceptance",
+    "http_500_ambiguous",
+    "worker_crash_during_send",
+])
+def test_telegram_p1_ambiguous_acceptance_never_auto_resends(failure):
+    """Synthetic remote acceptance can precede loss of local acknowledgement.
+
+    This tests only orchestration policy; it does not call Telegram or prove
+    remote exactly-once semantics.
+    """
+    repo=Repo()
+    class AcceptedButUnconfirmed(Provider):
+        def __init__(self):
+            super().__init__("alpha")
+            self.synthetic_remote_effects=0
+        def send(self,task,key):
+            self.calls.append((task["task_id"],key))
+            self.synthetic_remote_effects+=1
+            if failure=="worker_crash_during_send":
+                raise SystemExit("synthetic process interruption")
+            raise DeliveryError(Classification.UNKNOWN,failure)
+    provider=AcceptedButUnconfirmed()
+    core=Orchestrator(repo,dispatcher(("alpha",provider,True)))
+    if failure=="worker_crash_during_send":
+        with pytest.raises(SystemExit,match="synthetic process interruption"):
+            run(core)
+    else:
+        run(core)
+    assert provider.synthetic_remote_effects==1
+    assert len(provider.calls)==1
+    assert repo.calls[:2]==["heartbeat","mark"]
+    assert "receipt" not in repo.calls
+    assert "finish" not in repo.calls
+    assert "retry" not in repo.calls
+    assert not core.policy.may_resend(
+        {**approved_task(),"delivery_started_at":NOW},
+        Classification.UNKNOWN)

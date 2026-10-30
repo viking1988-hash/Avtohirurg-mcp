@@ -129,6 +129,7 @@ def test_email_metrics_are_exposed():
 def test_dispatcher_registry_keeps_fake_telegram_crm_and_email_together(monkeypatch):
     from jarvis_return_worker.app import make_dispatcher
     monkeypatch.setenv('JARVIS_TRANSPORT','fake')
+    monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED','1')
     monkeypatch.setenv('JARVIS_CRM_SANDBOX_URL','https://crm-sandbox.up.railway.app')
     monkeypatch.setenv('JARVIS_CRM_SANDBOX_TOKEN','synthetic-ci-token')
     monkeypatch.setenv('JARVIS_EMAIL_SANDBOX_SMTP_HOST','mailpit.railway.internal')
@@ -283,3 +284,51 @@ def test_cancel_only_applies_before_smtp_attempt_and_uses_optimistic_lock(reposi
     with pytest.raises(Conflict):
         repository.cancel_email_operation(event_id,'sandbox-operator',row['version'])
     assert repository.claim_email_operation('email-cancelled-not-claimed') is None
+
+
+def test_telegram_credentials_alone_do_not_enable_outbound(monkeypatch):
+    """Fail closed: credentials without explicit approval cannot register Telegram."""
+    from jarvis_return_worker.app import make_dispatcher
+    from jarvis_return_worker.dispatcher import DispatcherError
+    monkeypatch.setenv('JARVIS_TRANSPORT', 'fake')
+    monkeypatch.delenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', raising=False)
+    config=SimpleNamespace(telegram_bot_token='synthetic-ci-bot-token',
+                           telegram_test_chat_id='-1000000000000')
+    dispatcher=make_dispatcher(config,None)
+    assert 'telegram' not in dispatcher.names()
+    assert 'fake' in dispatcher.names()
+    with pytest.raises(DispatcherError):
+        dispatcher.dispatch('telegram')
+
+
+def test_telegram_outbound_requires_exact_opt_in(monkeypatch):
+    """Ambiguous opt-in values must not activate an external provider."""
+    from jarvis_return_worker.app import make_dispatcher
+    monkeypatch.setenv('JARVIS_TRANSPORT', 'fake')
+    config=SimpleNamespace(telegram_bot_token='synthetic-ci-bot-token',
+                           telegram_test_chat_id='-1000000000000')
+    for value in ('0', 'true', 'yes', ' 1x '):
+        monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', value)
+        assert 'telegram' not in make_dispatcher(config,None).names()
+    monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', '1')
+    assert 'telegram' in make_dispatcher(config,None).names()
+
+
+def test_selected_telegram_transport_refuses_start_without_approval(monkeypatch):
+    """A Telegram primary selection must not bypass the outbound approval gate."""
+    from jarvis_return_worker.app import make_dispatcher
+    monkeypatch.setenv('JARVIS_TRANSPORT', 'telegram')
+    monkeypatch.delenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', raising=False)
+    config=SimpleNamespace(telegram_bot_token='synthetic-ci-bot-token',
+                           telegram_test_chat_id='-1000000000000')
+    with pytest.raises(ValueError, match='Telegram requires Sandbox bot credentials and a test chat'):
+        make_dispatcher(config,None)
+
+
+def test_telegram_approval_without_credentials_cannot_register(monkeypatch):
+    """An approval flag alone must not create a Telegram transport."""
+    from jarvis_return_worker.app import make_dispatcher
+    monkeypatch.setenv('JARVIS_TRANSPORT', 'fake')
+    monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', '1')
+    config=SimpleNamespace(telegram_bot_token='',telegram_test_chat_id='')
+    assert 'telegram' not in make_dispatcher(config,None).names()

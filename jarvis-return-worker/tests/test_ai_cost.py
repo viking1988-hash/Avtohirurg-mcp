@@ -114,7 +114,8 @@ def test_concurrent_duplicate_usage_is_saved_once():
 
 def test_schema_is_sandbox_guarded_and_does_not_store_content():
     schema = (Path(__file__).parents[1] / "schema.sql").read_text()
-    ledger = schema[schema.index("CREATE TABLE IF NOT EXISTS jarvis_ai_usage_events"):]
+    start = schema.index("CREATE TABLE IF NOT EXISTS jarvis_ai_usage_events")
+    ledger = schema[start:schema.index("\n);", start) + 3]
     assert "jarvis_return_queue_test" in schema
     assert "current_user <> 'jarvis_sandbox'" in schema
     assert "prompt" not in ledger.lower()

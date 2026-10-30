@@ -80,6 +80,13 @@ Engine. Inspect an operation with `GET /crm/operations/{event_id}`; an authorize
 operator can trigger a read-only lookup with
 `POST /crm/operations/{event_id}/reconcile`. This Sandbox has no CRM endpoint or
 token configured by this change, so no CRM request is sent.
+With `require_outbox_dispatch` enabled (the Sandbox runtime default), an
+approved task is not claimable until Replay Worker has committed its
+version-bound provider dispatch intent from the `TaskApproved` event. Replay
+does not send messages; the Return Worker applies Policy and invokes the
+registered provider through Dispatcher. See
+[`docs/outbox-dispatch-gate.md`](docs/outbox-dispatch-gate.md) for the recovery
+contract and rollback steps.
 
 ## Audit and metrics
 

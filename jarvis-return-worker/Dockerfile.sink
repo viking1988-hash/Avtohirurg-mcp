@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends gosu && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 10001 --create-home sink && mkdir -p /data && chown sink:sink /data
+COPY isolated_receiver_http.py disposable_sink.py /app/
+COPY tests/test_receiver_idempotency_reference.py /app/tests/test_receiver_idempotency_reference.py
+COPY sink-entrypoint.sh /usr/local/bin/sink-entrypoint
+RUN chmod 0755 /usr/local/bin/sink-entrypoint
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/sink-entrypoint"]
