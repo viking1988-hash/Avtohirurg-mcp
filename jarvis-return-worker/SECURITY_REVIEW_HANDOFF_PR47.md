@@ -25,7 +25,7 @@ Current tested implementation/test commit: `996650561682306fc0e53ed66fe6a9ea8b57
 - [Jarvis Return Worker run 41078590801](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41078590801): SUCCESS; 300 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart/receipt recovery PASS. JUnit artifact confirms 302 cases, 0 failures, and the new regression ran.
 - [Avtohirurg MCP check run 41078591059](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41078591059): SUCCESS.
 - Two disposable receiver tests remain skipped because no receiver endpoint is configured; receiver-side idempotency is NOT VERIFIED.
-- Eight of ten review threads are now resolved with evidence replies. The two remaining open threads are the stale-worker external-effect TOCTOU and webhook lease-budget residual. No review is APPROVED; no independent security signoff exists.
+- Nine of ten review threads are now resolved with evidence replies. The only remaining open thread is the stale-worker external-effect TOCTOU P1. The webhook lease-budget finding is resolved for the bounded request budget; arbitrary process suspension after the pre-send fence remains part of the P1 risk. No review is APPROVED; no independent security signoff exists.
 - PR remains open, Draft and unmerged. Current security decision is **HOLD / NO-GO** for real sends, deployment and merge. Outbound opt-in flags stay unset.
 
 The complete finding-by-finding table and the safe-but-not-authorized fake-only Sandbox plan are maintained in [Issue #69](https://github.com/viking1988-hash/Avtohirurg-mcp/issues/69).
