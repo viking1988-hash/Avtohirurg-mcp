@@ -1,5 +1,16 @@
 # PR47 Telegram P1 security gate (Draft / not approved for Production)
 
+## Current checkpoint (2026-10-30)
+
+PR head at checkpoint: `3a9bd0ea2a2b0f10d2d80559464ecefc39c9fc53`; tested implementation/test commit: `996650561682306fc0e53ed66fe6a9ea8b570557`.
+
+- [Jarvis Return Worker run 41080346045](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41080346045) SUCCESS: 300 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart/receipt recovery PASS.
+- [Avtohirurg MCP check 41080346005](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41080346005) SUCCESS.
+- Adversarial tests `test_separate_process_stale_sender_after_recovery_is_fenced`, `test_two_stale_workers_can_reach_provider_without_receiver_dedup`, and `test_lease_lost_after_pre_send_check_never_claims_exactly_once` show the residual: stale DB writes are fenced, but a synthetic provider side effect may still occur after the check. No exactly-once claim is justified.
+- 9/10 review threads are resolved with evidence; only stale-worker external-effect P1 remains open. No independent APPROVED review exists.
+- Receiver-side durable idempotency remains NOT VERIFIED because the disposable receiver endpoint is not configured. Real Telegram/webhook sends, deployment, and merge remain blocked. Outbound flags remain fail-closed.
+
+
 ## Verified evidence (2026-10-29)
 
 - GitHub commit `a36f83f3de23e06382eee1249aa854f5feed5e77`: Jarvis Return Worker 265 passed, 2 skipped; PostgreSQL restart recovery PASS; MCP workflow SUCCESS.
