@@ -8,9 +8,9 @@ Security issue: https://github.com/viking1988-hash/Avtohirurg-mcp/issues/69
 
 Review the Jarvis Return Worker in the PR branch, focusing on Telegram/webhook external effects, approval binding, PostgreSQL fencing and reconciliation. Use synthetic fixtures, disposable PostgreSQL and fake receivers only. Do not use real customer data, Telegram bots/chats, or Production. Do not merge, deploy, enable outbound transports or resolve review threads without evidence.
 
-## Verified baseline (2026-10-30, refreshed against current HEAD)
+## Verified implementation baseline (2026-10-30)
 
-Commit `d77c635e2b181867b2e7f497bccc97112c16d92c`.
+Implementation commit tested: `d77c635e2b181867b2e7f497bccc97112c16d92c`. The PR head was subsequently advanced by a handoff-documentation-only commit; no implementation files changed in that documentation update.
 - Worker CI: https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41066733687 — SUCCESS; 299 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart recovery PASS.
 - MCP check: https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41066733700 — SUCCESS.
 - The two skipped tests are disposable-receiver contract tests skipped because no receiver endpoint is configured; they are not evidence of receiver-side idempotency. The warning is the Starlette TestClient deprecated AnyIO BlockingPortal alias.
