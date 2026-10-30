@@ -129,6 +129,7 @@ def test_email_metrics_are_exposed():
 def test_dispatcher_registry_keeps_fake_telegram_crm_and_email_together(monkeypatch):
     from jarvis_return_worker.app import make_dispatcher
     monkeypatch.setenv('JARVIS_TRANSPORT','fake')
+    monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED','1')
     monkeypatch.setenv('JARVIS_CRM_SANDBOX_URL','https://crm-sandbox.up.railway.app')
     monkeypatch.setenv('JARVIS_CRM_SANDBOX_TOKEN','synthetic-ci-token')
     monkeypatch.setenv('JARVIS_EMAIL_SANDBOX_SMTP_HOST','mailpit.railway.internal')
