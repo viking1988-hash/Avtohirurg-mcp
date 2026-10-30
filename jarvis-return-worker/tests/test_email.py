@@ -312,3 +312,23 @@ def test_telegram_outbound_requires_exact_opt_in(monkeypatch):
         assert 'telegram' not in make_dispatcher(config,None).names()
     monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', '1')
     assert 'telegram' in make_dispatcher(config,None).names()
+
+
+def test_selected_telegram_transport_refuses_start_without_approval(monkeypatch):
+    """A Telegram primary selection must not bypass the outbound approval gate."""
+    from jarvis_return_worker.app import make_dispatcher
+    monkeypatch.setenv('JARVIS_TRANSPORT', 'telegram')
+    monkeypatch.delenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', raising=False)
+    config=SimpleNamespace(telegram_bot_token='synthetic-ci-bot-token',
+                           telegram_test_chat_id='-1000000000000')
+    with pytest.raises(ValueError, match='Telegram requires Sandbox bot credentials and a test chat'):
+        make_dispatcher(config,None)
+
+
+def test_telegram_approval_without_credentials_cannot_register(monkeypatch):
+    """An approval flag alone must not create a Telegram transport."""
+    from jarvis_return_worker.app import make_dispatcher
+    monkeypatch.setenv('JARVIS_TRANSPORT', 'fake')
+    monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', '1')
+    config=SimpleNamespace(telegram_bot_token='',telegram_test_chat_id='')
+    assert 'telegram' not in make_dispatcher(config,None).names()
