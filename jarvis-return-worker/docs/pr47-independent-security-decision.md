@@ -1,40 +1,46 @@
-# PR47 — independent security decision request
+# PR #47 — Independent security decision
 
-**Status: BLOCKED / Draft.** This document requests an independent decision; it is **not** approval.
+**Status: BLOCKED / HOLD.** This document requests a qualified independent decision; it is not approval.
 
-## Verified baseline
+## Current evidence (2026-10-30)
 
-Head before this document: `5d757f51cbb0ae05d119538b30a708793e9ad58b`. Worker CI: 292 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart recovery PASS; MCP check SUCCESS. See PR #47 and `pr47-final-release-checklist.md`. Eight review threads remain open; seven findings have fixes/regressions, Telegram stale-worker P1 only partially mitigated.
+- Inspect the branch's current HEAD on GitHub before review. Product code/test implementation: `996650561682306fc0e53ed66fe6a9ea8b570557`; later changes documented in this checkpoint are CI/docs only.
+- PR is OPEN, Draft, unmerged. Ten review threads: nine resolved, one stale-worker external-effect P1 open. Existing review submissions are COMMENTED; no independent APPROVED review.
+- Worker CI [41087125537](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41087125537): SUCCESS, 302 passed, 0 skipped, 1 warning, 9 subtests; PostgreSQL restart/receipt recovery PASS.
+- MCP CI [41087125445](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41087125445): SUCCESS, 65 passed, 0 skipped.
+- Railway staging was checked read-only by variable names: original Sandbox worker and webhook-worker showed no Telegram/Webhook opt-in flags or corresponding provider credentials/endpoints. Values were redacted; no endpoint was called or setting changed. This does not cover Production.
 
-## P1 decision: Telegram stale sender
+## P1: stale worker and remote effect
 
-A sender can pass a PostgreSQL ownership/lease check, pause, lose its lease to recovery, then invoke Telegram. Database fencing prevents late state/receipt writes but **cannot roll back a remote send**. Telegram Bot API offers no receiver-side idempotency token for this path. Exactly-once must **not** be claimed.
+A worker can pass PostgreSQL lease verification, pause, lose its lease, and later invoke a provider. A later database fence can reject its receipt/state update, but it cannot revoke the request. Adversarial synthetic tests document the residual. Exactly-once remote delivery is not established.
 
-Reviewer must explicitly choose one:
+### Required reviewer decision
 
-- **NO-GO for Telegram:** keep transport disabled; permit separately reviewed fake-only/DB-only features.
-- **Conditional GO for test-only Telegram:** accept possible duplicate external effects under documented manual reconciliation, strict test-chat allowlist, outbound kill switch, bounded attempts, operator approval, logging redaction, and explicit test scope. No customer sends.
-- **Request redesign:** define a verifiable provider contract or operational compensating controls before any outbound use.
+Record one explicit outcome with evidence and scope:
 
-For every decision record reviewer identity, date, threat model, evidence, residual risks, affected configuration and rollback plan. A PR author or automated test cannot substitute for an independent reviewer.
+- **NO-GO for external delivery:** keep Telegram and Webhook disabled; fake-only tests may continue under separate owner authorization.
+- **Conditional test-only scope:** only if the independent reviewer defines and accepts the residual risk and the owner separately authorizes the exact isolated test. This document grants no permission for real messages or webhook effects.
+- **Request redesign:** require a receiver/provider contract or other verifiable control before any external delivery.
 
-## Webhook decision
+Telegram Bot API idempotency for this workflow has not been verified. The candidate Railway HTTP sandbox sink is documented in `WEBHOOK_IDEMPOTENCY_ACCEPTANCE.md` as failing durable receiver acceptance. The actual authoritative webhook receiver has not been identified and verified.
 
-Before real webhook sends, the **actual receiver owner** must prove durable deduplication keyed by the outbound idempotency key across concurrent requests, restarts, timeout-after-acceptance and retries; document retention window and response semantics. Verify actual deployed timeout/retry/lease settings and uncertain-outcome manual reconciliation. Until verified, outbound webhook stays disabled.
+## Required receiver evidence for any real webhook
 
-## Proposed safe separation
+Receiver owner must prove key-scoped atomic deduplication across concurrency, changed-payload rejection, restart, acceptance followed by lost response, retry/reconciliation, and the full retention horizon. The receiver must expose an authenticated read-only receipt/status lookup by stable operation identity. Identify the implementation/version and endpoint without exposing secrets. Sender-side synthetic CI alone is insufficient.
 
-1. Keep PR Draft and Production unchanged until review and authorized rollout approval.
-2. Evaluate the queue, durable outbox, PostgreSQL recovery, manual approval and fake transport **separately** from outbound Telegram/webhook. Any partial deployment requires a fresh scoped PR and explicit authorization; no silent activation.
-3. Do not resolve open review threads without reviewer evidence. Review CI skips, warnings, runtime warnings and test database trust authentication before acceptance.
+## Operational state
 
-## Reviewer response template
+Provider registration in `app.py` requires exact outbound opt-in flags plus credentials/endpoint. Current inspected Sandbox staging variable names lacked those flags and settings. Production configuration was not inspected. No live sends, endpoint probes, deployments, migrations, or Production changes were made.
 
-- Decision: GO / CONDITIONAL GO / NO-GO
-- Scope: fake-only / test Telegram / real webhook / customer notifications
-- Evidence examined: links to tests, logs and code
+## Independent review record
+
+- Reviewer identity and GitHub login:
+- Exact PR HEAD reviewed:
+- Decision: GO / CONDITIONAL GO / NO-GO:
+- Scope and threat model:
+- Evidence links and tests inspected:
 - Residual risks and required mitigations:
-- Configuration and rollback/kill switch:
-- Reviewer name, date and independent approval reference:
+- Configuration / rollback scope:
+- Date and independent review reference:
 
-**No Production changes, no real Telegram or webhook sends, no merge or Draft removal are authorized by this document.**
+Keep PR #47 Draft and unmerged until a qualified independent reviewer records the decision and the owner separately authorizes any scoped release.
