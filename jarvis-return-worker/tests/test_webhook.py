@@ -128,3 +128,41 @@ def test_provider_surface_and_metrics(mock_server):
     rendered=generate_latest(metrics._registry).decode()
     for name in ("webhook_requests_total","webhook_success_total","webhook_failed_total","webhook_unknown_total","webhook_replayed_total","webhook_duplicate_prevented_total","webhook_latency_seconds_bucket"):
         assert name in rendered
+
+
+def test_webhook_endpoint_credentials_alone_do_not_enable_outbound(monkeypatch):
+    from jarvis_return_worker.app import make_dispatcher
+    monkeypatch.setenv("JARVIS_TRANSPORT", "fake")
+    monkeypatch.delenv("JARVIS_WEBHOOK_OUTBOUND_APPROVED", raising=False)
+    monkeypatch.setenv("JARVIS_WEBHOOK_BASE_URL", "https://example.test")
+    monkeypatch.setenv("JARVIS_WEBHOOK_TOKEN", "synthetic-ci-token")
+    monkeypatch.delenv("JARVIS_CRM_SANDBOX_URL", raising=False)
+    monkeypatch.delenv("JARVIS_CRM_SANDBOX_TOKEN", raising=False)
+    monkeypatch.delenv("JARVIS_EMAIL_SANDBOX_SMTP_HOST", raising=False)
+    monkeypatch.delenv("JARVIS_HTTP_SANDBOX_URL", raising=False)
+    monkeypatch.delenv("JARVIS_HTTP_SANDBOX_TOKEN", raising=False)
+    config = SimpleNamespace(telegram_bot_token=None, telegram_test_chat_id=None)
+
+    dispatcher = make_dispatcher(config, None)
+
+    assert "webhook" not in dispatcher.names()
+    assert "fake" in dispatcher.names()
+
+
+def test_webhook_outbound_requires_exact_opt_in_without_sending(monkeypatch):
+    from jarvis_return_worker.app import make_dispatcher
+    monkeypatch.setenv("JARVIS_TRANSPORT", "fake")
+    monkeypatch.setenv("JARVIS_WEBHOOK_OUTBOUND_APPROVED", "1")
+    monkeypatch.setenv("JARVIS_WEBHOOK_BASE_URL", "https://example.test")
+    monkeypatch.setenv("JARVIS_WEBHOOK_TOKEN", "synthetic-ci-token")
+    monkeypatch.delenv("JARVIS_CRM_SANDBOX_URL", raising=False)
+    monkeypatch.delenv("JARVIS_CRM_SANDBOX_TOKEN", raising=False)
+    monkeypatch.delenv("JARVIS_EMAIL_SANDBOX_SMTP_HOST", raising=False)
+    monkeypatch.delenv("JARVIS_HTTP_SANDBOX_URL", raising=False)
+    monkeypatch.delenv("JARVIS_HTTP_SANDBOX_TOKEN", raising=False)
+    config = SimpleNamespace(telegram_bot_token=None, telegram_test_chat_id=None)
+
+    dispatcher = make_dispatcher(config, None)
+
+    assert "webhook" in dispatcher.names()
+    assert dispatcher.dispatch("webhook").provider == "webhook"
