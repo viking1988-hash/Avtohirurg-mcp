@@ -8,15 +8,28 @@ Security issue: https://github.com/viking1988-hash/Avtohirurg-mcp/issues/69
 
 Review the Jarvis Return Worker in the PR branch, focusing on Telegram/webhook external effects, approval binding, PostgreSQL fencing and reconciliation. Use synthetic fixtures, disposable PostgreSQL and fake receivers only. Do not use real customer data, Telegram bots/chats, or Production. Do not merge, deploy, enable outbound transports or resolve review threads without evidence.
 
-## Verified implementation baseline (2026-10-30)
+## Historical implementation baseline (2026-10-30; code commit `d77c635`)
 
 Implementation commit tested: `d77c635e2b181867b2e7f497bccc97112c16d92c`. The PR head was subsequently advanced by a handoff-documentation-only commit; no implementation files changed in that documentation update.
 - Worker CI: https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41066733687 — SUCCESS; 299 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart recovery PASS.
 - MCP check: https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41066733700 — SUCCESS.
 - The two skipped tests are disposable-receiver contract tests skipped because no receiver endpoint is configured; they are not evidence of receiver-side idempotency. The warning is the Starlette TestClient deprecated AnyIO BlockingPortal alias.
-- PR is open, Draft, and unmerged. Review status at this check: 10 inline threads, 8 unresolved and 2 resolved; no independent APPROVED review.
+- At this earlier code checkpoint, PR was open, Draft and unmerged with 10 inline threads (8 unresolved, 2 resolved). This is historical; see the current disposition below.
 - Telegram registration requires credentials and exact `JARVIS_TELEGRAM_OUTBOUND_APPROVED=1`; webhook registration requires exact `JARVIS_WEBHOOK_OUTBOUND_APPROVED=1`. Both flags are unset by default. Do **not** set either flag outside synthetic isolated review.
 - Current-head adversarial PostgreSQL regression `test_separate_process_stale_sender_after_recovery_is_fenced` confirms a worker paused after DB verification can still resume and cause a synthetic remote effect after recovery. Fencing rejects stale DB writes and prevents a new claim while reconciliation is required, but cannot revoke an already-authorized/in-flight external request. This is evidence of the residual TOCTOU, not exactly-once delivery.
+
+## Current full-pass disposition (2026-10-30)
+
+Current tested implementation/test commit: `996650561682306fc0e53ed66fe6a9ea8b570557`. It adds one synthetic unit regression, `test_http_approval_audit_uses_http_provider`, for the approval audit provider field.
+
+- [Jarvis Return Worker run 41078590801](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41078590801): SUCCESS; 300 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart/receipt recovery PASS. JUnit artifact confirms 302 cases, 0 failures, and the new regression ran.
+- [Avtohirurg MCP check run 41078591059](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41078591059): SUCCESS.
+- Two disposable receiver tests remain skipped because no receiver endpoint is configured; receiver-side idempotency is NOT VERIFIED.
+- Eight of ten review threads are now resolved with evidence replies. The two remaining open threads are the stale-worker external-effect TOCTOU and webhook lease-budget residual. No review is APPROVED; no independent security signoff exists.
+- PR remains open, Draft and unmerged. Current security decision is **HOLD / NO-GO** for real sends, deployment and merge. Outbound opt-in flags stay unset.
+
+The complete finding-by-finding table and the safe-but-not-authorized fake-only Sandbox plan are maintained in [Issue #69](https://github.com/viking1988-hash/Avtohirurg-mcp/issues/69).
+
 
 ## Required independent verification
 
