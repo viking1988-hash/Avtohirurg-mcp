@@ -1,0 +1,42 @@
+name: Prometheus backup archive validator
+on:
+  pull_request:
+    paths:
+      - 'ops/prometheus/**'
+      - '.github/workflows/prometheus-backup-validator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Offline archive validation and receiver tests
+        run: python -m unittest discover -s ops/prometheus/tests -v
+      - name: Guard existing Prometheus launcher against admin API exposure
+        run: sh ops/prometheus/tests/production_boundary_preflight.sh
+      - name: Disposable snapshot launcher negative safety checks
+        run: sh ops/prometheus/tests/disposable_launcher_negative.sh
+      - name: Verify disposable snapshot launcher contract
+        run: sh ops/prometheus/tests/disposable_launcher_contract.sh
+      - name: Build isolated backup helper image
+        run: docker build -f ops/prometheus/Dockerfile.backup-helper -t prometheus-backup-helper:test .
+      - name: Disposable Prometheus snapshot API smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull prom/prometheus:v3.5.0
+          cid="$(docker create prom/prometheus:v3.5.0)"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/bin/prometheus" "$RUNNER_TEMP/prometheus"
+          docker cp "$cid:/bin/promtool" "$RUNNER_TEMP/promtool"
+          chmod +x "$RUNNER_TEMP/prometheus" "$RUNNER_TEMP/promtool"
+          PROMETHEUS_BIN="$RUNNER_TEMP/prometheus" sh ops/prometheus/tests/disposable_launcher_real_snapshot.sh
+          PROMETHEUS_BIN="$RUNNER_TEMP/prometheus" PROMTOOL_BIN="$RUNNER_TEMP/promtool" sh ops/prometheus/tests/isolated_snapshot_smoke.sh
