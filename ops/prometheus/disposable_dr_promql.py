@@ -17,7 +17,12 @@ from validate_restored_tsdb import validate as validate_restored
 
 def main():
     root = Path(os.environ.get("PROMETHEUS_BACKUP_DIR", "/backup/prometheus-snapshots"))
-    meta = json.loads((root / "last-verified.json").read_text())
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError("Unsafe backup directory")
+    status = root / "last-verified.json"
+    if status.is_symlink() or not status.is_file():
+        raise ValueError("Unsafe backup status file")
+    meta = json.loads(status.read_text())
     name = meta["archive"]
     if Path(name).name != name or not name.endswith(".tar.gz"):
         raise ValueError("Unsafe archive name")
