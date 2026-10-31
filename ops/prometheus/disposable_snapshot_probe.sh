@@ -27,3 +27,14 @@ if [ "$block_count" -lt 1 ]; then echo 'SNAPSHOT_PROBE_NO_BLOCKS'; exit 1; fi
 echo 'SNAPSHOT_PROBE_SUCCESS'
 echo 'SNAPSHOT_PROBE_DIRECTORY_PRESENT'
 echo "SNAPSHOT_PROBE_BLOCKS_ANALYZED=$block_count"
+# Validate the copied snapshot as an independent database without mutating source TSDB.
+restore_dir=$(mktemp -d /tmp/prometheus-restore-XXXXXX)
+trap 'rm -rf "$restore_dir"' EXIT
+cp -R "$snapshot_path"/. "$restore_dir"/
+for block in "$restore_dir"/*; do
+  [ -f "$block/meta.json" ] || continue
+  if ! /bin/promtool tsdb analyze "$restore_dir" "${block##*/}" >/tmp/disposable_restore_promtool.log 2>&1; then
+    echo 'SNAPSHOT_PROBE_RESTORE_ANALYSIS_FAILED'; tail -n 8 /tmp/disposable_restore_promtool.log; exit 1
+  fi
+done
+echo 'SNAPSHOT_PROBE_COPIED_RESTORE_ANALYSIS_PASS'
