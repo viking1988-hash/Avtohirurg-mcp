@@ -262,6 +262,19 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                     if prior.is_symlink() or not prior.is_file():
                         continue
                     if hmac.compare_digest(_sha256(prior).lower(), actual_sha.lower()):
+                        status_path = backup_dir / "last-verified.json"
+                        try:
+                            recorded = json.loads(status_path.read_text(encoding="utf-8"))
+                        except (OSError, ValueError):
+                            recorded = {}
+                        if recorded.get("archive") != prior.name or recorded.get("sha256") != actual_sha:
+                            _write_status(status_path, {
+                                "archive": prior.name,
+                                "sha256": actual_sha,
+                                "blocks": expected_blocks,
+                                "verified_at": datetime.now(timezone.utc).isoformat(),
+                                "restore_test": "promtool-tsdb-analyze-pass",
+                            })
                         self._respond(200, {
                             "status": "already-verified",
                             "archive": prior.name,
@@ -298,6 +311,17 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                     })
                 except OSError as exc:
                     status_warning = type(exc).__name__
+                    with _state_lock:
+                        _state["failures_total"] += 1
+                        _state["last_error"] = "metadata-" + status_warning
+                    self._respond(503, {
+                        "error": "backup metadata not persisted",
+                        "archive": final_name,
+                        "sha256": actual_sha,
+                        "status_warning": status_warning,
+                        "retention_deletions": 0,
+                    })
+                    return
 
                 deleted = 0
                 retention_warning = ""

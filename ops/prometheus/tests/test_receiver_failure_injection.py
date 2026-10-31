@@ -57,13 +57,20 @@ class ReceiverFailureInjectionTests(unittest.TestCase):
         data, digest = self.fixture()
         with patch.object(receiver, "_write_status", side_effect=OSError("synthetic metadata failure")):
             status, body = self.upload(data, digest)
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"], "backup metadata not persisted")
         self.assertEqual(body["status_warning"], "OSError")
         self.assertEqual(body["retention_deletions"], 0)
         self.assertFalse((self.backups / "last-verified.json").exists())
         archives = list(self.backups.glob("prometheus-*.tar.gz"))
         self.assertEqual(len(archives), 1)
         self.assertEqual(hashlib.sha256(archives[0].read_bytes()).hexdigest(), digest)
+        retry_status, retry_body = self.upload(data, digest)
+        self.assertEqual(retry_status, 200)
+        self.assertEqual(retry_body["status"], "already-verified")
+        recorded = json.loads((self.backups / "last-verified.json").read_text())
+        self.assertEqual(recorded["sha256"], digest)
+        self.assertEqual(recorded["archive"], archives[0].name)
 
     def test_disk_write_failure_rejects_upload_without_publishing(self):
         data, digest = self.fixture()
