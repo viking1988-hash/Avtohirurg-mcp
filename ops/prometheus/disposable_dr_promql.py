@@ -24,7 +24,8 @@ def main():
     archive = root / name
     if archive.is_symlink() or not archive.is_file():
         raise ValueError("Archive missing")
-    digest = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+    with archive.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
     if digest != meta["sha256"]:
         raise ValueError("SHA256 mismatch")
     validate_archive(archive, digest, meta["blocks"])
@@ -51,11 +52,14 @@ def main():
                     time.sleep(1)
             else:
                 raise RuntimeError("Prometheus readiness timeout")
-            url = "http://127.0.0.1:19090/api/v1/query?" + urllib.parse.urlencode({"query": "up"})
+            blocks = sorted(p for p in db.iterdir() if p.is_dir() and (p / "meta.json").is_file())
+            block_meta = json.loads((blocks[0] / "meta.json").read_text())
+            query_time = (block_meta["minTime"] + block_meta["maxTime"]) / 2000
+            url = "http://127.0.0.1:19090/api/v1/query?" + urllib.parse.urlencode({"query": "up", "time": query_time})
             with urllib.request.urlopen(url, timeout=10) as response:
                 result = json.load(response)
-            if result.get("status") != "success":
-                raise RuntimeError("PromQL API failed")
+            if result.get("status") != "success" or not result.get("data", {}).get("result"):
+                raise RuntimeError("PromQL returned no restored up series")
             print("DISPOSABLE_PROMETHEUS_DR_PROMQL_PASS sha256=" + digest +
                   " blocks=" + str(meta["blocks"]) + " query=up", flush=True)
         finally:
