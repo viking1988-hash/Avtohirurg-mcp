@@ -1,5 +1,9 @@
-FROM prom/prometheus:v3.5.0
+FROM prom/prometheus:v3.5.0 AS prometheus
+FROM alpine:3.21
 # Disposable synthetic Railway E2E only. Never deploy to production.
-# Railway's root-owned volume requires a writable UID in this test.
-USER 0:0
+# Root is needed solely for the root-owned isolated Railway volume.
+COPY --from=prometheus /bin/prometheus /bin/prometheus
+COPY --from=prometheus /bin/promtool /bin/promtool
+COPY --from=prometheus /etc/prometheus/prometheus.yml /etc/prometheus/prometheus.yml
 COPY ops/prometheus/disposable_snapshot_probe.sh /bin/disposable_snapshot_probe.sh
+USER 0:0
