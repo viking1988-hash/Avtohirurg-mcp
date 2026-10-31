@@ -1,4 +1,5 @@
 FROM prom/prometheus:v3.5.0
-# Isolated synthetic Railway E2E only: Railway mounts may be root-owned.
-# Do not use this image or root UID for production Prometheus.
+# Disposable synthetic Railway E2E only. Never deploy to production.
+# Railway's root-owned volume requires a writable UID in this test.
 USER 0:0
+COPY ops/prometheus/disposable_snapshot_probe.sh /bin/disposable_snapshot_probe.sh
