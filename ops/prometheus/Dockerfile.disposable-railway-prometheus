@@ -1,0 +1,4 @@
+FROM prom/prometheus:v3.5.0
+# Isolated synthetic Railway E2E only: Railway mounts may be root-owned.
+# Do not use this image or root UID for production Prometheus.
+USER 0:0
