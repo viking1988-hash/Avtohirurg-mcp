@@ -28,3 +28,10 @@ def test_expired_delivery_marker_requires_manual_reconciliation(repo):
     assert row["delivery_status"] == "UNKNOWN"
     assert row["reconciliation_status"] == "REQUIRED"
     assert repo.claim("ci-second-worker") is None
+
+    from jarvis_return_worker.queue import Conflict
+    with pytest.raises(Conflict, match="stale lease or fencing token"):
+        repo.verify_dispatch_lease(
+            task_id, "outbox-chain-ci", task["attempt_count"]
+        )
+    assert repo.get(task_id)["state"] == "RECONCILIATION_REQUIRED"
