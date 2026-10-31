@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tarfile
 import time
 import urllib.request
 import urllib.parse
@@ -14,6 +15,23 @@ import urllib.parse
 from backup_receiver import _extract_validated
 from validate_snapshot_archive import validate as validate_archive
 from validate_restored_tsdb import validate as validate_restored
+
+MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def check_extracted_size(archive, limit=MAX_EXTRACTED_BYTES):
+    """Reject archives whose declared extracted size exceeds the sandbox budget."""
+    total = 0
+    with tarfile.open(archive, "r:gz") as stream:
+        for member in stream:
+            if member.size < 0:
+                raise ValueError("Invalid archive member size")
+            if member.isfile():
+                total += member.size
+                if total > limit:
+                    raise ValueError("Archive exceeds extracted size limit")
+    return total
+
 
 def main():
     root = Path(os.environ.get("PROMETHEUS_BACKUP_DIR", "/backup/prometheus-snapshots"))
@@ -34,6 +52,7 @@ def main():
     if digest != meta["sha256"]:
         raise ValueError("SHA256 mismatch")
     validate_archive(archive, digest, meta["blocks"])
+    check_extracted_size(archive)
     with tempfile.TemporaryDirectory(prefix="prom-dr-sandbox-") as tmp:
         db = Path(tmp) / "tsdb"
         db.mkdir()
