@@ -19,8 +19,8 @@ for block in "$snapshot_path"/*; do
   [ -d "$block" ] || continue
   [ -f "$block/meta.json" ] || continue
   block_count=$((block_count + 1))
-  if ! /bin/promtool tsdb analyze "$block" >/dev/null 2>&1; then
-    echo 'SNAPSHOT_PROBE_BLOCK_ANALYSIS_FAILED'; exit 1
+  if ! /bin/promtool tsdb analyze "$snapshot_path" "${block##*/}" >/tmp/disposable_promtool.log 2>&1; then
+    echo 'SNAPSHOT_PROBE_BLOCK_ANALYSIS_FAILED'; tail -n 8 /tmp/disposable_promtool.log; exit 1
   fi
 done
 if [ "$block_count" -lt 1 ]; then echo 'SNAPSHOT_PROBE_NO_BLOCKS'; exit 1; fi
