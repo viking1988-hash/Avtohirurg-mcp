@@ -1,0 +1,13 @@
+FROM prom/prometheus:v3.5.0 AS prometheus
+FROM python:3.11-alpine3.21
+COPY --from=prometheus /bin/prometheus /bin/prometheus
+COPY --from=prometheus /bin/promtool /bin/promtool
+WORKDIR /opt/prometheus-backup
+COPY ops/prometheus/backup_receiver.py ./backup_receiver.py
+COPY ops/prometheus/validate_snapshot_archive.py ./validate_snapshot_archive.py
+COPY ops/prometheus/validate_restored_tsdb.py ./validate_restored_tsdb.py
+COPY ops/prometheus/disposable_dr_promql.py ./disposable_dr_promql.py
+COPY ops/prometheus/prometheus-dr.yml ./prometheus-dr.yml
+ENV PYTHONUNBUFFERED=1
+ENV PROMETHEUS_BACKUP_DIR=/backup/prometheus-snapshots
+CMD ["python3", "/opt/prometheus-backup/disposable_dr_promql.py"]
