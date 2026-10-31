@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Read-only disposable Prometheus restore smoke test. Never target production."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import time
+import urllib.request
+import urllib.parse
+
+from backup_receiver import _extract_validated
+from validate_snapshot_archive import validate as validate_archive
+from validate_restored_tsdb import validate as validate_restored
+
+def main():
+    root = Path(os.environ.get("PROMETHEUS_BACKUP_DIR", "/backup/prometheus-snapshots"))
+    meta = json.loads((root / "last-verified.json").read_text())
+    name = meta["archive"]
+    if Path(name).name != name or not name.endswith(".tar.gz"):
+        raise ValueError("Unsafe archive name")
+    archive = root / name
+    if archive.is_symlink() or not archive.is_file():
+        raise ValueError("Archive missing")
+    digest = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+    if digest != meta["sha256"]:
+        raise ValueError("SHA256 mismatch")
+    validate_archive(archive, digest, meta["blocks"])
+    with tempfile.TemporaryDirectory(prefix="prom-dr-sandbox-") as tmp:
+        db = Path(tmp) / "tsdb"
+        db.mkdir()
+        _extract_validated(archive, db)
+        validate_restored(db, "/bin/promtool", meta["blocks"], timeout=180)
+        cmd = ["/bin/prometheus", "--storage.tsdb.path=" + str(db),
+               "--web.listen-address=127.0.0.1:19090",
+               "--web.enable-lifecycle=false",
+               "--storage.tsdb.retention.time=365d",
+               "--config.file=/opt/prometheus-backup/prometheus-dr.yml"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            for _ in range(60):
+                if proc.poll() is not None:
+                    raise RuntimeError("Prometheus exited during startup")
+                try:
+                    with urllib.request.urlopen("http://127.0.0.1:19090/-/ready", timeout=2) as response:
+                        if response.status == 200:
+                            break
+                except Exception:
+                    time.sleep(1)
+            else:
+                raise RuntimeError("Prometheus readiness timeout")
+            url = "http://127.0.0.1:19090/api/v1/query?" + urllib.parse.urlencode({"query": "up"})
+            with urllib.request.urlopen(url, timeout=10) as response:
+                result = json.load(response)
+            if result.get("status") != "success":
+                raise RuntimeError("PromQL API failed")
+            print("DISPOSABLE_PROMETHEUS_DR_PROMQL_PASS sha256=" + digest +
+                  " blocks=" + str(meta["blocks"]) + " query=up", flush=True)
+        finally:
+            proc.terminate()
+            try:
+                proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+
+if __name__ == "__main__":
+    main()
