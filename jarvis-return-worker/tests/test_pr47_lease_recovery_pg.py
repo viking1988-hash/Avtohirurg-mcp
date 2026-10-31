@@ -4,7 +4,7 @@ Uses only the ephemeral CI database and synthetic task. No external transport.
 """
 import uuid
 import pytest
-from .test_outbox_dispatch_chain import prepare, replay_approval, repo
+from test_outbox_dispatch_chain import prepare, replay_approval, repo
 
 
 def test_expired_delivery_marker_requires_manual_reconciliation(repo):
