@@ -36,7 +36,6 @@ def main():
         validate_restored(db, "/bin/promtool", meta["blocks"], timeout=180)
         cmd = ["/bin/prometheus", "--storage.tsdb.path=" + str(db),
                "--web.listen-address=127.0.0.1:19090",
-               "--web.enable-lifecycle=false",
                "--storage.tsdb.retention.time=365d",
                "--config.file=/opt/prometheus-backup/prometheus-dr.yml"]
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
