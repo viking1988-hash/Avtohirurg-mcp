@@ -5,6 +5,7 @@ WORKDIR /opt/prometheus-backup
 COPY ops/prometheus/backup_receiver.py ./backup_receiver.py
 COPY ops/prometheus/validate_snapshot_archive.py ./validate_snapshot_archive.py
 COPY ops/prometheus/validate_restored_tsdb.py ./validate_restored_tsdb.py
+COPY ops/prometheus/verify_disposable_persisted_backup.py ./verify_disposable_persisted_backup.py
 ENV PYTHONUNBUFFERED=1
 ENV PROMETHEUS_BACKUP_DIR=/backup/prometheus-snapshots
 EXPOSE 8080
