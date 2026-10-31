@@ -43,7 +43,8 @@ def main():
         try:
             for _ in range(60):
                 if proc.poll() is not None:
-                    raise RuntimeError("Prometheus exited during startup")
+                    stderr = proc.communicate(timeout=5)[1].decode("utf-8", errors="replace")
+                    raise RuntimeError("Prometheus exited during startup: " + stderr[-2500:])
                 try:
                     with urllib.request.urlopen("http://127.0.0.1:19090/-/ready", timeout=2) as response:
                         if response.status == 200:
