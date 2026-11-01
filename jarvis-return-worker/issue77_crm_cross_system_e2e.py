@@ -196,7 +196,7 @@ def synthetic_png():
 
 def prepare_crm_lifecycle(database_url, crm_url):
     parsed = urlsplit(crm_url)
-    if parsed.scheme != "https" or parsed.path != "/api/v1/leads" or parsed.query or parsed.fragment:
+    if parsed.scheme != "https" or parsed.path.rstrip("/") != "/api/v1/leads" or parsed.query or parsed.fragment:
         raise RuntimeError("refusing_non_https_crm_lifecycle_target")
     base = parsed.scheme + "://" + parsed.netloc
     origin = os.environ.get("CRM_PUBLIC_ORIGIN", base)
