@@ -33,6 +33,10 @@ def payload(**updates):
         "model": "Test",
         "vehicle_year": 2020,
         "modification": "Synthetic trim",
+        "engine": "",
+        "transmission": "",
+        "vehicle_mileage": None,
+        "service_history": "",
         "desired_date": "",
         "notes": "synthetic only",
         "symptom": "synthetic vibration",
@@ -70,6 +74,15 @@ def test_contract_whitelists_fields_and_requires_stable_jarvis_identity():
         payload(urgency="critical"),
         payload(followup_consent="yes"),
         payload(consent_recorded_at="caller-controlled"),
+        payload(vehicle_mileage=True),
+        payload(vehicle_mileage=-1),
+        payload(vehicle_mileage=2_000_001),
+        payload(vehicle_mileage="42000"),
+        payload(engine="x" * 121),
+        payload(transmission="x" * 81),
+        payload(service_history="x" * 2001),
+        payload(status="scheduled"),
+        payload(booking_status="confirmed"),
     ):
         with pytest.raises(DeliveryError):
             normalize_intake(invalid)
@@ -103,7 +116,8 @@ def test_create_lead_uses_crm_intake_contract_and_returns_minimal_receipt():
     assert "customer_phone" not in repr(result)
     assert set(captured["body"]) == {
         "source_id", "name", "phone", "make", "model", "vehicle_year",
-        "modification", "desired_date", "notes", "symptom", "urgency",
+        "modification", "engine", "transmission", "vehicle_mileage",
+        "service_history", "desired_date", "notes", "symptom", "urgency",
         "followup_consent",
     }
 
@@ -149,3 +163,28 @@ def test_network_timeout_is_unknown_and_invalid_receipt_is_not_success():
     with pytest.raises(DeliveryError) as caught:
         malformed.create_lead(payload())
     assert caught.value.classification == Classification.UNKNOWN
+
+
+def test_vehicle_context_round_trips_and_status_authority_is_rejected():
+    request_payload = payload(
+        make="Geely", model="Atlas", vehicle_year=2022,
+        engine="2.0T", transmission="DCT", vehicle_mileage=42000,
+        service_history="Synthetic service record",
+    )
+    normalized = normalize_intake(request_payload)
+    for key in ("engine", "transmission", "vehicle_mileage", "service_history"):
+        assert normalized[key] == request_payload[key]
+
+    captured = {}
+    def opener(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return Response({"ok": True, "lead_id": 103, "status": "new"})
+
+    provider = CRMIntakeProvider(
+        "https://crm-sandbox.up.railway.app", "synthetic-key", opener=opener
+    )
+    receipt = provider.create_lead(request_payload)
+    assert receipt["status"] == "new"
+    for key in ("engine", "transmission", "vehicle_mileage", "service_history"):
+        assert captured["body"][key] == request_payload[key]
+    assert "status" not in captured["body"]
