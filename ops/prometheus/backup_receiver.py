@@ -268,13 +268,26 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                         except (OSError, ValueError):
                             recorded = {}
                         if recorded.get("archive") != prior.name or recorded.get("sha256") != actual_sha:
-                            _write_status(status_path, {
-                                "archive": prior.name,
-                                "sha256": actual_sha,
-                                "blocks": expected_blocks,
-                                "verified_at": datetime.now(timezone.utc).isoformat(),
-                                "restore_test": "promtool-tsdb-analyze-pass",
-                            })
+                            try:
+                                _write_status(status_path, {
+                                    "archive": prior.name,
+                                    "sha256": actual_sha,
+                                    "blocks": expected_blocks,
+                                    "verified_at": datetime.now(timezone.utc).isoformat(),
+                                    "restore_test": "promtool-tsdb-analyze-pass",
+                                })
+                            except OSError as exc:
+                                with _state_lock:
+                                    _state["failures_total"] += 1
+                                    _state["last_error"] = "metadata-" + type(exc).__name__
+                                self._respond(503, {
+                                    "error": "backup metadata not persisted",
+                                    "archive": prior.name,
+                                    "sha256": actual_sha,
+                                    "status_warning": type(exc).__name__,
+                                    "retention_deletions": 0,
+                                })
+                                return
                         self._respond(200, {
                             "status": "already-verified",
                             "archive": prior.name,
