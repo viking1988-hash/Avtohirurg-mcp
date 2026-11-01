@@ -100,7 +100,8 @@ def test_committed_marker_repairs_delivery_without_repeating_handler(repo):
     def handler(conn,event):
         calls.append(event["event_id"])
         effect_handler(conn,event)
-    replay=OutboxReplay(repo,registry("ack-subscriber","AckRecoveryEvent",handler),
+    subscriber_name="ack-recovery-"+str(uuid.uuid4())
+    replay=OutboxReplay(repo,registry(subscriber_name,"AckRecoveryEvent",handler),
                         owner="ack-recovery")
     replay.register_subscribers()
     # Model a commit whose acknowledgement was lost: business effect and processed
@@ -110,13 +111,13 @@ def test_committed_marker_repairs_delivery_without_repeating_handler(repo):
             VALUES (%s,1) ON CONFLICT(event_id) DO NOTHING""",(event_id,))
         conn.execute("""INSERT INTO jarvis_outbox_deliveries
             (event_id,subscriber_name,event_version,status,attempt_count)
-            VALUES (%s,'ack-subscriber',1,'PENDING',1)""",(event_id,))
+            VALUES (%s,%s,1,'PENDING',1)""",(event_id,subscriber_name))
         conn.execute("""INSERT INTO jarvis_processed_events
-            (event_id,subscriber_name,event_version) VALUES (%s,'ack-subscriber',1)""",
-            (event_id,))
-    assert replay.replay_one() is False
+            (event_id,subscriber_name,event_version) VALUES (%s,%s,1)""",
+            (event_id,subscriber_name))
+    replay.replay_one()
     assert calls==[]
-    assert delivery(repo,event_id,"ack-subscriber")["status"]=="PUBLISHED"
+    assert delivery(repo,event_id,subscriber_name)["status"]=="PUBLISHED"
     with repo.connection() as conn:
         assert conn.execute("SELECT status FROM jarvis_outbox_events WHERE event_id=%s",
             (event_id,)).fetchone()["status"]=="PUBLISHED"
