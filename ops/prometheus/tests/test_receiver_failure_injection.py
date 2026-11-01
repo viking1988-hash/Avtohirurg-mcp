@@ -65,6 +65,11 @@ class ReceiverFailureInjectionTests(unittest.TestCase):
         archives = list(self.backups.glob("prometheus-*.tar.gz"))
         self.assertEqual(len(archives), 1)
         self.assertEqual(hashlib.sha256(archives[0].read_bytes()).hexdigest(), digest)
+        with patch.object(receiver, "_write_status", side_effect=OSError("synthetic metadata failure")):
+            failed_retry_status, failed_retry_body = self.upload(data, digest)
+        self.assertEqual(failed_retry_status, 503)
+        self.assertEqual(failed_retry_body["error"], "backup metadata not persisted")
+        self.assertEqual(len(list(self.backups.glob("prometheus-*.tar.gz"))), 1)
         retry_status, retry_body = self.upload(data, digest)
         self.assertEqual(retry_status, 200)
         self.assertEqual(retry_body["status"], "already-verified")
