@@ -18,11 +18,9 @@ from jarvis_return_worker.outbox import OutboxReplay
 from jarvis_return_worker.queue import QueueRepository
 from jarvis_return_worker.worker import CRMIntakeOperationWorker
 
-SOURCE_ID = "jarvis:" + str(uuid4())
-CORRELATION_ID = "issue77-e2e-" + str(uuid4())
 SYNTHETIC_NAME = "Synthetic Issue77 E2E"
-SYNTHETIC_PHONE = "000000000"
 ACTOR = "synthetic-e2e-human-approval"
+CASE_COUNT = 100
 
 
 def require(name):
@@ -41,7 +39,7 @@ def verify_crm_target(url):
         raise RuntimeError("refusing_non_disposable_crm_database")
 
 
-def cleanup_crm(database_url, source_id):
+def cleanup_crm(database_url, source_id, name, phone):
     pool = psycopg.connect(database_url, connect_timeout=8)
     try:
         identity = pool.execute("SELECT current_database() AS db").fetchone()[0]
@@ -50,7 +48,7 @@ def cleanup_crm(database_url, source_id):
         result = pool.execute(
             """DELETE FROM inbound_leads
                WHERE source_id=%s AND customer_name=%s AND phone=%s""",
-            (source_id, SYNTHETIC_NAME, SYNTHETIC_PHONE),
+            (source_id, name, phone),
         )
         if result.rowcount not in (0, 1):
             raise RuntimeError("crm_synthetic_cleanup_row_count_mismatch")
@@ -120,98 +118,126 @@ def main():
     repo = QueueRepository(config)
     repo.migrate()
     store = CRMIntakeStore(repo)
-    payload = {
-        "source_id": SOURCE_ID,
-        "name": SYNTHETIC_NAME,
-        "phone": SYNTHETIC_PHONE,
-        "make": "Geely",
-        "model": "Atlas",
-        "vehicle_year": 2022,
-        "modification": "Synthetic trim",
-        "engine": "2.0T synthetic",
-        "transmission": "DCT synthetic",
-        "vehicle_mileage": 42000,
-        "service_history": "Synthetic service record only",
-        "desired_date": "",
-        "notes": "issue77 synthetic integration test",
-        "symptom": "synthetic winter diagnostic symptom",
-        "urgency": "soon",
-        "followup_consent": False,
-    }
+    provider = ProviderAdapter(CRMIntakeProvider(crm_url, crm_key, timeout_seconds=8))
+    dispatcher = TransportDispatcher()
+    dispatcher.register("crm-intake", provider, enabled=True)
+    registry = EventBus()
+    CRMIntakeAdapter().register(registry)
+    replay = OutboxReplay(repo, registry, owner="issue77-cross-system-e2e")
+    replay.register_subscribers()
+    orchestrator = Orchestrator(repo, dispatcher, event_bus=registry, intake_store=store)
+    cases = []
+    verified = 0
+
     try:
-        provider = ProviderAdapter(CRMIntakeProvider(crm_url, crm_key, timeout_seconds=8))
-        dispatcher = TransportDispatcher()
-        dispatcher.register("crm-intake", provider, enabled=True)
-        store.prepare(payload, CORRELATION_ID, actor="synthetic-e2e-intake")
-        registry = EventBus()
-        CRMIntakeAdapter().register(registry)
-        replay = OutboxReplay(repo, registry, owner="issue77-cross-system-e2e")
-        replay.register_subscribers()
-        if not replay.replay_one():
-            raise RuntimeError("prepared_outbox_event_not_replayed")
-        approved = store.approve(SOURCE_ID, expected_version=0, actor=ACTOR)
-        if approved["state"] != "PENDING":
-            raise RuntimeError("human_approval_transition_failed")
+        for index in range(1, CASE_COUNT + 1):
+            source_id = "jarvis:" + str(uuid4())
+            correlation_id = "issue77-e2e-" + str(uuid4())
+            name = f"{SYNTHETIC_NAME} {index:03d}"
+            phone = f"000000{index:04d}"
+            payload = {
+                "source_id": source_id,
+                "name": name,
+                "phone": phone,
+                "make": "Geely",
+                "model": "Atlas",
+                "vehicle_year": 2022,
+                "modification": "Synthetic trim",
+                "engine": "2.0T synthetic",
+                "transmission": "DCT synthetic",
+                "vehicle_mileage": 42000,
+                "service_history": "Synthetic service record only",
+                "desired_date": "",
+                "notes": "issue77 synthetic integration test",
+                "symptom": "synthetic winter diagnostic symptom",
+                "urgency": "soon",
+                "followup_consent": False,
+            }
+            case = {"source_id": source_id, "name": name, "phone": phone, "payload": payload}
+            cases.append(case)
+            store.prepare(payload, correlation_id, actor="synthetic-e2e-intake")
+            if not replay.replay_one():
+                raise RuntimeError("prepared_outbox_event_not_replayed")
+            approved = store.approve(source_id, expected_version=0, actor=ACTOR)
+            if approved["state"] != "PENDING":
+                raise RuntimeError("human_approval_transition_failed")
 
-        orchestrator = Orchestrator(repo, dispatcher, event_bus=registry, intake_store=store)
-        result = asyncio.run(run_worker_until_terminal(orchestrator, store, SOURCE_ID))
-        if result["state"] != "DONE" or not result.get("external_lead_id"):
-            events = store.events(SOURCE_ID)
-            failure_reason = next((event.get("reason", "") for event in reversed(events)
-                                   if event.get("action") in ("failed", "reconciliation_required")), "")
-            safe_reason = failure_reason if re.fullmatch(r"[a-zA-Z0-9_:-]{1,200}", failure_reason) else "redacted"
-            raise RuntimeError("worker_dispatch_not_receipt_confirmed state=" + str(result.get("state"))
-                               + " reason=" + safe_reason)
+            result = asyncio.run(run_worker_until_terminal(orchestrator, store, source_id))
+            if result["state"] != "DONE" or not result.get("external_lead_id"):
+                events = store.events(source_id)
+                failure_reason = next((event.get("reason", "") for event in reversed(events)
+                                       if event.get("action") in ("failed", "reconciliation_required")), "")
+                safe_reason = failure_reason if re.fullmatch(r"[a-zA-Z0-9_:-]{1,200}", failure_reason) else "redacted"
+                raise RuntimeError("worker_dispatch_not_receipt_confirmed case="
+                                   + str(index) + " state=" + str(result.get("state"))
+                                   + " reason=" + safe_reason)
 
-        with psycopg.connect(crm_database_url, connect_timeout=8) as pool:
-            db_name = pool.execute("SELECT current_database() AS db").fetchone()[0]
-            if db_name != "avtohirurg_staging":
-                raise RuntimeError("crm_database_identity_mismatch")
-            rows = pool.execute(
-                """SELECT id,customer_name,phone,make,vehicle_model,vehicle_year,modification,
-                          vehicle_engine,vehicle_transmission,vehicle_mileage,service_history
-                   FROM inbound_leads
-                   WHERE source_id=%s AND customer_name=%s AND phone=%s""",
-                (SOURCE_ID, SYNTHETIC_NAME, SYNTHETIC_PHONE),
-            ).fetchall()
-            expected = (
-                str(result["external_lead_id"]), SYNTHETIC_NAME, SYNTHETIC_PHONE,
-                "Geely", "Atlas", 2022, "Synthetic trim", "2.0T synthetic",
-                "DCT synthetic", 42000, "Synthetic service record only",
-            )
-            if len(rows) != 1:
-                raise RuntimeError("crm_persisted_row_count_mismatch count=" + str(len(rows)))
-            actual = tuple(rows[0])
-            fields = (
-                "id", "customer_name", "phone", "make", "vehicle_model", "vehicle_year",
-                "modification", "vehicle_engine", "vehicle_transmission",
-                "vehicle_mileage", "service_history",
-            )
-            mismatched = []
-            if str(actual[0]) != expected[0]:
-                mismatched.append("id")
-            mismatched.extend(
-                name for name, got, want in zip(fields[1:], actual[1:], expected[1:])
-                if got != want
-            )
-            if mismatched:
-                id_details = " expected_id=" + str(expected[0]) + " actual_id=" + str(actual[0])
-                raise RuntimeError("crm_persisted_row_field_mismatch fields=" + ",".join(mismatched)
-                                   + id_details)
-            lead_id = str(rows[0][0])
-        print("ISSUE77_JARVIS_TO_CRM_E2E_PASS prepared approved outbox_replayed worker_dispatched receipt_matches_db")
+            duplicate = provider.create_lead(payload)
+            if str(duplicate["lead_id"]) != str(result["external_lead_id"]):
+                raise RuntimeError("crm_exact_replay_lead_id_mismatch case=" + str(index))
+
+            with psycopg.connect(crm_database_url, connect_timeout=8) as pool:
+                db_name = pool.execute("SELECT current_database() AS db").fetchone()[0]
+                if db_name != "avtohirurg_staging":
+                    raise RuntimeError("crm_database_identity_mismatch")
+                rows = pool.execute(
+                    """SELECT id,customer_name,phone,make,vehicle_model,vehicle_year,modification,
+                              vehicle_engine,vehicle_transmission,vehicle_mileage,service_history
+                       FROM inbound_leads
+                       WHERE source_id=%s AND customer_name=%s AND phone=%s""",
+                    (source_id, name, phone),
+                ).fetchall()
+                expected = (
+                    str(result["external_lead_id"]), name, phone,
+                    "Geely", "Atlas", 2022, "Synthetic trim", "2.0T synthetic",
+                    "DCT synthetic", 42000, "Synthetic service record only",
+                )
+                if len(rows) != 1:
+                    raise RuntimeError("crm_persisted_row_count_mismatch case="
+                                       + str(index) + " count=" + str(len(rows)))
+                actual = tuple(rows[0])
+                fields = (
+                    "id", "customer_name", "phone", "make", "vehicle_model", "vehicle_year",
+                    "modification", "vehicle_engine", "vehicle_transmission",
+                    "vehicle_mileage", "service_history",
+                )
+                mismatched = []
+                if str(actual[0]) != expected[0]:
+                    mismatched.append("id")
+                mismatched.extend(
+                    field for field, got, want in zip(fields[1:], actual[1:], expected[1:])
+                    if got != want
+                )
+                if mismatched:
+                    raise RuntimeError("crm_persisted_row_field_mismatch case="
+                                       + str(index) + " fields=" + ",".join(mismatched))
+            verified += 1
+
+        if verified != CASE_COUNT:
+            raise RuntimeError("cross_system_case_count_mismatch verified=" + str(verified))
+        print("ISSUE77_JARVIS_TO_CRM_E2E_PASS cases=100 approved outbox_replayed "
+              "worker_dispatched exact_replays=100 receipt_and_vehicle_context_readback=100")
     finally:
-        # Always clean the exact UUID/name/phone synthetic identity, including
-        # ambiguous worker outcomes where CRM may have committed before timeout.
-        try:
-            cleanup_crm(crm_database_url, SOURCE_ID)
-        finally:
-            cleanup_jarvis(repo, SOURCE_ID)
-            if store.get(SOURCE_ID) is not None:
-                raise RuntimeError("jarvis_synthetic_cleanup_verification_failed")
+        cleanup_failures = 0
+        for case in cases:
+            try:
+                cleanup_crm(crm_database_url, case["source_id"], case["name"], case["phone"])
+            except Exception:
+                cleanup_failures += 1
+            try:
+                cleanup_jarvis(repo, case["source_id"])
+            except Exception:
+                cleanup_failures += 1
+            try:
+                if store.get(case["source_id"]) is not None:
+                    cleanup_failures += 1
+            except Exception:
+                cleanup_failures += 1
+        if cleanup_failures:
+            raise RuntimeError("synthetic_cleanup_verification_failed failures="
+                               + str(cleanup_failures))
 
-    print("ISSUE77_CROSS_SYSTEM_E2E_CLEANUP_PASS crm=1 jarvis=1")
-    print("SYNTHETIC_LEAD_ID=" + lead_id)
+    print("ISSUE77_CROSS_SYSTEM_E2E_CLEANUP_PASS crm=100 jarvis=100")
 
 
 if __name__ == "__main__":
