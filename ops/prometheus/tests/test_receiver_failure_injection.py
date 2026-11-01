@@ -71,7 +71,7 @@ class ReceiverFailureInjectionTests(unittest.TestCase):
         self.assertEqual(failed_retry_body["error"], "backup metadata not persisted")
         self.assertEqual(len(list(self.backups.glob("prometheus-*.tar.gz"))), 1)
         retry_status, retry_body = self.upload(data, digest)
-        self.assertEqual(retry_status, 200)
+        self.assertEqual(retry_status, 200, f"retry response: {retry_body!r}")
         self.assertEqual(retry_body["status"], "already-verified")
         recorded = json.loads((self.backups / "last-verified.json").read_text())
         self.assertEqual(recorded["sha256"], digest)
