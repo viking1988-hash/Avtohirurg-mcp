@@ -18,12 +18,14 @@ _SOURCE_ID = re.compile(
 _URGENCY = {"unassessed", "routine", "soon", "urgent", "emergency"}
 _FIELDS = {
     "source_id", "name", "phone", "make", "model", "vehicle_year",
-    "modification", "desired_date", "notes", "symptom", "urgency",
+    "modification", "engine", "transmission", "vehicle_mileage",
+    "service_history", "desired_date", "notes", "symptom", "urgency",
     "followup_consent",
 }
 _LIMITS = {
     "name": 120, "phone": 40, "make": 80, "model": 100,
-    "modification": 120, "desired_date": 30, "notes": 2000, "symptom": 2000,
+    "modification": 120, "engine": 120, "transmission": 80,
+    "service_history": 2000, "desired_date": 30, "notes": 2000, "symptom": 2000,
 }
 
 
@@ -33,7 +35,8 @@ def normalize_intake(payload):
         raise DeliveryError(Classification.PERMANENT, "crm_lead_payload_invalid")
     normalized = {}
     for key in ("source_id", "name", "phone", "make", "model",
-                "modification", "desired_date", "notes", "symptom"):
+                "modification", "engine", "transmission", "service_history",
+                "desired_date", "notes", "symptom"):
         value = payload.get(key, "")
         if not isinstance(value, str) or len(value) > _LIMITS.get(key, 200):
             raise DeliveryError(Classification.PERMANENT, "crm_lead_payload_invalid")
@@ -45,12 +48,16 @@ def normalize_intake(payload):
     year = payload.get("vehicle_year")
     if year is not None and (type(year) is not int or not 1886 <= year <= 2100):
         raise DeliveryError(Classification.PERMANENT, "crm_lead_vehicle_year_invalid")
+    mileage = payload.get("vehicle_mileage")
+    if mileage is not None and (type(mileage) is not int or not 0 <= mileage <= 2_000_000):
+        raise DeliveryError(Classification.PERMANENT, "crm_lead_vehicle_mileage_invalid")
     urgency = payload.get("urgency", "unassessed")
     consent = payload.get("followup_consent", False)
-    if urgency not in _URGENCY or type(consent) is not bool:
+    if not isinstance(urgency, str) or urgency not in _URGENCY or type(consent) is not bool:
         raise DeliveryError(Classification.PERMANENT, "crm_lead_policy_field_invalid")
     normalized.update({
         "vehicle_year": year,
+        "vehicle_mileage": mileage,
         "urgency": urgency,
         "followup_consent": consent,
     })
