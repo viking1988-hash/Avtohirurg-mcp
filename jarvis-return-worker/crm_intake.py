@@ -125,12 +125,21 @@ class CRMIntakeProvider:
         if status_code >= 500 or status_code < 200 or status_code >= 300:
             classification = Classification.UNKNOWN if status_code >= 500 else Classification.PERMANENT
             raise DeliveryError(classification, "crm_intake_request_rejected")
+        lead_id = result.get("lead_id") if isinstance(result, dict) else None
+        valid_lead_id = (
+            (type(lead_id) is int and lead_id > 0)
+            or (isinstance(lead_id, str) and lead_id.isascii()
+                and lead_id.isdecimal() and 0 < len(lead_id) <= 20
+                and int(lead_id) > 0)
+        )
+        # Intake may acknowledge a newly-created lead only. It cannot confirm
+        # a booking or accept an authority-bearing status from the CRM response.
         if (status_code != 202 or not isinstance(result, dict) or result.get("ok") is not True
-                or not isinstance(result.get("lead_id"), (str, int)) or not result.get("status")):
-            raise DeliveryError(Classification.UNKNOWN, "crm_intake_receipt_missing")
-        # Keep only the CRM identifier and status; never retain customer PII.
+                or not valid_lead_id or result.get("status") != "new"):
+            raise DeliveryError(Classification.UNKNOWN, "crm_intake_receipt_invalid")
+        # Keep only the CRM identifier and fixed initial status; never retain customer PII.
         return {
-            "receipt_id": "crm-lead:" + str(result["lead_id"]),
-            "lead_id": result["lead_id"],
-            "status": str(result["status"]),
+            "receipt_id": "crm-lead:" + str(lead_id),
+            "lead_id": lead_id,
+            "status": "new",
         }
