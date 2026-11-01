@@ -179,8 +179,17 @@ def main():
                 "Geely", "Atlas", 2022, "Synthetic trim", "2.0T synthetic",
                 "DCT synthetic", 42000, "Synthetic service record only",
             )
-            if len(rows) != 1 or tuple(rows[0]) != expected:
-                raise RuntimeError("crm_persisted_row_or_vehicle_context_mismatch")
+            if len(rows) != 1:
+                raise RuntimeError("crm_persisted_row_count_mismatch count=" + str(len(rows)))
+            actual = tuple(rows[0])
+            if actual != expected:
+                fields = (
+                    "id", "customer_name", "phone", "make", "vehicle_model", "vehicle_year",
+                    "modification", "vehicle_engine", "vehicle_transmission",
+                    "vehicle_mileage", "service_history",
+                )
+                mismatched = [name for name, got, want in zip(fields, actual, expected) if got != want]
+                raise RuntimeError("crm_persisted_row_field_mismatch fields=" + ",".join(mismatched))
             lead_id = str(rows[0][0])
         print("ISSUE77_JARVIS_TO_CRM_E2E_PASS prepared approved outbox_replayed worker_dispatched receipt_matches_db")
     finally:
