@@ -124,10 +124,14 @@ def main():
         "source_id": SOURCE_ID,
         "name": SYNTHETIC_NAME,
         "phone": SYNTHETIC_PHONE,
-        "make": "Synthetic",
-        "model": "E2E",
-        "vehicle_year": 2020,
-        "modification": "Synthetic only",
+        "make": "Geely",
+        "model": "Atlas",
+        "vehicle_year": 2022,
+        "modification": "Synthetic trim",
+        "engine": "2.0T synthetic",
+        "transmission": "DCT synthetic",
+        "vehicle_mileage": 42000,
+        "service_history": "Synthetic service record only",
         "desired_date": "",
         "notes": "issue77 synthetic integration test",
         "symptom": "synthetic winter diagnostic symptom",
@@ -164,12 +168,19 @@ def main():
             if db_name != "avtohirurg_staging":
                 raise RuntimeError("crm_database_identity_mismatch")
             rows = pool.execute(
-                """SELECT id,customer_name,phone FROM inbound_leads
+                """SELECT id,customer_name,phone,make,vehicle_model,vehicle_year,modification,
+                          vehicle_engine,vehicle_transmission,vehicle_mileage,service_history
+                   FROM inbound_leads
                    WHERE source_id=%s AND customer_name=%s AND phone=%s""",
                 (SOURCE_ID, SYNTHETIC_NAME, SYNTHETIC_PHONE),
             ).fetchall()
-            if len(rows) != 1 or str(rows[0][0]) != str(result["external_lead_id"]):
-                raise RuntimeError("crm_persisted_row_or_receipt_mismatch")
+            expected = (
+                str(result["external_lead_id"]), SYNTHETIC_NAME, SYNTHETIC_PHONE,
+                "Geely", "Atlas", 2022, "Synthetic trim", "2.0T synthetic",
+                "DCT synthetic", 42000, "Synthetic service record only",
+            )
+            if len(rows) != 1 or tuple(rows[0]) != expected:
+                raise RuntimeError("crm_persisted_row_or_vehicle_context_mismatch")
             lead_id = str(rows[0][0])
         print("ISSUE77_JARVIS_TO_CRM_E2E_PASS prepared approved outbox_replayed worker_dispatched receipt_matches_db")
     finally:
