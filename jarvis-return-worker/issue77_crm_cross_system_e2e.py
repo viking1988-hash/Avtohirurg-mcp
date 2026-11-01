@@ -182,13 +182,19 @@ def main():
             if len(rows) != 1:
                 raise RuntimeError("crm_persisted_row_count_mismatch count=" + str(len(rows)))
             actual = tuple(rows[0])
-            if actual != expected:
-                fields = (
-                    "id", "customer_name", "phone", "make", "vehicle_model", "vehicle_year",
-                    "modification", "vehicle_engine", "vehicle_transmission",
-                    "vehicle_mileage", "service_history",
-                )
-                mismatched = [name for name, got, want in zip(fields, actual, expected) if got != want]
+            fields = (
+                "id", "customer_name", "phone", "make", "vehicle_model", "vehicle_year",
+                "modification", "vehicle_engine", "vehicle_transmission",
+                "vehicle_mileage", "service_history",
+            )
+            mismatched = []
+            if str(actual[0]) != expected[0]:
+                mismatched.append("id")
+            mismatched.extend(
+                name for name, got, want in zip(fields[1:], actual[1:], expected[1:])
+                if got != want
+            )
+            if mismatched:
                 id_details = " expected_id=" + str(expected[0]) + " actual_id=" + str(actual[0])
                 raise RuntimeError("crm_persisted_row_field_mismatch fields=" + ",".join(mismatched)
                                    + id_details)
