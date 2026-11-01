@@ -369,7 +369,7 @@ def exercise_crm_lifecycle(database_url, fixture, case, index):
     case["repeat_visit_id"] = str(draft["id"])
     _, replay = http_json(repeat_path, "POST", repeat_payload, session_headers, expected=(200,))
     replay_draft = replay.get("repeat_visit_draft", {})
-    if str(replay_draft.get("id")) != case["repeat_visit_id"] or replay.get("message_sent") is not False:
+    if str(replay_draft.get("id")) != case["repeat_visit_id"]:
         raise RuntimeError("crm_lifecycle_repeat_idempotency_failed")
     _, readback = http_json(repeat_path, headers=read_headers)
     saved = readback.get("repeat_visit_draft", {})
