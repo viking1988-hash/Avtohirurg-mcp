@@ -20,8 +20,18 @@ jobs:
           python-version: '3.11'
       - name: Offline archive validation and receiver tests
         run: python -m unittest discover -s ops/prometheus/tests -v
-      - name: Guard existing Prometheus launcher against admin API exposure
-        run: sh ops/prometheus/tests/production_boundary_preflight.sh
+      - name: Guard existing Prometheus launcher against admin API exposure (when present)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f jarvis-return-worker/monitoring/start-prometheus.sh && -f Dockerfile.worker-private-monitoring-sandbox ]]; then
+            sh ops/prometheus/tests/production_boundary_preflight.sh
+          elif [[ ! -e jarvis-return-worker/monitoring/start-prometheus.sh && ! -e Dockerfile.worker-private-monitoring-sandbox ]]; then
+            echo 'PASS: neither legacy monitoring launcher nor Dockerfile exists on this isolated main-based branch'
+          else
+            echo 'FAIL: partial legacy monitoring topology; cannot verify production boundary' >&2
+            exit 1
+          fi
       - name: Disposable snapshot launcher negative safety checks
         run: sh ops/prometheus/tests/disposable_launcher_negative.sh
       - name: Verify disposable snapshot launcher contract
