@@ -202,7 +202,7 @@ def prepare_crm_lifecycle(database_url, crm_url):
         parsed.hostname == public_host and parsed.scheme == "https"
         or parsed.hostname == internal_host and parsed.scheme in ("http", "https")
     )
-    if (not allowed_target or parsed.path.rstrip("/") != "/api/v1/leads"
+    if (not allowed_target or parsed.path.rstrip("/") not in ("", "/api/v1/leads")
             or parsed.query or parsed.fragment):
         raise RuntimeError("refusing_non_isolated_crm_target"
                            + "_scheme=" + parsed.scheme
