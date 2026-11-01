@@ -165,6 +165,25 @@ def test_network_timeout_is_unknown_and_invalid_receipt_is_not_success():
     assert caught.value.classification == Classification.UNKNOWN
 
 
+@pytest.mark.parametrize("receipt", [
+    {"ok": True, "lead_id": 105, "status": "scheduled"},
+    {"ok": True, "lead_id": 105, "status": "confirmed"},
+    {"ok": True, "lead_id": 105, "status": "in_service"},
+    {"ok": True, "lead_id": True, "status": "new"},
+    {"ok": True, "lead_id": 0, "status": "new"},
+    {"ok": True, "lead_id": "not-a-numeric-id", "status": "new"},
+])
+def test_provider_rejects_authority_bearing_or_malformed_receipts(receipt):
+    provider = CRMIntakeProvider(
+        "https://crm-sandbox.up.railway.app",
+        "synthetic-key",
+        opener=lambda *args, **kwargs: Response(receipt),
+    )
+    with pytest.raises(DeliveryError) as caught:
+        provider.create_lead(payload())
+    assert caught.value.classification == Classification.UNKNOWN
+
+
 def test_vehicle_context_round_trips_and_status_authority_is_rejected():
     request_payload = payload(
         make="Geely", model="Atlas", vehicle_year=2022,
