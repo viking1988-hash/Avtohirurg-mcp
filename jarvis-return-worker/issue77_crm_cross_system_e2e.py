@@ -196,19 +196,30 @@ def synthetic_png():
 
 def prepare_crm_lifecycle(database_url, crm_url):
     parsed = urlsplit(crm_url)
-    if parsed.scheme != "https" or parsed.path.rstrip("/") != "/api/v1/leads" or parsed.query or parsed.fragment:
-        raise RuntimeError("refusing_non_https_crm_lifecycle_target")
-    base = parsed.scheme + "://" + parsed.netloc
-    origin = os.environ.get("CRM_PUBLIC_ORIGIN", base)
-    if origin != base:
+    public_host = "cf7-pr73-api-isolated-staging.up.railway.app"
+    internal_host = "cf7-pr73-api-isolated.railway.internal"
+    allowed_target = (
+        parsed.hostname == public_host and parsed.scheme == "https"
+        or parsed.hostname == internal_host and parsed.scheme in ("http", "https")
+    )
+    if (not allowed_target or parsed.path.rstrip("/") != "/api/v1/leads"
+            or parsed.query or parsed.fragment):
+        raise RuntimeError("refusing_non_isolated_crm_target"
+                           + "_scheme=" + parsed.scheme
+                           + "_host=" + str(parsed.hostname)
+                           + "_path=" + parsed.path)
+    origin = os.environ.get("CRM_PUBLIC_ORIGIN", "https://" + public_host)
+    if origin != "https://" + public_host:
         raise RuntimeError("crm_lifecycle_origin_mismatch")
+    base = parsed.scheme + "://" + parsed.netloc
+    expected_host = public_host
     suffix = uuid4().hex[:12]
     username, password = "i77e2e_" + suffix, "synthetic-issue77-e2e-password"
     salt = os.urandom(16)
     password_hash = "scrypt$v1$" + salt.hex() + "$" + hashlib.scrypt(
         password.encode("utf-8"), salt=salt, n=16384, r=8, p=1, dklen=64, maxmem=64 * 1024 * 1024
     ).hex()
-    fixture = {"base": base, "origin": origin, "username": username, "staff_id": None,
+    fixture = {"base": base, "origin": origin, "username": username, "expected_host": public_host, "staff_id": None,
                "service_id": None, "bay_id": None, "cookie": None, "token": None}
     try:
         with psycopg.connect(database_url, connect_timeout=8) as db:
@@ -228,7 +239,7 @@ def prepare_crm_lifecycle(database_url, crm_url):
         request = urllib.request.Request(
             base + "/api/v1/staff/login",
             data=json.dumps({"username": username, "password": password}).encode("utf-8"),
-            headers={"Origin": origin, "Host": parsed.netloc, "Content-Type": "application/json"},
+            headers={"Origin": origin, "Host": expected_host, "Content-Type": "application/json"},
             method="POST",
         )
         try:
@@ -256,8 +267,8 @@ def prepare_crm_lifecycle(database_url, crm_url):
 def exercise_crm_lifecycle(database_url, fixture, case, index):
     lead_id = str(case["lead_id"])
     base, origin, cookie = fixture["base"], fixture["origin"], fixture["cookie"]
-    session_headers = {"Origin": origin, "Cookie": cookie, "Content-Type": "application/json"}
-    read_headers = {"Cookie": cookie, "Content-Type": "application/json"}
+    session_headers = {"Origin": origin, "Host": fixture["expected_host"], "Cookie": cookie, "Content-Type": "application/json"}
+    read_headers = {"Origin": origin, "Host": fixture["expected_host"], "Cookie": cookie, "Content-Type": "application/json"}
     start = datetime(2099, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=(index - 1) * 90)
     booking_input = {
         "service_id": fixture["service_id"], "work_bay_id": fixture["bay_id"],
@@ -313,7 +324,7 @@ def exercise_crm_lifecycle(database_url, fixture, case, index):
     case["diagnostic_case_id"] = str(diagnostic["id"])
     _, uploaded = http_json(
         base + "/api/v1/desk/diagnostic-cases/" + case["diagnostic_case_id"] + "/evidence",
-        "POST", headers={"Origin": origin, "Cookie": cookie, "Content-Type": "image/png",
+        "POST", headers={"Origin": origin, "Host": fixture["expected_host"], "Cookie": cookie, "Content-Type": "image/png",
                          "X-Diagnostic-Media-Consent": "attested"},
         raw_body=synthetic_png(), expected=(201,),
     )
