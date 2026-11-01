@@ -189,7 +189,9 @@ def main():
                     "vehicle_mileage", "service_history",
                 )
                 mismatched = [name for name, got, want in zip(fields, actual, expected) if got != want]
-                raise RuntimeError("crm_persisted_row_field_mismatch fields=" + ",".join(mismatched))
+                id_details = " expected_id=" + str(expected[0]) + " actual_id=" + str(actual[0])
+                raise RuntimeError("crm_persisted_row_field_mismatch fields=" + ",".join(mismatched)
+                                   + id_details)
             lead_id = str(rows[0][0])
         print("ISSUE77_JARVIS_TO_CRM_E2E_PASS prepared approved outbox_replayed worker_dispatched receipt_matches_db")
     finally:
