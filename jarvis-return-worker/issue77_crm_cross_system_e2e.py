@@ -1,5 +1,6 @@
 """Disposable cross-system E2E for issue #77. Synthetic data only; never Production."""
 import asyncio
+import json
 import os
 import re
 from urllib.parse import urlsplit
@@ -37,6 +38,51 @@ def verify_crm_target(url):
             or parsed.path != "/avtohirurg_staging"
             or parsed.query or parsed.fragment):
         raise RuntimeError("refusing_non_disposable_crm_database")
+
+
+
+def audit_staging_catalog(database_url):
+    """Read-only, PII-free snapshot from the isolated staging database."""
+    with psycopg.connect(database_url, connect_timeout=8) as db:
+        identity = db.execute(
+            "SELECT current_database() AS db, inet_server_addr()::text AS host"
+        ).fetchone()
+        if identity[0] != "avtohirurg_staging":
+            raise RuntimeError("catalog_database_identity_mismatch")
+        services = db.execute(
+            """SELECT id::text, name, duration_minutes, price_from_kopecks::text
+               FROM services ORDER BY name, id"""
+        ).fetchall()
+        bays = db.execute(
+            """SELECT id::text, name FROM work_bays
+               WHERE active=true ORDER BY name, id"""
+        ).fetchall()
+        busy = db.execute(
+            """SELECT work_bay_id::text, starts_at::text, ends_at::text, status
+               FROM bookings
+               WHERE status IN ('new','confirmed','in_progress')
+                 AND starts_at >= now()
+                 AND starts_at < now() + interval '30 days'
+               ORDER BY work_bay_id, starts_at"""
+        ).fetchall()
+    snapshot = {
+        "database": "avtohirurg_staging",
+        "service_count": len(services),
+        "services": [
+            {"id": row[0], "name": row[1], "duration_minutes": row[2],
+             "price_from_kopecks": row[3]}
+            for row in services
+        ],
+        "active_work_bays": [{"id": row[0], "name": row[1]} for row in bays],
+        "busy_intervals_next_30_days": [
+            {"work_bay_id": row[0], "starts_at": row[1],
+             "ends_at": row[2], "status": row[3]}
+            for row in busy
+        ],
+        "customer_data": "excluded",
+    }
+    print("ISSUE77_STAGING_CATALOG_SNAPSHOT " +
+          json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")))
 
 
 def cleanup_crm(database_url, source_id, name, phone):
@@ -114,6 +160,7 @@ def main():
     crm_key = require("JARVIS_CRM_INTAKE_API_KEY")
     crm_database_url = require("CRM_E2E_DATABASE_URL")
     verify_crm_target(crm_database_url)
+    audit_staging_catalog(crm_database_url)
 
     repo = QueueRepository(config)
     repo.migrate()
