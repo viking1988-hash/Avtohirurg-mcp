@@ -726,8 +726,11 @@ class ReturnWorkerDispatchFenceTests(unittest.IsolatedAsyncioTestCase):
                 "destination_key": "sandbox:never-send",
                 "action_fingerprint": "test-only"}
         await orchestrator.process(task, "expired-owner")
-        repository.dispatch_with_fence.assert_called_once_with(
-            "synthetic-stale", "expired-owner", 1)
+        repository.dispatch_with_fence.assert_called_once()
+        fence_args = repository.dispatch_with_fence.call_args.args
+        self.assertEqual(fence_args[:3],
+                         ("synthetic-stale", "expired-owner", 1))
+        self.assertTrue(callable(fence_args[3]))
         provider.send.assert_not_called()
         repository.save_delivery_receipt.assert_not_called()
         repository.finish.assert_not_called()
