@@ -142,6 +142,24 @@ class QueueRepository:
                 raise Conflict('delivery boundary not recorded')
         return True
 
+    def dispatch_with_fence(self, task_id, owner, attempt, dispatch):
+        """Run one provider call while holding the task row lock.
+
+        Expiry recovery uses FOR UPDATE SKIP LOCKED, so it cannot reclaim this
+        task while a bounded external call is in flight. If the process or
+        database connection dies after the durable delivery marker, recovery
+        sees that marker and requires reconciliation instead of resending.
+        """
+        if not callable(dispatch):
+            raise TypeError('dispatch callback required')
+        with self.connection() as c:
+            row = self._owned(c, task_id, owner, attempt)
+            if not valid_approval(row):
+                raise Conflict('approval invalid at dispatch boundary')
+            if not row.get('delivery_started_at'):
+                raise Conflict('delivery boundary not recorded')
+            return dispatch()
+
     def mark_delivery_started(self, task_id, owner, attempt, provider=None):
         """Persist the external-effect boundary before invoking any transport."""
         with self.connection() as c:

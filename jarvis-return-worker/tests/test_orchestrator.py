@@ -31,6 +31,9 @@ class Repo:
     def heartbeat(self,*args): self.calls.append("heartbeat")
     def mark_delivery_started(self,*args): self.calls.append("mark")
     def verify_dispatch_lease(self,*args): return True
+    def dispatch_with_fence(self,task_id,owner,attempt,dispatch):
+        self.verify_dispatch_lease(task_id,owner,attempt)
+        return dispatch()
     def save_delivery_receipt(self,*args): self.calls.append("receipt")
     def finish(self,*args): self.calls.append("finish")
     def fail(self,*args): self.calls.append("fail")
@@ -213,25 +216,31 @@ def test_misclassified_policy_retry_cannot_bypass_unknown_provider_error():
     assert repo.calls==["heartbeat","mark","fail"]
 
 
-def test_lease_expires_after_fence_before_provider_call_is_not_atomic():
-    """Document TOCTOU: a successful DB fence does not reserve a remote send."""
-    class LeaseExpiresAfterFence(Repo):
-        def __init__(self):
-            super().__init__()
-            self.expired=False
+def test_orchestrator_requires_atomic_repository_dispatch_fence():
+    """Provider calls must pass through the repository's row-locking boundary."""
+    class AtomicFenceRepo(Repo):
         def verify_dispatch_lease(self,*args):
-            self.calls.append("fence")
-            self.expired=True  # Simulated lease expiry after the successful check.
-            return True
-    class ObservingProvider(Provider):
-        def send(self,task,key):
-            assert repo.expired
-            return super().send(task,key)
-    repo=LeaseExpiresAfterFence()
-    provider=ObservingProvider("alpha",error=DeliveryError(Classification.UNKNOWN,"lost_response"))
+            raise AssertionError("orchestrator must not use the non-atomic pre-send check")
+        def dispatch_with_fence(self,task_id,owner,attempt,dispatch):
+            self.calls.append("atomic_fence")
+            return dispatch()
+    repo=AtomicFenceRepo()
+    provider=Provider("alpha")
     run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
-    assert len(provider.calls)==1  # External effect may start after lease expiry.
-    assert "retry" not in repo.calls
+    assert len(provider.calls)==1
+    assert repo.calls==["heartbeat","mark","atomic_fence","receipt","finish"]
+
+
+def test_atomic_dispatch_fence_rejects_expired_lease_before_provider_call():
+    from jarvis_return_worker.queue import Conflict
+    class ExpiredFenceRepo(Repo):
+        def dispatch_with_fence(self,*args):
+            self.calls.append("fence")
+            raise Conflict("lease expired at dispatch boundary")
+    repo=ExpiredFenceRepo()
+    provider=Provider("alpha")
+    run(Orchestrator(repo,dispatcher(("alpha",provider,True))))
+    assert provider.calls==[]
     assert repo.calls==["heartbeat","mark","fence","fail"]
 
 

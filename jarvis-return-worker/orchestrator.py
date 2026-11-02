@@ -254,11 +254,12 @@ class Orchestrator:
                 dispatcher_failure(str(exc))
                 raise
             def fenced_provider_send():
-                # Keep the DB ownership check and provider invocation in one
-                # worker thread, minimizing (not eliminating) the TOCTOU gap.
-                self.repository.verify_dispatch_lease(
-                    task["task_id"], owner, task["attempt_count"])
-                return self._send(provider, task)
+                # Keep the task row locked until the bounded provider call returns.
+                # Expiry recovery skips locked rows; after a process crash, the
+                # durable delivery marker sends the task to reconciliation.
+                return self.repository.dispatch_with_fence(
+                    task["task_id"], owner, task["attempt_count"],
+                    lambda: self._send(provider, task))
             result=await asyncio.to_thread(fenced_provider_send)
             receipt=result.get("receipt_id") or result.get("receipt") or result.get("message_id")
             message_id=result.get("message_id")
