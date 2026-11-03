@@ -67,8 +67,11 @@ def make_handler(database_path, token):
 
         def _message(self, message_id):
             with sqlite3.connect(database_path, timeout=10) as db:
-                rows = db.execute("SELECT idem_key, receipt FROM inbox WHERE principal=?",
-                                  ("isolated-test-sender",)).fetchall()
+                rows = db.execute(
+                    "SELECT i.idem_key, i.receipt FROM inbox i "
+                    "JOIN effects e ON e.principal=i.principal AND e.idem_key=i.idem_key "
+                    "WHERE i.principal=? ORDER BY e.id DESC",
+                    ("isolated-test-sender",)).fetchall()
                 for key, raw in rows:
                     receipt = json.loads(raw)
                     if receipt.get("provider_message_id") == message_id:
