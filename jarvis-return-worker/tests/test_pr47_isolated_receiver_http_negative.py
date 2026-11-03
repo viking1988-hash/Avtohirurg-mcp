@@ -46,6 +46,9 @@ def test_http_auth_conflict_receipt_restart_and_no_extra_effect(tmp_path):
     try:
         assert request(server, "POST", "/messages", body={"value": 1}, auth=False)[0] == 401
         assert request(server, "POST", "/messages", body={"value": 1}, key="")[0] == 400
+        assert request(server, "POST", "/messages", body={"value": 1}, key="x" * 129)[0] == 400
+        assert request(server, "POST", "/messages", body={"value": 1}, key="bad/key")[0] == 400
+        assert request(server, "POST", "/messages", body={"value": 1}, key="bad key")[0] == 400
         status, receipt = request(server, "POST", "/messages", body={"value": 1})
         assert status == 201
         assert request(server, "POST", "/messages", body={"value": 2})[0] == 409
