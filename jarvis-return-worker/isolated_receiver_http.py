@@ -40,6 +40,11 @@ def make_handler(database_path, token):
         def do_POST(self):
             if not self.authenticate():
                 return self.reply(401, {"error": "unauthorized"})
+            import re
+            from urllib.parse import unquote
+            cancel = re.fullmatch(r"/messages/([^/]+)/cancel", self.path)
+            if cancel:
+                return self._mutate_message("POST", unquote(cancel.group(1)), "/cancel")
             if self.path != "/messages":
                 return self.reply(404, {"error": "not_found"})
             key = self.headers.get("Idempotency-Key", "")
@@ -146,6 +151,17 @@ def make_handler(database_path, token):
                         ("isolated-test-sender", key),
                     ).fetchone()[0]
                 return self.reply(200, {"effect_count": count})
+            if self.path.startswith("/messages/"):
+                from urllib.parse import unquote
+                import re
+                match = re.fullmatch(r"/messages/([^/]+)", self.path)
+                if not match:
+                    return self.reply(404, {"error": "not_found"})
+                try:
+                    _, receipt = self._message(unquote(match.group(1)))
+                except sqlite3.Error:
+                    return self.reply(503, {"error": "durable_store_unavailable"})
+                return self.reply(200, receipt) if receipt else self.reply(404, {"error": "not_found"})
             if not self.path.startswith("/receipts/"):
                 return self.reply(404, {"error": "not_found"})
             key = self.path[len("/receipts/"):]
