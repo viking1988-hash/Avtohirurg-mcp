@@ -38,6 +38,8 @@ jobs:
         run: sh ops/prometheus/tests/disposable_launcher_contract.sh
       - name: Build isolated backup helper image
         run: docker build -f ops/prometheus/Dockerfile.backup-helper -t prometheus-backup-helper:test .
+      - name: Build disposable snapshot image
+        run: docker build -f ops/prometheus/Dockerfile.disposable-railway-prometheus -t prometheus-disposable:test .
       - name: Disposable Prometheus snapshot API smoke test
         shell: bash
         run: |
