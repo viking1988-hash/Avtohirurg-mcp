@@ -339,3 +339,69 @@ def test_telegram_p1_ambiguous_acceptance_never_auto_resends(failure):
     assert not core.policy.may_resend(
         {**approved_task(),"delivery_started_at":NOW},
         Classification.UNKNOWN)
+
+
+def test_two_distinct_workers_after_successful_fences_can_both_reach_receiver():
+    """Security regression evidence: lease fencing alone does not deduplicate remote effects."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier=threading.Barrier(2,timeout=10)
+    lock=threading.Lock()
+    delivered=[]
+    class RaceRepo(Repo):
+        def mark_delivery_started(self,*args):
+            self.calls.append("mark")
+        def verify_dispatch_lease(self,*args):
+            barrier.wait()
+            return True
+    class RaceProvider(Provider):
+        def send(self,task,key):
+            with lock:
+                delivered.append((task["task_id"],key))
+            raise DeliveryError(Classification.UNKNOWN,"response_lost_after_acceptance")
+
+    repo=RaceRepo()
+    provider=RaceProvider("alpha")
+    def worker(owner):
+        asyncio.run(Orchestrator(repo,dispatcher(("alpha",provider,True))).process(
+            approved_task(),owner))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(worker,("worker-a","worker-b")))
+    assert len(delivered)==2, "Both sends are reachable without receiver dedup"
+    assert len({key for _,key in delivered})==1, "Idempotency key must remain stable"
+    assert "retry" not in repo.calls, "UNKNOWN must not trigger automatic resend"
+
+
+def test_receiver_atomic_dedup_limits_two_fenced_workers_to_one_effect():
+    """A receiver-side atomic idempotency record, not a lease fence, prevents duplicates."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    fence=threading.Barrier(2,timeout=10)
+    lock=threading.Lock()
+    accepted={}
+    requests=[]
+    class RaceRepo(Repo):
+        def verify_dispatch_lease(self,*args):
+            fence.wait()
+            return True
+    class DeduplicatingReceiver(Provider):
+        def send(self,task,key):
+            with lock:
+                requests.append(key)
+                if key not in accepted:
+                    accepted[key]={"receipt_id":"receiver-receipt","message_id":"receiver-msg"}
+                return dict(accepted[key])
+
+    repo=RaceRepo()
+    receiver=DeduplicatingReceiver("alpha")
+    def worker(owner):
+        asyncio.run(Orchestrator(repo,dispatcher(("alpha",receiver,True))).process(
+            approved_task(),owner))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(worker,("worker-a","worker-b")))
+    assert len(requests)==2
+    assert len(set(requests))==1
+    assert len(accepted)==1
+    assert repo.calls.count("retry")==0
