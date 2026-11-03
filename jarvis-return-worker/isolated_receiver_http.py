@@ -100,7 +100,7 @@ def make_handler(database_path, token):
             try:
                 with sqlite3.connect(database_path, timeout=10, isolation_level=None) as db:
                     db.execute("BEGIN IMMEDIATE")
-                    rows = db.execute("SELECT idem_key, receipt FROM inbox WHERE principal=?",
+                    rows = db.execute("SELECT i.idem_key, i.receipt FROM inbox i JOIN effects e ON e.principal=i.principal AND e.idem_key=i.idem_key WHERE i.principal=? ORDER BY e.id DESC",
                                       ("isolated-test-sender",)).fetchall()
                     target = next((json.loads(raw) for _, raw in rows
                                    if json.loads(raw).get("provider_message_id") == message_id),
