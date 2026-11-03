@@ -53,7 +53,11 @@ def make_handler(database_path, token):
                 body = json.loads(self.rfile.read(int(length)))
             except (ValueError, UnicodeDecodeError):
                 return self.reply(400, {"error": "invalid_json"})
-            status, result = inbox.submit("isolated-test-sender", "POST", "/messages", key, body)
+            try:
+                status, result = inbox.submit("isolated-test-sender", "POST", "/messages", key, body)
+            except sqlite3.Error:
+                # Never acknowledge acceptance when the durable transaction fails.
+                return self.reply(503, {"error": "durable_store_unavailable"})
             return self.reply(status, result)
 
         def do_GET(self):
