@@ -181,3 +181,45 @@ def test_concurrent_identical_requests_replay_one_durable_receipt(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_sqlite_receipt_write_failure_returns_503_without_effect(tmp_path):
+    """Durable transaction failure must not produce HTTP 201 or an orphan effect."""
+    path = tmp_path / "failure.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE inbox (principal TEXT NOT NULL, idem_key TEXT NOT NULL, fingerprint TEXT NOT NULL, receipt TEXT NOT NULL, PRIMARY KEY (principal, idem_key))")
+        db.execute("CREATE TABLE effects (id INTEGER PRIMARY KEY, principal TEXT NOT NULL, idem_key TEXT NOT NULL)")
+        db.execute("""
+            CREATE TRIGGER reject_receipt BEFORE INSERT ON inbox
+            BEGIN SELECT RAISE(ABORT, 'synthetic durable store failure'); END
+        """)
+    server = _load_receiver().serve_local(str(path), "synthetic-private-test-token-only")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    key = "pr47-durable-storage-failure"
+
+    def send():
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+        try:
+            conn.request("POST", "/messages", body='{"value":1}',
+                         headers={"Authorization": "Bearer synthetic-private-test-token-only",
+                                  "Idempotency-Key": key})
+            response = conn.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            conn.close()
+
+    try:
+        assert send() == (503, {"error": "durable_store_unavailable"})
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT COUNT(*) FROM inbox").fetchone()[0] == 0
+            assert db.execute("SELECT COUNT(*) FROM effects").fetchone()[0] == 0
+            db.execute("DROP TRIGGER reject_receipt")
+        assert send()[0] == 201
+        assert send()[0] == 200
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT COUNT(*) FROM effects").fetchone()[0] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
