@@ -36,6 +36,20 @@ def test_message_lifecycle_durable_replay_and_conflict(tmp_path):
         code, first = call(server, "POST", "/messages", body={"payload": {"x": 1}})
         assert code == 201
         mid = first["provider_message_id"]
+        # Public staging domain must never allow unauthenticated reads or mutations.
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+        try:
+            for method, route in (("GET", "/messages/" + mid),
+                                  ("PATCH", "/messages/" + mid),
+                                  ("POST", "/messages/" + mid + "/cancel"),
+                                  ("GET", "/audit/effects/pr47-durable-test")):
+                conn.request(method, route)
+                response = conn.getresponse()
+                assert response.status == 401, (method, route, response.status)
+                response.read()
+        finally:
+            conn.close()
+
         assert call(server, "GET", "/messages/" + mid) == (200, first)
         update = call(server, "PATCH", "/messages/" + mid, "pr47-update", {"payload": {"x": 2}})
         assert update[0] == 200 and update[1]["status"] == "UPDATED"
