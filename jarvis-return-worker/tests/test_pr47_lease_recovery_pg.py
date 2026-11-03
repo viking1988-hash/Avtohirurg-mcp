@@ -113,7 +113,7 @@ def test_pg_unknown_after_real_http_acceptance_reconciles_without_resend(repo, t
     task = repo.claim("ci-http-original-worker")
     assert task["task_id"] == task_id
     repo.mark_delivery_started(task_id, "ci-http-original-worker", task["attempt_count"], "fake")
-    key = "pr47-pg-http-" + uuid.uuid4().hex
+    key = "pr47-durable-pg-http-" + uuid.uuid4().hex
 
     def http_request(method, route, body=None):
         connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
