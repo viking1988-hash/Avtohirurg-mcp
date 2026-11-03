@@ -117,3 +117,67 @@ def test_concurrent_conflicting_payloads_preserve_single_effect(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_concurrent_identical_requests_replay_one_durable_receipt(tmp_path):
+    """Eight HTTP senders share one committed receipt, including after restart."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = tmp_path / "identical.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE inbox (principal TEXT NOT NULL, idem_key TEXT NOT NULL, fingerprint TEXT NOT NULL, receipt TEXT NOT NULL, PRIMARY KEY (principal, idem_key))")
+        db.execute("CREATE TABLE effects (id INTEGER PRIMARY KEY, principal TEXT NOT NULL, idem_key TEXT NOT NULL)")
+    receiver = _load_receiver()
+    token = "synthetic-private-test-token-only"
+    key = "pr47-durable-identical-race"
+    barrier = threading.Barrier(8, timeout=15)
+
+    def start():
+        server = receiver.serve_local(str(path), token)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread
+
+    def request(server, method, route, body=None):
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=15)
+        headers = {"Authorization": "Bearer " + token, "Idempotency-Key": key}
+        try:
+            conn.request(method, route,
+                         body=json.dumps(body) if body is not None else None,
+                         headers=headers)
+            response = conn.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            conn.close()
+
+    server, thread = start()
+    try:
+        def send(_):
+            barrier.wait()
+            return request(server, "POST", "/messages", {"value": 42})
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(send, range(8)))
+        assert sorted(status for status, _ in results) == [200] * 7 + [201]
+        receipts = [body for _, body in results]
+        assert all(body == receipts[0] for body in receipts)
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT COUNT(*) FROM effects").fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM inbox").fetchone()[0] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    server, thread = start()
+    try:
+        assert request(server, "GET", "/receipts/" + key) == (200, receipts[0])
+        assert request(server, "POST", "/messages", {"value": 42}) == (
+            200, receipts[0]
+        )
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT COUNT(*) FROM effects").fetchone()[0] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
