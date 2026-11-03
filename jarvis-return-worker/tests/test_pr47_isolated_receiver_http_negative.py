@@ -70,3 +70,47 @@ def test_http_auth_conflict_receipt_restart_and_no_extra_effect(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_concurrent_conflicting_payloads_preserve_single_effect(tmp_path):
+    """Two competing HTTP payloads with one key cannot both commit."""
+    from concurrent.futures import ThreadPoolExecutor
+    import http.client
+
+    path = tmp_path / "conflict.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE inbox (principal TEXT NOT NULL, idem_key TEXT NOT NULL, fingerprint TEXT NOT NULL, receipt TEXT NOT NULL, PRIMARY KEY (principal, idem_key))")
+        db.execute("CREATE TABLE effects (id INTEGER PRIMARY KEY, principal TEXT NOT NULL, idem_key TEXT NOT NULL)")
+    server = _load_receiver().serve_local(str(path), "synthetic-private-test-token-only")
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    gate = threading.Barrier(2, timeout=10)
+
+    def send(value):
+        gate.wait()
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+        try:
+            conn.request("POST", "/messages", body=json.dumps({"value": value}),
+                         headers={"Authorization": "Bearer synthetic-private-test-token-only",
+                                  "Idempotency-Key": "pr47-durable-conflict-race",
+                                  "Content-Type": "application/json"})
+            response = conn.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            conn.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(send, (1, 2)))
+        assert sorted(status for status, _ in outcomes) == [201, 409]
+        assert next(body for status, body in outcomes if status == 409) == {
+            "error": "idempotency_conflict"
+        }
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT COUNT(*) FROM effects").fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM inbox").fetchone()[0] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
