@@ -60,6 +60,13 @@ def make_handler(database_path, token):
                 return self.reply(503, {"error": "durable_store_unavailable"})
             return self.reply(status, result)
 
+        def do_PATCH(self):
+            # No synthetic state transition is claimed until the full atomic
+            # update/cancel contract has been implemented and tested.
+            if not self.authenticate():
+                return self.reply(401, {"error": "unauthorized"})
+            return self.reply(501, {"error": "mutation_contract_not_implemented"})
+
         def do_GET(self):
             if self.path == "/ready":
                 return self.reply(200, {"status": "ready"})
