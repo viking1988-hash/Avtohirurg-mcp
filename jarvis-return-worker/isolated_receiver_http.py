@@ -44,7 +44,10 @@ def make_handler(database_path, token):
                 return self.reply(404, {"error": "not_found"})
             key = self.headers.get("Idempotency-Key", "")
             length = self.headers.get("Content-Length")
-            if (not key or len(key) > 128 or not key.isascii() or\n                    not all(c.isalnum() or c in "-_" for c in key) or\n                    not length or not length.isdigit() or\n                    not 0 < int(length) <= 65536):
+            if (not key or len(key) > 128 or not key.isascii() or
+                    not all(c.isalnum() or c in "-_" for c in key) or
+                    not length or not length.isdigit() or
+                    not 0 < int(length) <= 65536):
                 return self.reply(400, {"error": "invalid_key_or_length"})
             try:
                 body = json.loads(self.rfile.read(int(length)))
