@@ -8,7 +8,7 @@ from http.server import ThreadingHTTPServer
 def main():
     if os.environ.get("JARVIS_PR47_DISPOSABLE_ONLY") != "YES":
         raise SystemExit("disposable-only guard missing")
-    token = os.environ.get("JARVIS_RECEIVER_E2E_TOKEN", "")
+    token = os.environ.get("JARVIS_RECEIVER_E2E_TOKEN") or os.environ.get("SINK_BEARER_TOKEN", "")
     if len(token) < 24:
         raise SystemExit("explicit synthetic token required")
     database = pathlib.Path(os.environ.get("JARVIS_RECEIVER_DB", "/data/receiver.sqlite3"))
