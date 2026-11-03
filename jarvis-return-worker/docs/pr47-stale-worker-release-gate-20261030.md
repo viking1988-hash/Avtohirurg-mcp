@@ -18,3 +18,31 @@ This is a test/evidence branch, **not a fix or authorization to send**.
 ## Release constraints
 No real Telegram/Webhook traffic, credentials, merge, production change, or deployment from this evidence branch.
 Keep PR #47 Draft and HOLD/NO-GO until external-effect safety is independently demonstrated.
+
+
+## Verified incremental evidence — 2026-11-03
+
+- PR #78 test branch HEAD `9802a1ebfe88f7c83772dc445cdc8c493c47bce8`.
+- GitHub Actions `worker-tests` SUCCESS, run 41623120222: 311 passed,
+  1 non-blocking Starlette/AnyIO deprecation warning, 9 subtests passed.
+- `syntax` SUCCESS, run 41623120425.
+- The synthetic isolated SQLite-backed HTTP receiver now has tests for:
+  concurrent same-key same-payload replay (eight senders, one effect),
+  conflicting payload rejection (409), receipt recovery after receiver restart,
+  malformed idempotency keys, and authenticated receipt lookup.
+- Ephemeral PostgreSQL recovery tests cover two competing recoverers and
+  prevent claiming an UNKNOWN delivery for automatic resend.
+- These CI tests are NOT an end-to-end proof of a real external side effect.
+  The previous Railway synthetic E2E deployment predates this commit.
+
+### Outstanding release blockers (NO-GO)
+1. Main Railway Bun HTTP sink uses volatile in-process Maps; it has no
+   demonstrated persistent inbox/receipt transaction across process restart.
+2. No demonstrated two-worker PostgreSQL lease-expiry race through the actual
+   external receiver and durable receipt recovery after a lost response.
+3. Real Telegram delivery lacks a receiver-side idempotency contract.
+4. No independent submitted security approval for PR #78.
+5. PR #47 is not cleared for merge or Production traffic.
+
+**Release decision: HOLD.** Green synthetic tests are necessary but not
+sufficient. No Production mutation or real sends authorized.
