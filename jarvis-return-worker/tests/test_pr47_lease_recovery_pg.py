@@ -2,10 +2,6 @@
 
 Uses only the ephemeral CI database and synthetic task. No external transport.
 """
-import pathlib
-import sys
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-
 import uuid
 import pytest
 from test_outbox_dispatch_chain import prepare, replay_approval, repo
@@ -167,103 +163,26 @@ def test_pg_unknown_after_real_http_acceptance_reconciles_without_resend(repo, t
         thread.join(timeout=5)
 
 
-def _run_stale_http_worker_a(database_url, task, port, token, fence_passed, resume):
-    import pathlib
-    import sys
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-    import asyncio
-    import hashlib
-    import http.client
-    import json
-    from types import SimpleNamespace
-    from jarvis_return_worker.dispatcher import TransportDispatcher
-    from jarvis_return_worker.orchestrator import Orchestrator
-    from jarvis_return_worker.transport import Classification, DeliveryError
-    from jarvis_return_worker.queue import QueueRepository
+def test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_required(repo, tmp_path):
+    """Actual Orchestrator dispatch crosses a PG fence before a synthetic HTTP effect.
 
-    config = SimpleNamespace(database_url=database_url, worker_id="ci-process-a",
-                             lease_seconds=30, heartbeat_seconds=5, max_attempts=3,
-                             require_outbox_dispatch=True)
-    repository = QueueRepository(config)
-
-    class PausingRepository:
-        def __getattr__(self, name):
-            return getattr(repository, name)
-
-        def verify_dispatch_lease(self, *args):
-            result = repository.verify_dispatch_lease(*args)
-            fence_passed.set()
-            if not resume.wait(timeout=20):
-                raise TimeoutError("worker A release barrier timed out")
-            return result
-
-    class HttpProvider:
-        provider = "fake"
-
-        def send(self, action, idempotency_key):
-            receiver_key = "pr47-durable-orchestrator-" + hashlib.sha256(
-                idempotency_key.encode("utf-8")
-            ).hexdigest()
-            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-            try:
-                connection.request(
-                    "POST", "/messages",
-                    body=json.dumps({"task_id": action["task_id"],
-                                     "payload": action["payload"]}),
-                    headers={"Authorization": "Bearer " + token,
-                             "Idempotency-Key": receiver_key,
-                             "Content-Type": "application/json"},
-                )
-                response = connection.getresponse()
-                body = json.loads(response.read())
-                assert response.status == 201, body
-                raise DeliveryError(
-                    Classification.UNKNOWN,
-                    "synthetic_ack_lost_after_receiver_acceptance",
-                )
-            finally:
-                connection.close()
-
-    dispatcher = TransportDispatcher()
-    dispatcher.register("fake", HttpProvider(), enabled=True)
-    worker = Orchestrator(PausingRepository(), dispatcher)
-    asyncio.run(worker.process(task, "ci-process-a"))
-
-
-def _run_stale_http_worker_b(database_url, owner, result_queue):
-    import pathlib
-    import sys
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-    from types import SimpleNamespace
-    from jarvis_return_worker.dispatcher import TransportDispatcher
-    from jarvis_return_worker.orchestrator import Orchestrator
-    from jarvis_return_worker.queue import QueueRepository
-
-    config = SimpleNamespace(database_url=database_url, worker_id=owner,
-                             lease_seconds=30, heartbeat_seconds=5, max_attempts=3,
-                             require_outbox_dispatch=True)
-    repository = QueueRepository(config)
-    worker = Orchestrator(repository, TransportDispatcher())
-    result_queue.put(worker.recover(owner))
-
-
-def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_required(repo, tmp_path):
-    """Separate worker processes exercise the real Orchestrator fence and HTTP effect.
-
-    A pauses after PostgreSQL lease verification. B, in a separate process and
-    connection, recovers the expired delivery marker. A then reaches the durable
-    synthetic HTTP receiver and loses its acknowledgement. The task must remain
-    in manual reconciliation and the receiver must record only one effect.
+    Worker A pauses after the real lease check. Worker B recovers the expired
+    delivery marker. A then reaches the durable receiver, loses its acknowledgement,
+    and must not overwrite B's reconciliation decision. Both workers and the
+    receiver are synthetic; this is a CI loopback test, not a Railway process test.
     """
+    import asyncio
     import hashlib
     import http.client
     import importlib.util
     import json
-    import multiprocessing
-    import os
     import sqlite3
     import threading
+    from concurrent.futures import ThreadPoolExecutor
     from pathlib import Path
+    from jarvis_return_worker.dispatcher import TransportDispatcher
+    from jarvis_return_worker.orchestrator import Orchestrator
+    from jarvis_return_worker.transport import Classification, DeliveryError
 
     dbpath = tmp_path / "orchestrator-receiver.sqlite3"
     with sqlite3.connect(dbpath) as db:
@@ -283,53 +202,80 @@ def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_requi
     assert intent_count == 1
     task = repo.claim("ci-orchestrator-worker-a")
     assert task["task_id"] == task_id
+    # The queue row may leave provider unset; Orchestrator resolves the fake transport from the destination.
 
-    import sys
-    previous_pythonpath = os.environ.get("PYTHONPATH")
-    previous_sys_path = list(sys.path)
-    worker_root = str(Path(__file__).resolve().parents[1])
-    tests_root = str(Path(__file__).resolve().parent)
-    sys.path[:0] = [worker_root, tests_root]
-    os.environ["PYTHONPATH"] = os.pathsep.join(
-        part for part in (worker_root, tests_root, previous_pythonpath) if part
-    )
-    context = multiprocessing.get_context("spawn")
-    fence_passed = context.Event()
-    resume_a = context.Event()
-    worker_a = context.Process(
-        target=_run_stale_http_worker_a,
-        args=(repo.config.database_url, task, server.server_port, token,
-              fence_passed, resume_a),
-    )
-    worker_b = None
-    result_queue = context.Queue()
-    try:
-        worker_a.start()
-        assert fence_passed.wait(timeout=20), "worker A did not pass the DB fence"
-        with repo.connection() as conn:
-            conn.execute(
-                """UPDATE jarvis_return_actions
-                   SET lease_until = clock_timestamp() - interval '60 seconds',
-                       heartbeat_at = clock_timestamp() - interval '60 seconds'
-                   WHERE task_id = %s""",
-                (task_id,),
+    fence_passed = threading.Event()
+    resume_a = threading.Event()
+
+    class PausingRepository:
+        config = repo.config
+
+        def __getattr__(self, name):
+            return getattr(repo, name)
+
+        def verify_dispatch_lease(self, *args):
+            result = repo.verify_dispatch_lease(*args)
+            fence_passed.set()
+            if not resume_a.wait(timeout=15):
+                raise TimeoutError("worker A release barrier timed out")
+            return result
+
+    class HttpProvider:
+        provider = "fake"
+
+        def send(self, action, idempotency_key):
+            receiver_key = "pr47-durable-orchestrator-" + hashlib.sha256(
+                idempotency_key.encode("utf-8")
+            ).hexdigest()
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", server.server_port, timeout=10
             )
+            try:
+                connection.request(
+                    "POST", "/messages",
+                    body=json.dumps({"task_id": action["task_id"],
+                                     "payload": action["payload"]}),
+                    headers={"Authorization": "Bearer " + token,
+                             "Idempotency-Key": receiver_key,
+                             "Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                body = json.loads(response.read())
+                assert response.status == 201, body
+                # The receiver committed the effect, but the worker loses its
+                # acknowledgement before saving a PostgreSQL receipt.
+                raise DeliveryError(
+                    Classification.UNKNOWN,
+                    "synthetic_ack_lost_after_receiver_acceptance",
+                )
+            finally:
+                connection.close()
 
-        worker_b = context.Process(
-            target=_run_stale_http_worker_b,
-            args=(repo.config.database_url, "ci-process-b", result_queue),
-        )
-        worker_b.start()
-        worker_b.join(timeout=20)
-        assert not worker_b.is_alive(), "worker B recovery process timed out"
-        assert worker_b.exitcode == 0
-        assert result_queue.get(timeout=5) == 1
-        assert repo.get(task_id)["state"] == "RECONCILIATION_REQUIRED"
+    provider = HttpProvider()
+    dispatcher = TransportDispatcher()
+    dispatcher.register("fake", provider, enabled=True)
+    worker_a = Orchestrator(PausingRepository(), dispatcher)
+    worker_b = Orchestrator(repo, TransportDispatcher())
 
-        resume_a.set()
-        worker_a.join(timeout=20)
-        assert not worker_a.is_alive(), "worker A dispatch process timed out"
-        assert worker_a.exitcode == 0
+    def run_a():
+        asyncio.run(worker_a.process(task, "ci-orchestrator-worker-a"))
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(run_a)
+            assert fence_passed.wait(timeout=15), "worker A did not pass the DB fence"
+            with repo.connection() as conn:
+                conn.execute(
+                    """UPDATE jarvis_return_actions
+                       SET lease_until = clock_timestamp() - interval '60 seconds',
+                           heartbeat_at = clock_timestamp() - interval '60 seconds'
+                       WHERE task_id = %s""",
+                    (task_id,),
+                )
+            assert worker_b.recover("ci-orchestrator-worker-b") == 1
+            assert repo.get(task_id)["state"] == "RECONCILIATION_REQUIRED"
+            resume_a.set()
+            future.result(timeout=20)
 
         row = repo.get(task_id)
         assert row["state"] == "RECONCILIATION_REQUIRED"
@@ -352,18 +298,6 @@ def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_requi
             connection.close()
     finally:
         resume_a.set()
-        if worker_a.is_alive():
-            worker_a.terminate()
-            worker_a.join(timeout=5)
-        if worker_b is not None and worker_b.is_alive():
-            worker_b.terminate()
-            worker_b.join(timeout=5)
-        result_queue.close()
-        if previous_pythonpath is None:
-            os.environ.pop("PYTHONPATH", None)
-        else:
-            os.environ["PYTHONPATH"] = previous_pythonpath
-        sys.path[:] = previous_sys_path
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=5)
