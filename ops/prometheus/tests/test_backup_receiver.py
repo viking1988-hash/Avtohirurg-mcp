@@ -235,6 +235,19 @@ class ReceiverTests(unittest.TestCase):
         self.assertIn("Uncompressed archive size limit exceeded", body["reason"])
         self.assertEqual(list(self.backups.iterdir()), [])
 
+    def test_oversized_pax_metadata_rejected_over_http(self):
+        archive = self.root / "pax-bomb.tar.gz"
+        with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as stream:
+            info = tarfile.TarInfo(f"snapshot/{BLOCK}/index")
+            info.size = 1
+            info.pax_headers = {"comment": "x" * (5 * 1024 * 1024)}
+            stream.addfile(info, io.BytesIO(b"x"))
+        payload = archive.read_bytes()
+        status, body = self.post(payload, hashlib.sha256(payload).hexdigest())
+        self.assertEqual(status, 400)
+        self.assertIn("Decompressed tar stream size limit exceeded", body["reason"])
+        self.assertEqual(list(self.backups.iterdir()), [])
+
     def test_corrupt_archive_writes_nothing(self):
         data = b"not an archive"
         digest = hashlib.sha256(data).hexdigest()
