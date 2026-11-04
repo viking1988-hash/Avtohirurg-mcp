@@ -162,6 +162,37 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
     class Handler(BaseHTTPRequestHandler):
         server_version = "PrometheusBackupReceiver/1"
 
+        def setup(self):
+            super().setup()
+            self._header_deadline_timer = None
+            deadline = getattr(self.server, "header_timeout_seconds", None)
+            if deadline is not None:
+                # Socket inactivity timeouts alone do not stop header trickling.
+                # A bounded timer interrupts even continuously arriving bytes.
+                def expire_headers():
+                    try:
+                        self.connection.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+                self._header_deadline_timer = threading.Timer(deadline, expire_headers)
+                self._header_deadline_timer.daemon = True
+                self._header_deadline_timer.start()
+
+        def parse_request(self):
+            try:
+                return super().parse_request()
+            finally:
+                if self._header_deadline_timer is not None:
+                    self._header_deadline_timer.cancel()
+                    self._header_deadline_timer = None
+
+        def finish(self):
+            if self._header_deadline_timer is not None:
+                self._header_deadline_timer.cancel()
+                self._header_deadline_timer = None
+            super().finish()
+
         def log_message(self, fmt, *args):
             # Keep access logs free of headers and request bodies.
             super().log_message(fmt, *args)
