@@ -78,6 +78,50 @@ class ReceiverTests(unittest.TestCase):
         body = json.loads(response.read())
         return response.status, body
 
+    def test_trickling_unauthenticated_headers_hit_absolute_deadline(self):
+        class FastDeadlineServer(receiver.BoundedHTTPServer):
+            max_connections = 1
+            header_timeout_seconds = 0.2
+
+        handler = receiver.make_handler(self.backups, TOKEN, str(self.promtool), False)
+        server = FastDeadlineServer(("127.0.0.1", 0), handler)
+        server.upload_busy = False
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
+        stalled = socket.create_connection(server.server_address, timeout=2)
+        self.addCleanup(stalled.close)
+        stalled.sendall(b"GET /healthz HTTP/1.1\r\nHost: ")
+        deadline = time.monotonic() + 1
+        while server._connection_slots.acquire(blocking=False):
+            server._connection_slots.release()
+            if time.monotonic() >= deadline:
+                self.fail("header trickle did not occupy connection slot")
+            time.sleep(0.01)
+        start = time.monotonic()
+        while time.monotonic() - start < 0.55:
+            try:
+                stalled.sendall(b"x")
+            except OSError:
+                break
+            time.sleep(0.04)
+        released = False
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            if server._connection_slots.acquire(blocking=False):
+                server._connection_slots.release()
+                released = True
+                break
+            time.sleep(0.01)
+        self.assertTrue(released, "trickling headers retained slot beyond absolute deadline")
+        connection = http.client.HTTPConnection(*server.server_address, timeout=2)
+        self.addCleanup(connection.close)
+        connection.request("GET", "/healthz")
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        response.read()
+
     def test_unauthenticated_connection_cap_rejects_excess_sockets(self):
         class SingleSlotServer(receiver.BoundedHTTPServer):
             max_connections = 1
