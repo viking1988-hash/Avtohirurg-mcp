@@ -137,13 +137,13 @@ class ReceiverTests(unittest.TestCase):
         connection = socket.create_connection(self.url, timeout=5)
         self.addCleanup(connection.close)
         connection.sendall(
-            (f"POST {receiver.UPLOAD_PATH} HTTP/1.1\\r\\n"
-             f"Host: 127.0.0.1\\r\\n"
-             f"Authorization: Bearer {TOKEN}\\r\\n"
-             "Content-Length: 1024\\r\\n"
-             f"X-Archive-SHA256: {'0' * 64}\\r\\n"
-             "X-Expected-Blocks: 1\\r\\n"
-             "X-Snapshot-ID: stalled\\r\\n\\r\\n").encode("ascii")
+            (f"POST {receiver.UPLOAD_PATH} HTTP/1.1\r\n"
+             f"Host: 127.0.0.1\r\n"
+             f"Authorization: Bearer {TOKEN}\r\n"
+             "Content-Length: 1024\r\n"
+             f"X-Archive-SHA256: {'0' * 64}\r\n"
+             "X-Expected-Blocks: 1\r\n"
+             "X-Snapshot-ID: stalled\r\n\r\n").encode("ascii")
         )
         for _ in range(100):
             if self.server.upload_busy:
