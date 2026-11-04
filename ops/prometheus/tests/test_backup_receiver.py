@@ -88,6 +88,27 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(result["restore_test"], "promtool-tsdb-analyze-pass")
         self.assertTrue((self.backups / "last-verified.json").is_file())
 
+    def test_atomic_publish_rejects_competing_destination_without_overwrite(self):
+        archive = self.root / "fixture.tar.gz"
+        digest = make_archive(archive)
+        competing = b"external-archive-must-survive"
+        real_link = os.link
+        observed = []
+
+        def competing_link(source, destination, **kwargs):
+            destination = Path(destination)
+            destination.write_bytes(competing)
+            observed.append(destination)
+            return real_link(source, destination, **kwargs)
+
+        with patch.object(receiver.os, "link", side_effect=competing_link):
+            status, _ = self.post(archive.read_bytes(), digest)
+        self.assertEqual(status, 400)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].read_bytes(), competing)
+        self.assertEqual(list(self.backups.glob(".incoming-*.partial")), [])
+        self.assertFalse((self.backups / "last-verified.json").exists())
+
     def test_unauthorized_upload_writes_nothing(self):
         archive = self.root / "fixture.tar.gz"
         digest = make_archive(archive)
