@@ -121,7 +121,12 @@ class ReceiverTests(unittest.TestCase):
         stalled = socket.create_connection(server.server_address, timeout=2)
         self.addCleanup(stalled.close)
         stalled.sendall(b"GET /health HTTP/1.1\r\nHost: incomplete")
-        self.assertTrue(server._connection_slots.acquire(blocking=False) is False)
+        deadline = time.monotonic() + 1
+        while server._connection_slots.acquire(blocking=False):
+            server._connection_slots.release()
+            if time.monotonic() >= deadline:
+                self.fail("incomplete header did not occupy connection slot")
+            time.sleep(0.01)
         time.sleep(0.5)
         self.assertTrue(server._connection_slots.acquire(blocking=False))
         server._connection_slots.release()
