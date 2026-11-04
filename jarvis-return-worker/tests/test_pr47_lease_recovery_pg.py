@@ -2,6 +2,10 @@
 
 Uses only the ephemeral CI database and synthetic task. No external transport.
 """
+import pathlib
+import sys
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
 import uuid
 import pytest
 from test_outbox_dispatch_chain import prepare, replay_approval, repo
