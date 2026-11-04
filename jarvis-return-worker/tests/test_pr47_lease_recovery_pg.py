@@ -280,9 +280,12 @@ def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_requi
     task = repo.claim("ci-orchestrator-worker-a")
     assert task["task_id"] == task_id
 
+    import sys
     previous_pythonpath = os.environ.get("PYTHONPATH")
+    previous_sys_path = list(sys.path)
     worker_root = str(Path(__file__).resolve().parents[1])
     tests_root = str(Path(__file__).resolve().parent)
+    sys.path[:0] = [worker_root, tests_root]
     os.environ["PYTHONPATH"] = os.pathsep.join(
         part for part in (worker_root, tests_root, previous_pythonpath) if part
     )
@@ -356,6 +359,7 @@ def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_requi
             os.environ.pop("PYTHONPATH", None)
         else:
             os.environ["PYTHONPATH"] = previous_pythonpath
+        sys.path[:] = previous_sys_path
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=5)
