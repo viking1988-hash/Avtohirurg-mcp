@@ -218,6 +218,7 @@ def test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_require
 import asyncio
 import hashlib
 import http.client
+import importlib.util
 import json
 import os
 import pathlib
@@ -227,6 +228,13 @@ from types import SimpleNamespace
 
 worker_root, database_url, task_id, owner, port, token, gate_dir = sys.argv[1:]
 sys.path.insert(0, worker_root)
+spec = importlib.util.spec_from_file_location(
+    "jarvis_return_worker", pathlib.Path(worker_root) / "__init__.py",
+    submodule_search_locations=[worker_root],
+)
+package = importlib.util.module_from_spec(spec)
+sys.modules["jarvis_return_worker"] = package
+spec.loader.exec_module(package)
 from jarvis_return_worker.dispatcher import TransportDispatcher
 from jarvis_return_worker.orchestrator import Orchestrator
 from jarvis_return_worker.transport import Classification, DeliveryError
@@ -287,11 +295,20 @@ print("worker-a-complete")
 """
 
     worker_b_code = r"""
+import importlib.util
+import pathlib
 import sys
 from types import SimpleNamespace
 
 worker_root, database_url, owner = sys.argv[1:]
 sys.path.insert(0, worker_root)
+spec = importlib.util.spec_from_file_location(
+    "jarvis_return_worker", pathlib.Path(worker_root) / "__init__.py",
+    submodule_search_locations=[worker_root],
+)
+package = importlib.util.module_from_spec(spec)
+sys.modules["jarvis_return_worker"] = package
+spec.loader.exec_module(package)
 from jarvis_return_worker.dispatcher import TransportDispatcher
 from jarvis_return_worker.orchestrator import Orchestrator
 from jarvis_return_worker.queue import QueueRepository
