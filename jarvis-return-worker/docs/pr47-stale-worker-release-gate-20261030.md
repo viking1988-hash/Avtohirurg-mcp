@@ -12,7 +12,7 @@ This is a test/evidence branch, **not a fix or authorization to send**.
 1. PostgreSQL with two independent connections/workers, barrier after successful lease check, expiry/reclaim by worker B, release worker A. Capture all outbound calls through a deterministic fake receiver; assert **no silent duplicate and no automatic replay of ambiguous outcomes**.
 2. Inject timeout after remote acceptance, process crash before receipt commit, restart, and repeated claim. Require UNKNOWN/reconciliation; never automatically resend.
 3. Verify stable persisted idempotency key for each logical webhook operation across retries and restarts. Receiver must atomically deduplicate same-key concurrent requests, reject conflicting payloads, survive restart, and publish retention guarantees.
-4. Telegram has no established receiver-side idempotency contract in this project. Fail closed by default and require explicit independent risk acceptance for any real send; do not claim exactly-once.
+4. Telegram has no established receiver-side idempotency contract in this project. Fail closed by default; any future real-send risk decision belongs to the owner under the project's approval process. Do not claim exactly-once.
 5. Run isolated PostgreSQL tests and full CI on the exact resulting commit. Record skipped tests and warnings. Complete an explicit AI security audit and owner decision; a second human approval is required only if a mandatory repository rule requires it.
 
 ## Release constraints
