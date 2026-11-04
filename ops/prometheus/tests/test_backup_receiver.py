@@ -4,6 +4,8 @@ import http.client
 import io
 import json
 import os
+import socket
+import time
 from pathlib import Path
 import sys
 import tarfile
@@ -130,6 +132,31 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(first_code, 201)
         self.assertEqual(second_code, 201)
         self.assertTrue((self.backups / second["archive"]).is_file())
+
+    def test_stalled_upload_releases_exclusive_slot(self):
+        connection = socket.create_connection(self.url, timeout=5)
+        self.addCleanup(connection.close)
+        connection.sendall(
+            (f"POST {receiver.UPLOAD_PATH} HTTP/1.1\\r\\n"
+             f"Host: 127.0.0.1\\r\\n"
+             f"Authorization: Bearer {TOKEN}\\r\\n"
+             "Content-Length: 1024\\r\\n"
+             f"X-Archive-SHA256: {'0' * 64}\\r\\n"
+             "X-Expected-Blocks: 1\\r\\n"
+             "X-Snapshot-ID: stalled\\r\\n\\r\\n").encode("ascii")
+        )
+        for _ in range(100):
+            if self.server.upload_busy:
+                break
+            time.sleep(0.01)
+        self.assertTrue(self.server.upload_busy)
+        connection.shutdown(socket.SHUT_WR)
+        for _ in range(100):
+            if not self.server.upload_busy:
+                break
+            time.sleep(0.01)
+        self.assertFalse(self.server.upload_busy)
+        self.assertEqual(list(self.backups.glob(".incoming-*.partial")), [])
 
     def test_unauthorized_upload_writes_nothing(self):
         archive = self.root / "fixture.tar.gz"
