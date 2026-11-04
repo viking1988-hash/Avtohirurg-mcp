@@ -273,7 +273,7 @@ def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_requi
     task = repo.claim("ci-orchestrator-worker-a")
     assert task["task_id"] == task_id
 
-    context = multiprocessing.get_context("fork")
+    context = multiprocessing.get_context("spawn")
     fence_passed = context.Event()
     resume_a = context.Event()
     worker_a = context.Process(
