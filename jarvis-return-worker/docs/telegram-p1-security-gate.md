@@ -8,7 +8,7 @@ PR head at checkpoint: `3a9bd0ea2a2b0f10d2d80559464ecefc39c9fc53`; tested implem
 - [Avtohirurg MCP check 41080346005](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41080346005) SUCCESS.
 - Adversarial tests `test_separate_process_stale_sender_after_recovery_is_fenced`, `test_two_stale_workers_can_reach_provider_without_receiver_dedup`, and `test_lease_lost_after_pre_send_check_never_claims_exactly_once` show the residual: stale DB writes are fenced, but a synthetic provider side effect may still occur after the check. No exactly-once claim is justified.
 - 9/10 review threads are resolved with evidence; only stale-worker external-effect P1 remains open. No independent APPROVED review exists.
-- Receiver-side durable idempotency remains NOT VERIFIED because the disposable receiver endpoint is not configured. Real Telegram/webhook sends, deployment, and merge remain blocked. Outbound flags remain fail-closed.
+- Receiver-side durable idempotency is now verified for synthetic requests against the disposable Railway staging receiver. This does not prove the integrated two-worker PostgreSQL lease-expiry path or real Telegram delivery. Real Telegram/webhook sends, deployment, and merge remain blocked. Outbound flags remain fail-closed.
 
 
 ## Verified evidence (2026-10-29)
@@ -39,3 +39,12 @@ Telegram Bot API provides no reliable receiver-side idempotency key for this flo
 ## Release decision
 
 **BLOCKED / P1 OPEN.** Keep PR Draft; do not enable real Telegram sends or merge into Production until independent review documents the acceptable delivery semantics and signs off the evidence. The safe default for an ambiguous outcome is manual reconciliation, not automatic resend.
+
+
+## Railway staging HTTP verification — 2026-11-04
+
+- Verified against PR #78 HEAD `2d5afbeb4313482910e6e37ecd4d8da27a332339`; GitHub `worker-tests` and `syntax` checks completed SUCCESS (2/2).
+- Railway staging deployment `1fd6f455-3510-4ab6-ba97-bf3423d92f89` is SUCCESS. Service `jarvis-http-sandbox-sink` runs the synthetic SQLite sink from `Dockerfile.sink`; persistent volume `jarvis-http-sandbox-sink-sqlite` is mounted at `/data`.
+- On 2026-11-04, two concurrent authenticated synthetic POSTs to `/messages` returned HTTP 201 and 200. A same-key conflicting payload returned 409. Authenticated `/audit/effects/{key}` returned 200 with `effect_count=1`. Railway HTTP logs at 2026-11-04T11:10:49Z–11:10:50Z confirm all four requests.
+- This proves network-level atomic deduplication and conflict rejection by the staging receiver. It is not the integrated two-worker PostgreSQL lease-expiry/lost-ack/recovery test. Railway cloud-agent tasks are disabled for this account, so that remote worker scenario was not run.
+- No Telegram/Webhook provider request, production data, or Production change was made. Real Telegram delivery remains fail-closed for ambiguous outcomes; exactly-once delivery is not established.
