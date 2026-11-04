@@ -13,11 +13,11 @@ This is a test/evidence branch, **not a fix or authorization to send**.
 2. Inject timeout after remote acceptance, process crash before receipt commit, restart, and repeated claim. Require UNKNOWN/reconciliation; never automatically resend.
 3. Verify stable persisted idempotency key for each logical webhook operation across retries and restarts. Receiver must atomically deduplicate same-key concurrent requests, reject conflicting payloads, survive restart, and publish retention guarantees.
 4. Telegram has no established receiver-side idempotency contract in this project. Fail closed by default and require explicit independent risk acceptance for any real send; do not claim exactly-once.
-5. Run isolated PostgreSQL tests and full CI on the exact resulting commit. Record skipped tests and warnings. Obtain independent reviewer decision before any release.
+5. Run isolated PostgreSQL tests and full CI on the exact resulting commit. Record skipped tests and warnings. Complete an explicit AI security audit and owner decision; a second human approval is required only if a mandatory repository rule requires it.
 
 ## Release constraints
 No real Telegram/Webhook traffic, credentials, merge, production change, or deployment from this evidence branch.
-Keep PR #47 Draft and HOLD/NO-GO until external-effect safety is independently demonstrated.
+Keep PR #47 Draft and HOLD/NO-GO until external-effect safety is demonstrated and the owner accepts the documented delivery semantics.
 
 
 ## Verified incremental evidence — 2026-11-03
@@ -41,4 +41,4 @@ Keep PR #47 Draft and HOLD/NO-GO until external-effect safety is independently d
 - Worker CI: 315 passed, 1 Starlette/AnyIO deprecation warning, 9 subtests; PostgreSQL restart-recovery step PASS.
 - `test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_required` now runs worker A and recovery worker B as separate Python OS processes with independent PostgreSQL repository instances. A pauses after the successful database lease fence; B recovers the expired delivery marker; A resumes and commits one effect to the synthetic durable loopback HTTP receiver while simulating a lost acknowledgement. The row remains `RECONCILIATION_REQUIRED`, another dispatcher cannot claim it, and receiver audit reports `effect_count=1`.
 - The separate-process test is GitHub CI evidence against disposable PostgreSQL and the loopback receiver. Railway staging separately confirms durable synthetic receiver persistence and same-key duplicate/conflict handling; the integrated worker race itself was not run on Railway.
-- Release blockers: no receiver-side idempotency guarantee for real Telegram, no independent submitted security approval, and no production receiver parity/authorization. Keep PR Draft and HOLD; no real sends or Production changes.
+- Release blockers: no receiver-side idempotency guarantee for real Telegram and no demonstrated production receiver parity/authorization. Keep real sends fail-closed and the release HOLD; no real sends or Production changes. A second human review is not a project gate unless required by mandatory repository rules.
