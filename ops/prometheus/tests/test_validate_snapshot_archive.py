@@ -84,6 +84,29 @@ class ArchiveValidatorTests(unittest.TestCase):
             with self.subTest(count=count), self.assertRaisesRegex(ValueError, "Invalid expected block count"):
                 validator.validate(self.path, sha, count)
 
+    def test_rejects_compression_bomb_by_cumulative_uncompressed_size(self):
+        with tarfile.open(self.path, "w:gz") as tar:
+            meta = json.dumps({"ulid": BLOCK, "version": 1}).encode()
+            items = {
+                f"{ROOT}/{BLOCK}/meta.json": meta,
+                f"{ROOT}/{BLOCK}/index": b"x" * 1024,
+                f"{ROOT}/{BLOCK}/chunks/000001": b"x" * 1024,
+            }
+            for name, data in items.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        self.assertLess(self.path.stat().st_size, 1024)
+        with self.assertRaisesRegex(ValueError, "Uncompressed archive size limit exceeded"):
+            validator.validate(self.path, digest, 1, max_uncompressed_bytes=1500)
+
+    def test_rejects_invalid_uncompressed_limit(self):
+        digest = archive_at(self.path)
+        for limit in (0, -1, True):
+            with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, "Invalid uncompressed archive size limit"):
+                validator.validate(self.path, digest, 1, max_uncompressed_bytes=limit)
+
     def test_path_traversal(self):
         sha = archive_at(self.path, unsafe=True)
         with self.assertRaisesRegex(ValueError, "Unsafe archive path"):
