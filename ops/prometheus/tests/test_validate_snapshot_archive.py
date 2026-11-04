@@ -69,6 +69,17 @@ class ArchiveValidatorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Decompressed tar stream size limit"):
             validator.validate(self.path, sha, 1, max_uncompressed_bytes=100)
 
+    def test_rejects_global_pax_metadata_amplification(self):
+        with tarfile.open(self.path, "w:gz", format=tarfile.PAX_FORMAT,
+                          pax_headers={f"k{i}": "v" for i in range(2000)}) as tar:
+            for i in range(2000):
+                info = tarfile.TarInfo(f"{ROOT}/{BLOCK}/chunks/dir-{i}")
+                info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+        digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        with self.assertRaisesRegex(ValueError, "PAX metadata is not allowed"):
+            validator.validate(self.path, digest, 1, max_uncompressed_bytes=100)
+
     def test_valid_archive(self):
         sha = archive_at(self.path)
         self.assertEqual(validator.validate(self.path, sha, 1), (sha, 1))
