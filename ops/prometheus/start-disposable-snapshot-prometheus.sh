@@ -22,6 +22,15 @@ if [ ! -d "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" ] || [ -L "$PROMETHEUS_SNAPSHOT_T
   echo "REFUSED: disposable TSDB directory must exist and not be symlinked" >&2
   exit 2
 fi
+# Resolve the complete path; a symlink in any ancestor must not escape /tmp.
+resolved="$(realpath -e "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR")" || {
+  echo "REFUSED: cannot resolve disposable TSDB path" >&2
+  exit 2
+}
+if [ "$resolved" != "$PROMETHEUS_SNAPSHOT_TEST_DATA_DIR" ]; then
+  echo "REFUSED: disposable TSDB path has symlink or noncanonical ancestor" >&2
+  exit 2
+fi
 # Test override is allowed only when the executable is a regular file.
 PROM_BIN="${PROMETHEUS_DISPOSABLE_TEST_BIN:-/bin/prometheus}"
 if [ ! -f "$PROM_BIN" ] || [ -L "$PROM_BIN" ] || [ ! -x "$PROM_BIN" ]; then
