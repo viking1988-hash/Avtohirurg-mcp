@@ -29,6 +29,7 @@ from validate_restored_tsdb import validate as validate_restored
 MAX_UPLOAD_BYTES = int(os.environ.get("PROMETHEUS_BACKUP_MAX_BYTES", str(512 * 1024 * 1024)))
 MAX_EXTRACT_BYTES = MAX_UNCOMPRESSED_BYTES
 UPLOAD_PATH = "/v1/upload"
+UPLOAD_DEADLINE_SECONDS = 120
 BACKUP_NAME = re.compile(r"^prometheus-(\d{8}T\d{6}Z)-([0-9A-Za-z_-]{1,80})\.tar\.gz$")
 _state_lock = threading.Lock()
 _state = {
@@ -238,7 +239,7 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
         def _receive(self):
             # Bound a stalled authenticated client's occupancy of the upload slot.
             self.connection.settimeout(30)
-            upload_deadline = time.monotonic() + 120
+            upload_deadline = time.monotonic() + UPLOAD_DEADLINE_SECONDS
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError as exc:
