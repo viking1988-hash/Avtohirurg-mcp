@@ -315,9 +315,13 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 final_name = f"prometheus-{stamp}-{snapshot_id}.tar.gz"
                 target = backup_dir / final_name
-                if target.exists() or target.is_symlink():
-                    raise FileExistsError("Refusing to overwrite an existing archive")
-                os.rename(temporary, target)
+                # Atomic no-clobber publish: link fails if target appeared concurrently.
+                # The temporary archive is on the same filesystem as the backup volume.
+                try:
+                    os.link(temporary, target, follow_symlinks=False)
+                except FileExistsError as exc:
+                    raise FileExistsError("Refusing to overwrite an existing archive") from exc
+                os.unlink(temporary)
                 temporary = None
                 now_ts = int(datetime.now(timezone.utc).timestamp())
                 with _state_lock:
