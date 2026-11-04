@@ -64,3 +64,11 @@ Telegram Bot API provides no reliable receiver-side idempotency key for this flo
 - Therefore this is integrated state/receiver evidence for lost-ack reconciliation, but it is **not** proof of the two-worker stale-lease race through the actual dispatch path, and it is not a Railway deployment test. Do not describe it as either.
 - Remaining verification: run two independent worker processes against one disposable PostgreSQL task, synchronize them around the actual pre-send fence and HTTP transport, induce lease expiry/reclaim and response loss, then verify the durable receiver has exactly one effect, the task is not automatically replayed, and reconciliation survives restart.
 - Release status remains **HOLD**. No production mutation or real provider send.
+
+
+### Orchestrator-to-HTTP stale-fence regression — 2026-11-04
+
+- PR #78 HEAD `78af4771609e113b3d3e36391d05164280bb79a9`, GitHub Actions run `41873453658`: **315 passed, 1 warning, 9 subtests passed**; PostgreSQL restart recovery also passed.
+- New test `test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_required` exercises the actual `Orchestrator.process` dispatch path with a PostgreSQL-backed queue and durable loopback HTTP receiver. Worker A pauses immediately after the real lease verification; worker B recovers the expired delivery marker; A then reaches the receiver, which commits one effect, and A simulates a lost acknowledgement. The persisted task remains `RECONCILIATION_REQUIRED`, another claim is rejected, and the receiver audit reports `effect_count=1`.
+- Scope limit: this test uses threads and two Orchestrator instances in one GitHub Actions process; worker B runs recovery, not a competing provider send. It does not prove behavior across independent OS processes or a Railway deployment.
+- Remaining gate: validate the same stale-fence timing with independent worker processes in Railway staging (or equivalent isolated runtime), retain persisted receiver evidence through restart, and obtain the required independent security decision. Telegram remains fail-closed for ambiguous outcomes; no real send or Production change.
