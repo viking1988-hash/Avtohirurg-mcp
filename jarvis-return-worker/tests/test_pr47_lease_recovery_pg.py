@@ -164,6 +164,9 @@ def test_pg_unknown_after_real_http_acceptance_reconciles_without_resend(repo, t
 
 
 def _run_stale_http_worker_a(database_url, task, port, token, fence_passed, resume):
+    import pathlib
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
     import asyncio
     import hashlib
     import http.client
@@ -224,6 +227,9 @@ def _run_stale_http_worker_a(database_url, task, port, token, fence_passed, resu
 
 
 def _run_stale_http_worker_b(database_url, owner, result_queue):
+    import pathlib
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
     from types import SimpleNamespace
     from jarvis_return_worker.dispatcher import TransportDispatcher
     from jarvis_return_worker.orchestrator import Orchestrator
