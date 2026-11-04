@@ -8,9 +8,13 @@ import sys
 import tarfile
 from pathlib import PurePosixPath
 
+MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+
 ULID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 
-def validate(archive, expected_sha256, expected_blocks):
+def validate(archive, expected_sha256, expected_blocks, max_uncompressed_bytes=MAX_UNCOMPRESSED_BYTES):
+    if not isinstance(max_uncompressed_bytes, int) or isinstance(max_uncompressed_bytes, bool) or max_uncompressed_bytes < 1:
+        raise ValueError("Invalid uncompressed archive size limit")
     if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
         raise ValueError("Invalid expected SHA-256")
     if not isinstance(expected_blocks, int) or isinstance(expected_blocks, bool) or expected_blocks < 1:
@@ -26,8 +30,15 @@ def validate(archive, expected_sha256, expected_blocks):
     blocks = {}
     root = None
     seen_names = set()
+    total_uncompressed = 0
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar:
+            if member.size < 0:
+                raise ValueError("Invalid archive member size")
+            if member.isfile():
+                total_uncompressed += member.size
+                if total_uncompressed > max_uncompressed_bytes:
+                    raise ValueError("Uncompressed archive size limit exceeded")
             name = member.name.removeprefix("./")
             if name in seen_names:
                 raise ValueError(f"Duplicate archive member: {name}")
