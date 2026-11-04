@@ -243,7 +243,8 @@ class ReceiverTests(unittest.TestCase):
             info.pax_headers = {"comment": "x" * (5 * 1024 * 1024)}
             stream.addfile(info, io.BytesIO(b"x"))
         payload = archive.read_bytes()
-        status, body = self.post(payload, hashlib.sha256(payload).hexdigest())
+        with patch.object(receiver, "MAX_EXTRACT_BYTES", 100):
+            status, body = self.post(payload, hashlib.sha256(payload).hexdigest())
         self.assertEqual(status, 400)
         self.assertIn("Decompressed tar stream size limit exceeded", body["reason"])
         self.assertEqual(list(self.backups.iterdir()), [])
