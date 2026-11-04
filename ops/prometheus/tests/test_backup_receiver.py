@@ -194,6 +194,29 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(result["restore_test"], "promtool-tsdb-analyze-pass")
         self.assertTrue((self.backups / "last-verified.json").is_file())
 
+    def test_failed_replacement_preserves_last_verified_backup_for_rollback(self):
+        archive = self.root / "original.tar.gz"
+        digest = make_archive(archive)
+        original = archive.read_bytes()
+        first_status, first = self.post(original, digest, snapshot="rollback-original")
+        self.assertEqual(first_status, 201)
+        original_path = self.backups / first["archive"]
+        original_metadata = (self.backups / "last-verified.json").read_bytes()
+
+        # An invalid subsequent backup must not remove or replace the
+        # previously verified archive and recovery pointer.
+        bad = b"invalid-followup-archive"
+        failed_status, _ = self.post(
+            bad, hashlib.sha256(bad).hexdigest(), snapshot="rollback-failed"
+        )
+        self.assertEqual(failed_status, 400)
+        self.assertEqual(original_path.read_bytes(), original)
+        self.assertEqual(
+            (self.backups / "last-verified.json").read_bytes(), original_metadata
+        )
+        self.assertEqual(len(list(self.backups.glob("prometheus-*.tar.gz"))), 1)
+        self.assertEqual(list(self.backups.glob(".incoming-*.partial")), [])
+
     def test_atomic_publish_rejects_competing_destination_without_overwrite(self):
         archive = self.root / "fixture.tar.gz"
         digest = make_archive(archive)
