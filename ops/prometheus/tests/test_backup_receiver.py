@@ -92,7 +92,7 @@ class ReceiverTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         stalled = socket.create_connection(server.server_address, timeout=2)
         self.addCleanup(stalled.close)
-        stalled.sendall(b"GET /health HTTP/1.1\\r\\nHost: incomplete")
+        stalled.sendall(b"GET /health HTTP/1.1\r\nHost: incomplete")
         self.assertTrue(server._connection_slots.acquire(blocking=False) is False)
         time.sleep(0.5)
         self.assertTrue(server._connection_slots.acquire(blocking=False))
