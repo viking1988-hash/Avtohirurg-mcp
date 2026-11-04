@@ -59,6 +59,16 @@ class ArchiveValidatorTests(unittest.TestCase):
         finally:
             validator.MAX_ARCHIVE_MEMBERS = old_limit
 
+    def test_rejects_large_pax_metadata_before_parsing(self):
+        with tarfile.open(self.path, "w:gz", format=tarfile.PAX_FORMAT) as tar:
+            info = tarfile.TarInfo(f"{ROOT}/{BLOCK}/index")
+            info.size = 1
+            info.pax_headers = {"comment": "x" * (5 * 1024 * 1024)}
+            tar.addfile(info, io.BytesIO(b"x"))
+        sha = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        with self.assertRaisesRegex(ValueError, "Decompressed tar stream size limit"):
+            validator.validate(self.path, sha, 1, max_uncompressed_bytes=100)
+
     def test_valid_archive(self):
         sha = archive_at(self.path)
         self.assertEqual(validator.validate(self.path, sha, 1), (sha, 1))
