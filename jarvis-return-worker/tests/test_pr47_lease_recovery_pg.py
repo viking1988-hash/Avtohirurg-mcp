@@ -224,7 +224,7 @@ def test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_require
         provider = "fake"
 
         def send(self, action, idempotency_key):
-            receiver_key = "pr47-orchestrator-" + hashlib.sha256(
+            receiver_key = "pr47-durable-orchestrator-" + hashlib.sha256(
                 idempotency_key.encode("utf-8")
             ).hexdigest()
             connection = http.client.HTTPConnection(
@@ -282,7 +282,7 @@ def test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_require
         assert row["delivery_status"] == "UNKNOWN"
         assert row["reconciliation_status"] == "REQUIRED"
         assert repo.claim("ci-orchestrator-worker-c") is None
-        audit = "pr47-orchestrator-" + hashlib.sha256(
+        audit = "pr47-durable-orchestrator-" + hashlib.sha256(
             (task_id + ":" + task["action_fingerprint"]).encode("utf-8")
         ).hexdigest()
         connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
