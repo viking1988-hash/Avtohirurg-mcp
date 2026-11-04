@@ -1,13 +1,13 @@
 # PR47 Telegram P1 security gate (Draft / not approved for Production)
 
-## Current checkpoint (2026-10-30)
+## Historical checkpoint (2026-10-30)
 
 PR head at checkpoint: `3a9bd0ea2a2b0f10d2d80559464ecefc39c9fc53`; tested implementation/test commit: `996650561682306fc0e53ed66fe6a9ea8b570557`.
 
 - [Jarvis Return Worker run 41080346045](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41080346045) SUCCESS: 300 passed, 2 skipped, 1 warning, 9 subtests passed; PostgreSQL restart/receipt recovery PASS.
 - [Avtohirurg MCP check 41080346005](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/41080346005) SUCCESS.
 - Adversarial tests `test_separate_process_stale_sender_after_recovery_is_fenced`, `test_two_stale_workers_can_reach_provider_without_receiver_dedup`, and `test_lease_lost_after_pre_send_check_never_claims_exactly_once` show the residual: stale DB writes are fenced, but a synthetic provider side effect may still occur after the check. No exactly-once claim is justified.
-- 9/10 review threads are resolved with evidence; only stale-worker external-effect P1 remains open. No independent APPROVED review exists.
+- At that checkpoint, 9/10 review threads were resolved with evidence; the stale-worker external-effect P1 remained open. No separate human APPROVED review was recorded; under current owner policy, this is not itself a gate unless mandatory repository rules require it.
 - Receiver-side durable idempotency is now verified for synthetic requests against the disposable Railway staging receiver. This does not prove the integrated two-worker PostgreSQL lease-expiry path or real Telegram delivery. Real Telegram/webhook sends, deployment, and merge remain blocked. Outbound flags remain fail-closed.
 
 
@@ -20,7 +20,7 @@ PR head at checkpoint: `3a9bd0ea2a2b0f10d2d80559464ecefc39c9fc53`; tested implem
 - The new `test_separate_process_stale_sender_after_recovery_is_fenced` exercises two actual OS processes and independent PostgreSQL connections: process A passes the pre-send fence, process B recovers an expired lease, A models a synthetic remote effect and its late receipt/failure are rejected. **This validates the local database fence, not remote Telegram exactly-once.**
 
 
-- **Latest CI (2026-10-29):** commit `77546c34085f53a640bac8685fd812f20c8e669a`; [Return Worker run 40942113711](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/40942113711) SUCCESS (**284 passed, 2 skipped, 1 warning, 9 subtests passed**); [MCP check 40942113960](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/40942113960) SUCCESS. Manual delivered confirmation requires nonblank provider and receipt/message ID; API tests enforce operator token and audit rejected requests. A disposable PostgreSQL integration test verifies uncertain deliveries cannot be requeued or claimed without manual resolution and fresh approval. This is synthetic evidence only, not independent signoff.
+- **Latest CI (2026-10-29):** commit `77546c34085f53a640bac8685fd812f20c8e669a`; [Return Worker run 40942113711](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/40942113711) SUCCESS (**284 passed, 2 skipped, 1 warning, 9 subtests passed**); [MCP check 40942113960](https://github.com/viking1988-hash/Avtohirurg-mcp/actions/runs/40942113960) SUCCESS. Manual delivered confirmation requires nonblank provider and receipt/message ID; API tests enforce operator token and audit rejected requests. A disposable PostgreSQL integration test verifies uncertain deliveries cannot be requeued or claimed without manual resolution and fresh approval. This is synthetic evidence only and does not establish real-provider delivery semantics.
 
 ## Remaining P1 failure window
 
@@ -28,17 +28,17 @@ PR head at checkpoint: `3a9bd0ea2a2b0f10d2d80559464ecefc39c9fc53`; tested implem
 
 Telegram Bot API provides no reliable receiver-side idempotency key for this flow. **Neither database locks nor a second lease check can prove exactly-once remote delivery.** Never infer Telegram delivery from a successful local test or from a missing receipt.
 
-## Required independent acceptance checks
+## Historical acceptance checks recorded on 2026-10-30
 
-1. **CI SATISFIED for synthetic local fencing; independent review still required.** Run two **separate OS processes** against a disposable PostgreSQL instance. Pause process A immediately after a successful lease check and before the transport call; expire its lease; let process B execute recovery; resume A. Assert the task is `RECONCILIATION_REQUIRED`, B never sends, and A cannot persist a late receipt or change reconciliation state. Record that A's remote call may occur.
+1. At the 2026-10-30 checkpoint, the separate-process test was still outstanding. It was subsequently exercised in PR #78 CI on 2026-11-04: worker A pauses after the lease fence, lease expiry is induced, worker B recovers in a separate process, then A reaches a synthetic receiver. The test verifies reconciliation, denies a new claim, and records one synthetic effect. This is not proof of Telegram exactly-once delivery.
 2. Inject provider acceptance followed by response loss, timeout, worker crash, and PostgreSQL restart. Verify no automatic retry and that the operator has enough evidence to reconcile safely.
 3. Verify retry is allowed **only** for a documented, definitive provider rejection with no accepted external effect. Ambiguous network errors and HTTP 5xx must not be classified as definitive rejections.
-4. Independently inspect Telegram adapter error mapping, worker ownership fencing, cancellation, logging/redaction, and manual reconciliation authorization/audit.
+4. Complete and record an AI security audit of Telegram adapter error mapping, worker ownership fencing, cancellation, logging/redaction, and manual reconciliation authorization/audit.
 5. Confirm no real chat IDs, bot tokens, customer data, or outbound Telegram requests appear in synthetic CI/Staging tests.
 
 ## Release decision
 
-**BLOCKED / P1 OPEN.** Keep PR Draft; do not enable real Telegram sends or merge into Production until independent review documents the acceptable delivery semantics and signs off the evidence. The safe default for an ambiguous outcome is manual reconciliation, not automatic resend.
+**BLOCKED / P1 OPEN for real Telegram delivery.** Keep real sends fail-closed until external-effect safety is demonstrated and the owner accepts the documented delivery semantics. A second human review is required only if a mandatory repository rule requires it; branch-protection requirements could not be read by the GitHub integration (403). The safe default for an ambiguous outcome is manual reconciliation, not automatic resend.
 
 
 ## Railway staging HTTP verification — 2026-11-04
