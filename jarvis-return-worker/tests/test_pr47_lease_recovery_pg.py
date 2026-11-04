@@ -241,7 +241,7 @@ def test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_require
                 )
                 response = connection.getresponse()
                 body = json.loads(response.read())
-                assert response.status == 201
+                assert response.status == 201, body
                 # The receiver committed the effect, but the worker loses its
                 # acknowledgement before saving a PostgreSQL receipt.
                 raise DeliveryError(
