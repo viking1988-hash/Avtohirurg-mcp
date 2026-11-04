@@ -249,6 +249,20 @@ class ReceiverTests(unittest.TestCase):
         self.assertIn("Decompressed tar stream size limit exceeded", body["reason"])
         self.assertEqual(list(self.backups.iterdir()), [])
 
+    def test_excessive_tar_members_rejected_over_http(self):
+        archive = self.root / "many-members.tar.gz"
+        with tarfile.open(archive, "w:gz") as stream:
+            for index in range(6):
+                info = tarfile.TarInfo(f"snapshot/{BLOCK}/extra-{index}")
+                info.type = tarfile.DIRTYPE
+                stream.addfile(info)
+        payload = archive.read_bytes()
+        with patch("validate_snapshot_archive.MAX_ARCHIVE_MEMBERS", 5):
+            status, body = self.post(payload, hashlib.sha256(payload).hexdigest())
+        self.assertEqual(status, 400)
+        self.assertIn("Archive member count limit exceeded", body["reason"])
+        self.assertEqual(list(self.backups.iterdir()), [])
+
     def test_corrupt_archive_writes_nothing(self):
         data = b"not an archive"
         digest = hashlib.sha256(data).hexdigest()
