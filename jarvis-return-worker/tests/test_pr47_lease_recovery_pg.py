@@ -256,6 +256,7 @@ def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_requi
     import importlib.util
     import json
     import multiprocessing
+    import os
     import sqlite3
     import threading
     from pathlib import Path
@@ -279,6 +280,12 @@ def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_requi
     task = repo.claim("ci-orchestrator-worker-a")
     assert task["task_id"] == task_id
 
+    previous_pythonpath = os.environ.get("PYTHONPATH")
+    worker_root = str(Path(__file__).resolve().parents[1])
+    tests_root = str(Path(__file__).resolve().parent)
+    os.environ["PYTHONPATH"] = os.pathsep.join(
+        part for part in (worker_root, tests_root, previous_pythonpath) if part
+    )
     context = multiprocessing.get_context("spawn")
     fence_passed = context.Event()
     resume_a = context.Event()
@@ -345,6 +352,10 @@ def test_two_os_workers_http_effect_after_pg_recovery_stays_reconciliation_requi
             worker_b.terminate()
             worker_b.join(timeout=5)
         result_queue.close()
+        if previous_pythonpath is None:
+            os.environ.pop("PYTHONPATH", None)
+        else:
+            os.environ["PYTHONPATH"] = previous_pythonpath
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=5)
