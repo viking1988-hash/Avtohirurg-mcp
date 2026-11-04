@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import re
+import socket
 import shutil
 import tempfile
 import tarfile
@@ -125,6 +126,14 @@ def retention_candidates(directory, now=None):
     return [path for _, path in entries if path not in keep]
 
 
+def _fsync_directory(directory):
+    fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _write_status(path, payload):
     path = Path(path)
     fd, temporary = tempfile.mkstemp(prefix=".status-", suffix=".partial", dir=path.parent)
@@ -135,6 +144,7 @@ def _write_status(path, payload):
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, path)
+        _fsync_directory(path.parent)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -225,6 +235,8 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                 self._respond(400, {"error": "backup rejected", "reason": str(exc)[:200]})
 
         def _receive(self):
+            # Bound a stalled authenticated client's occupancy of the upload slot.
+            self.connection.settimeout(30)
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError as exc:
@@ -324,6 +336,7 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                     raise FileExistsError("Refusing to overwrite an existing archive") from exc
                 os.unlink(temporary)
                 temporary = None
+                _fsync_directory(backup_dir)
                 now_ts = int(datetime.now(timezone.utc).timestamp())
                 with _state_lock:
                     _state["last_success_timestamp"] = now_ts
@@ -363,6 +376,8 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                                 continue
                             old.unlink()
                             deleted += 1
+                        if deleted:
+                            _fsync_directory(backup_dir)
                         with _state_lock:
                             _state["retention_deletions_total"] += deleted
                     except OSError as exc:
