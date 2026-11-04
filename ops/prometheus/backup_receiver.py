@@ -435,6 +435,35 @@ def load_last_verified(backup_dir):
         return False
 
 
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    """Limit unauthenticated connections and incomplete-header occupancy."""
+
+    max_connections = 32
+    header_timeout_seconds = 10
+
+    def __init__(self, *args, **kwargs):
+        self._connection_slots = threading.BoundedSemaphore(self.max_connections)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._connection_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            request.settimeout(self.header_timeout_seconds)
+            super().process_request(request, client_address)
+        except BaseException:
+            self._connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._connection_slots.release()
+
+
 def serve():
     backup_dir = Path(os.environ.get("PROMETHEUS_BACKUP_DIR", "/backup/prometheus-snapshots"))
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -444,7 +473,7 @@ def serve():
     port = int(os.environ.get("PORT", os.environ.get("PROMETHEUS_BACKUP_PORT", "8080")))
     retention = os.environ.get("PROMETHEUS_BACKUP_RETENTION_ENABLED", "false").lower() == "true"
     handler = make_handler(backup_dir, token, os.environ.get("PROMTOOL", "/bin/promtool"), retention)
-    server = ThreadingHTTPServer((host, port), handler)
+    server = BoundedHTTPServer((host, port), handler)
     server.upload_busy = False
     print(f"Prometheus backup receiver ready on {host}:{port}", flush=True)
     server.serve_forever()
