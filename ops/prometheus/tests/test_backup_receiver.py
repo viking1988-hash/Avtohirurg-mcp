@@ -78,6 +78,34 @@ class ReceiverTests(unittest.TestCase):
         body = json.loads(response.read())
         return response.status, body
 
+    def test_unauthenticated_connection_cap_rejects_excess_sockets(self):
+        class SingleSlotServer(receiver.BoundedHTTPServer):
+            max_connections = 1
+            header_timeout_seconds = 1
+
+        handler = receiver.make_handler(self.backups, TOKEN, str(self.promtool), False)
+        server = SingleSlotServer(("127.0.0.1", 0), handler)
+        server.upload_busy = False
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
+        stalled = socket.create_connection(server.server_address, timeout=2)
+        self.addCleanup(stalled.close)
+        stalled.sendall(b"GET /healthz HTTP/1.1\\r\\nHost: incomplete")
+        deadline = time.monotonic() + 1
+        while server._connection_slots.acquire(blocking=False):
+            server._connection_slots.release()
+            if time.monotonic() >= deadline:
+                self.fail("incomplete header did not occupy connection slot")
+            time.sleep(0.01)
+        excess = socket.create_connection(server.server_address, timeout=2)
+        self.addCleanup(excess.close)
+        excess.settimeout(1)
+        excess.sendall(b"GET /healthz HTTP/1.1\\r\\nHost: excess\\r\\n\\r\\n")
+        self.assertEqual(excess.recv(1024), b"")
+        self.assertFalse(server._connection_slots.acquire(blocking=False))
+
     def test_unauthenticated_incomplete_headers_release_bounded_connection_slot(self):
         class TinyServer(receiver.BoundedHTTPServer):
             max_connections = 1
