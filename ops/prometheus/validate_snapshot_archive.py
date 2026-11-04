@@ -49,7 +49,8 @@ def validate(archive, expected_sha256, expected_blocks, max_uncompressed_bytes=M
     seen_names = set()
     total_uncompressed = 0
     member_count = 0
-    # Streaming mode avoids tarfile retaining TarInfo copies of global PAX keys\n    # for every member (quadratic metadata memory amplification).\n    with tarfile.open(archive, "r|gz") as tar:
+    # Streaming mode avoids tarfile retaining TarInfo copies of global PAX keys
+    # for every member (quadratic metadata memory amplification).\n    with tarfile.open(archive, "r|gz") as tar:
         for member in tar:
             member_count += 1
             if member_count > MAX_ARCHIVE_MEMBERS:
