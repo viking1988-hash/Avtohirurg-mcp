@@ -12,6 +12,7 @@ import threading
 import unittest
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
+from unittest.mock import patch
 
 OPS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(OPS))
@@ -113,6 +114,25 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(first["archive"], second["archive"])
         archives = list(self.backups.glob("prometheus-*.tar.gz"))
         self.assertEqual(len(archives), 1)
+
+    def test_compression_bomb_rejected_without_publication(self):
+        archive = self.root / "bomb.tar.gz"
+        with tarfile.open(archive, "w:gz") as stream:
+            for name, data in {
+                f"snapshot/{BLOCK}/meta.json": json.dumps({"ulid": BLOCK, "version": 1}).encode(),
+                f"snapshot/{BLOCK}/index": b"x" * 2048,
+                f"snapshot/{BLOCK}/chunks/000001": b"x" * 2048,
+            }.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                stream.addfile(info, io.BytesIO(data))
+        payload = archive.read_bytes()
+        self.assertLess(len(payload), 1024)
+        with patch.object(receiver, "MAX_EXTRACT_BYTES", 2500):
+            status, body = self.post(payload, hashlib.sha256(payload).hexdigest())
+        self.assertEqual(status, 400)
+        self.assertIn("Uncompressed archive size limit exceeded", body["reason"])
+        self.assertEqual(list(self.backups.iterdir()), [])
 
     def test_corrupt_archive_writes_nothing(self):
         data = b"not an archive"
