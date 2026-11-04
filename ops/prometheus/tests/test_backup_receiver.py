@@ -99,7 +99,7 @@ class ReceiverTests(unittest.TestCase):
         server._connection_slots.release()
         connection = http.client.HTTPConnection(*server.server_address, timeout=2)
         self.addCleanup(connection.close)
-        connection.request("GET", "/health")
+        connection.request("GET", "/healthz")
         response = connection.getresponse()
         self.assertEqual(response.status, 200)
         response.read()
