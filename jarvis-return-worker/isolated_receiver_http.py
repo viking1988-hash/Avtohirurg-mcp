@@ -40,18 +40,102 @@ def make_handler(database_path, token):
         def do_POST(self):
             if not self.authenticate():
                 return self.reply(401, {"error": "unauthorized"})
+            import re
+            from urllib.parse import unquote
+            cancel = re.fullmatch(r"/messages/([^/]+)/cancel", self.path)
+            if cancel:
+                return self._mutate_message("POST", unquote(cancel.group(1)), "/cancel")
             if self.path != "/messages":
                 return self.reply(404, {"error": "not_found"})
             key = self.headers.get("Idempotency-Key", "")
             length = self.headers.get("Content-Length")
-            if not key or not length or not length.isdigit() or int(length) > 65536:
+            if (not key or len(key) > 128 or not key.isascii() or
+                    not all(c.isalnum() or c in "-_" for c in key) or
+                    not length or not length.isdigit() or
+                    not 0 < int(length) <= 65536):
                 return self.reply(400, {"error": "invalid_key_or_length"})
             try:
                 body = json.loads(self.rfile.read(int(length)))
             except (ValueError, UnicodeDecodeError):
                 return self.reply(400, {"error": "invalid_json"})
-            status, result = inbox.submit("isolated-test-sender", "POST", "/messages", key, body)
+            try:
+                status, result = inbox.submit("isolated-test-sender", "POST", "/messages", key, body)
+            except sqlite3.Error:
+                # Never acknowledge acceptance when the durable transaction fails.
+                return self.reply(503, {"error": "durable_store_unavailable"})
             return self.reply(status, result)
+
+        def _message(self, message_id):
+            with sqlite3.connect(database_path, timeout=10) as db:
+                rows = db.execute(
+                    "SELECT i.idem_key, i.receipt FROM inbox i "
+                    "JOIN effects e ON e.principal=i.principal AND e.idem_key=i.idem_key "
+                    "WHERE i.principal=? ORDER BY e.id DESC",
+                    ("isolated-test-sender",)).fetchall()
+                for key, raw in rows:
+                    receipt = json.loads(raw)
+                    if receipt.get("provider_message_id") == message_id:
+                        return key, receipt
+            return None, None
+
+        def _mutate_message(self, method, message_id, suffix=""):
+            if not self.authenticate():
+                return self.reply(401, {"error": "unauthorized"})
+            key = self.headers.get("Idempotency-Key", "")
+            if not key or len(key) > 128 or not key.isascii() or not all(
+                    ch.isalnum() or ch in "-_" for ch in key):
+                return self.reply(400, {"error": "invalid_key"})
+            if method == "PATCH":
+                length = self.headers.get("Content-Length", "")
+                if not length.isdigit() or not 0 < int(length) <= 65536:
+                    return self.reply(400, {"error": "invalid_length"})
+                try:
+                    payload = json.loads(self.rfile.read(int(length)))
+                except (ValueError, UnicodeDecodeError):
+                    return self.reply(400, {"error": "invalid_json"})
+            else:
+                payload = {}
+            # All effects and receipts, including updates/cancellations, share
+            # the same durable idempotency transaction and unique key scope.
+            try:
+                with sqlite3.connect(database_path, timeout=10, isolation_level=None) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    rows = db.execute("SELECT i.idem_key, i.receipt FROM inbox i JOIN effects e ON e.principal=i.principal AND e.idem_key=i.idem_key WHERE i.principal=? ORDER BY e.id DESC",
+                                      ("isolated-test-sender",)).fetchall()
+                    target = next((json.loads(raw) for _, raw in rows
+                                   if json.loads(raw).get("provider_message_id") == message_id),
+                                  None)
+                    if target is None:
+                        db.execute("COMMIT")
+                        return self.reply(404, {"error": "not_found"})
+                    fingerprint = json.dumps(
+                        ["isolated-test-sender", method, "/messages/" + message_id + suffix, payload],
+                        sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                    prior = db.execute("SELECT fingerprint, receipt FROM inbox WHERE principal=? AND idem_key=?",
+                                       ("isolated-test-sender", key)).fetchone()
+                    if prior:
+                        db.execute("COMMIT")
+                        if prior[0] != fingerprint:
+                            return self.reply(409, {"error": "idempotency_conflict"})
+                        return self.reply(200, json.loads(prior[1]))
+                    status = "UPDATED" if method == "PATCH" else "CANCELLED"
+                    receipt = dict(target, status=status)
+                    db.execute("INSERT INTO effects (principal, idem_key) VALUES (?,?)",
+                               ("isolated-test-sender", key))
+                    db.execute("INSERT INTO inbox (principal, idem_key, fingerprint, receipt) VALUES (?,?,?,?)",
+                               ("isolated-test-sender", key, fingerprint, json.dumps(receipt)))
+                    db.execute("COMMIT")
+                return self.reply(200, receipt)
+            except sqlite3.Error:
+                return self.reply(503, {"error": "durable_store_unavailable"})
+
+        def do_PATCH(self):
+            from urllib.parse import unquote
+            import re
+            match = re.fullmatch(r"/messages/([^/]+)", self.path)
+            if not match:
+                return self.reply(404, {"error": "not_found"})
+            return self._mutate_message("PATCH", unquote(match.group(1)))
 
         def do_GET(self):
             if self.path == "/ready":
@@ -70,6 +154,17 @@ def make_handler(database_path, token):
                         ("isolated-test-sender", key),
                     ).fetchone()[0]
                 return self.reply(200, {"effect_count": count})
+            if self.path.startswith("/messages/"):
+                from urllib.parse import unquote
+                import re
+                match = re.fullmatch(r"/messages/([^/]+)", self.path)
+                if not match:
+                    return self.reply(404, {"error": "not_found"})
+                try:
+                    _, receipt = self._message(unquote(match.group(1)))
+                except sqlite3.Error:
+                    return self.reply(503, {"error": "durable_store_unavailable"})
+                return self.reply(200, receipt) if receipt else self.reply(404, {"error": "not_found"})
             if not self.path.startswith("/receipts/"):
                 return self.reply(404, {"error": "not_found"})
             key = self.path[len("/receipts/"):]

@@ -36,9 +36,12 @@ class ReceiverInbox:
                         return 409, {"error": "idempotency_conflict"}
                     db.execute("COMMIT")
                     return 200, json.loads(existing[1])
-                receipt = {"receipt_id": "receipt-" + str(db.execute(
+                receipt_number = str(db.execute(
                     "SELECT COALESCE(MAX(id), 0)+1 FROM effects"
-                ).fetchone()[0]), "status": "COMMITTED"}
+                ).fetchone()[0])
+                receipt = {"receipt_id": "receipt-" + receipt_number,
+                           "provider_message_id": "synthetic-" + receipt_number,
+                           "status": "COMMITTED"}
                 db.execute("INSERT INTO effects (principal, idem_key) VALUES (?, ?)", (principal, key))
                 db.execute(
                     "INSERT INTO inbox (principal, idem_key, fingerprint, receipt) VALUES (?, ?, ?, ?)",

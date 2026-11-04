@@ -8,7 +8,7 @@ from http.server import ThreadingHTTPServer
 def main():
     if os.environ.get("JARVIS_PR47_DISPOSABLE_ONLY") != "YES":
         raise SystemExit("disposable-only guard missing")
-    token = os.environ.get("JARVIS_RECEIVER_E2E_TOKEN", "")
+    token = os.environ.get("JARVIS_RECEIVER_E2E_TOKEN") or os.environ.get("SINK_BEARER_TOKEN", "")
     if len(token) < 24:
         raise SystemExit("explicit synthetic token required")
     database = pathlib.Path(os.environ.get("JARVIS_RECEIVER_DB", "/data/receiver.sqlite3"))
@@ -21,7 +21,8 @@ def main():
     if not 1 <= port <= 65535:
         raise SystemExit("invalid port")
     from isolated_receiver_http import make_handler
-    # Private Railway networking only; do not attach a public domain.
+    # Staging-only synthetic endpoint. Public HTTPS requires a strong bearer token;
+    # never connect this disposable sink to production or real providers.
     ThreadingHTTPServer(("0.0.0.0", port), make_handler(str(database), token)).serve_forever()
 
 if __name__ == "__main__":
