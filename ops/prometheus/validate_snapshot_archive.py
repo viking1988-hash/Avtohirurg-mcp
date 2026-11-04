@@ -9,6 +9,8 @@ import tarfile
 from pathlib import PurePosixPath
 
 MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 10000
+MAX_MEMBER_NAME_BYTES = 4096
 
 ULID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 
@@ -31,8 +33,14 @@ def validate(archive, expected_sha256, expected_blocks, max_uncompressed_bytes=M
     root = None
     seen_names = set()
     total_uncompressed = 0
+    member_count = 0
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar:
+            member_count += 1
+            if member_count > MAX_ARCHIVE_MEMBERS:
+                raise ValueError("Archive member count limit exceeded")
+            if len(member.name.encode("utf-8")) > MAX_MEMBER_NAME_BYTES:
+                raise ValueError("Archive member name limit exceeded")
             if member.size < 0:
                 raise ValueError("Invalid archive member size")
             if member.isfile():
