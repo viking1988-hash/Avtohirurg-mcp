@@ -48,3 +48,10 @@ Telegram Bot API provides no reliable receiver-side idempotency key for this flo
 - On 2026-11-04, two concurrent authenticated synthetic POSTs to `/messages` returned HTTP 201 and 200. A same-key conflicting payload returned 409. Authenticated `/audit/effects/{key}` returned 200 with `effect_count=1`. Railway HTTP logs at 2026-11-04T11:10:49Z–11:10:50Z confirm all four requests.
 - This proves network-level atomic deduplication and conflict rejection by the staging receiver. It is not the integrated two-worker PostgreSQL lease-expiry/lost-ack/recovery test. Railway cloud-agent tasks are disabled for this account, so that remote worker scenario was not run.
 - No Telegram/Webhook provider request, production data, or Production change was made. Real Telegram delivery remains fail-closed for ambiguous outcomes; exactly-once delivery is not established.
+
+### Post-redeploy persistence confirmation — 2026-11-03
+
+- Railway deployment `1fd6f455-3510-4ab6-ba97-bf3423d92f89` completed successfully at 2026-11-03T15:23:49Z with the persistent SQLite volume mounted at `/data`.
+- After deployment, authenticated `GET /messages/synthetic-1` returned HTTP 200 at 2026-11-03T15:26:50Z. The operator-run PowerShell check confirmed the response body retained status `CANCELLED`; bearer token was entered locally and not printed.
+- On 2026-11-04, Railway HTTP logs independently recorded the concurrent receiver check: same-key POSTs 201 and 200, conflicting payload 409, and audit GET 200. The authenticated audit response reported `effect_count=1`.
+- These checks establish persistence and receiver-side deduplication for synthetic HTTP requests. They do not exercise two worker processes against PostgreSQL lease expiry or establish exactly-once Telegram delivery.
