@@ -1,4 +1,5 @@
 """Offline tests for snapshot archive verification. Run: python -m unittest discover -s ops/prometheus/tests -v"""
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -68,6 +69,24 @@ class ArchiveValidatorTests(unittest.TestCase):
         sha = hashlib.sha256(self.path.read_bytes()).hexdigest()
         with self.assertRaisesRegex(ValueError, "Decompressed tar stream size limit"):
             validator.validate(self.path, sha, 1, max_uncompressed_bytes=100)
+
+    def test_rejects_repeated_pax_records_before_parser_allocation(self):
+        # Small compressed archive with hundreds of thousands of tiny PAX
+        # records must be rejected by raw-header inspection, not tarfile.
+        records = b"6 a=b\n" * 500000
+        info = tarfile.TarInfo("pax-extended-header")
+        info.type = tarfile.XHDTYPE
+        info.size = len(records)
+        header = info.tobuf(format=tarfile.USTAR_FORMAT)
+        padding = b"\x00" * ((-len(records)) % 512)
+        with gzip.open(self.path, "wb") as compressed:
+            compressed.write(header)
+            compressed.write(records)
+            compressed.write(padding)
+            compressed.write(b"\x00" * 1024)
+        digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        with self.assertRaisesRegex(ValueError, "PAX metadata is not allowed"):
+            validator.validate(self.path, digest, 1, max_uncompressed_bytes=100)
 
     def test_rejects_global_pax_metadata_amplification(self):
         with tarfile.open(self.path, "w:gz", format=tarfile.PAX_FORMAT,
