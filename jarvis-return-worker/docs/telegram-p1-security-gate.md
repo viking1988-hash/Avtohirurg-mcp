@@ -55,3 +55,12 @@ Telegram Bot API provides no reliable receiver-side idempotency key for this flo
 - After deployment, authenticated `GET /messages/synthetic-1` returned HTTP 200 at 2026-11-03T15:26:50Z. The operator-run PowerShell check confirmed the response body retained status `CANCELLED`; bearer token was entered locally and not printed.
 - On 2026-11-04, Railway HTTP logs independently recorded the concurrent receiver check: same-key POSTs 201 and 200, conflicting payload 409, and audit GET 200. The authenticated audit response reported `effect_count=1`.
 - These checks establish persistence and receiver-side deduplication for synthetic HTTP requests. They do not exercise two worker processes against PostgreSQL lease expiry or establish exactly-once Telegram delivery.
+
+
+### CI integration test scope clarification — 2026-11-04
+
+- On PR #78 HEAD `f96261393e9bd1750ee8b86f6add89e0a493f3eb`, GitHub Actions run `41844506736` passed: 314 tests, 9 subtests, 1 warning; the isolated PostgreSQL restart-recovery step also passed.
+- `test_pg_unknown_after_real_http_acceptance_reconciles_without_resend` uses the real PostgreSQL test repository and a loopback HTTP SQLite receiver in one test. The test itself performs the HTTP POST directly, then manually expires the PostgreSQL lease and invokes recovery; it does not call the production `Orchestrator` transport path or run two independent dispatchers competing on the same task.
+- Therefore this is integrated state/receiver evidence for lost-ack reconciliation, but it is **not** proof of the two-worker stale-lease race through the actual dispatch path, and it is not a Railway deployment test. Do not describe it as either.
+- Remaining verification: run two independent worker processes against one disposable PostgreSQL task, synchronize them around the actual pre-send fence and HTTP transport, induce lease expiry/reclaim and response loss, then verify the durable receiver has exactly one effect, the task is not automatically replayed, and reconciliation survives restart.
+- Release status remains **HOLD**. No production mutation or real provider send.
