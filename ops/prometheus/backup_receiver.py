@@ -271,12 +271,14 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                         if remaining_seconds <= 0:
                             raise TimeoutError("Upload deadline exceeded")
                         self.connection.settimeout(min(30, remaining_seconds))
-                        chunk = self.rfile.read(min(1024 * 1024, remaining))
+                        chunk = self.rfile.read1(min(1024 * 1024, remaining))
                         if not chunk:
                             raise EOFError("Upload ended before Content-Length")
                         output.write(chunk)
                         digest.update(chunk)
                         remaining -= len(chunk)
+                        if time.monotonic() > upload_deadline:
+                            raise TimeoutError("Upload deadline exceeded")
                     output.flush()
                     os.fsync(output.fileno())
                 actual_sha = digest.hexdigest()
