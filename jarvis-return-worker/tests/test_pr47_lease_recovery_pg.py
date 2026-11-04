@@ -204,11 +204,11 @@ def test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_require
     assert task["task_id"] == task_id
 
     worker_root = str(Path(__file__).resolve().parents[1])
-    tests_root = str(Path(__file__).resolve().parent)
+    repo_root = str(Path(__file__).resolve().parents[2])
     child_env = os.environ.copy()
-    child_env["PYTHONPATH"] = os.pathsep.join(
-        part for part in (worker_root, tests_root, child_env.get("PYTHONPATH")) if part
-    )
+    # The worker directory contains queue.py, which must not shadow Python's
+    # standard-library queue module imported by psycopg in child processes.
+    child_env.pop("PYTHONPATH", None)
     gate_dir = tmp_path / "process-gates"
     gate_dir.mkdir()
     fence_path = gate_dir / "fence-passed"
@@ -227,7 +227,6 @@ import time
 from types import SimpleNamespace
 
 worker_root, database_url, task_id, owner, port, token, gate_dir = sys.argv[1:]
-sys.path.insert(0, worker_root)
 spec = importlib.util.spec_from_file_location(
     "jarvis_return_worker", pathlib.Path(worker_root) / "__init__.py",
     submodule_search_locations=[worker_root],
@@ -301,7 +300,6 @@ import sys
 from types import SimpleNamespace
 
 worker_root, database_url, owner = sys.argv[1:]
-sys.path.insert(0, worker_root)
 spec = importlib.util.spec_from_file_location(
     "jarvis_return_worker", pathlib.Path(worker_root) / "__init__.py",
     submodule_search_locations=[worker_root],
@@ -325,7 +323,7 @@ print(worker.recover(owner))
         [sys.executable, "-c", worker_a_code, worker_root,
          str(repo.config.database_url), str(task_id), "ci-orchestrator-worker-a",
          str(server.server_port), token, str(gate_dir)],
-        cwd=worker_root, env=child_env,
+        cwd=repo_root, env=child_env,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     try:
@@ -353,7 +351,7 @@ print(worker.recover(owner))
         worker_b = subprocess.run(
             [sys.executable, "-c", worker_b_code, worker_root,
              str(repo.config.database_url), "ci-process-b"],
-            cwd=worker_root, env=child_env, capture_output=True,
+            cwd=repo_root, env=child_env, capture_output=True,
             text=True, timeout=25, check=False,
         )
         assert worker_b.returncode == 0, (
