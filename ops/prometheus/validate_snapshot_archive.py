@@ -58,7 +58,7 @@ def validate(archive, expected_sha256, expected_blocks, max_uncompressed_bytes=M
                 break
             if header[156:157] in (b"x", b"g"):
                 raise ValueError("PAX metadata is not allowed in snapshot archives")
-            size_field = header[124:136].strip(b"\\x00 ")
+            size_field = header[124:136].strip(b"\x00 ")
             if not size_field or size_field.startswith(b"\x80"):
                 raise ValueError("Invalid raw tar member size")
             try:
