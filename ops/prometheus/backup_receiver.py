@@ -270,7 +270,8 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                     _extract_validated(temporary, restored)
                     validate_restored(restored, promtool, expected_blocks, timeout=180)
 
-                existing = sorted(backup_dir.glob(f"prometheus-*-{snapshot_id}.tar.gz"))
+                existing = sorted(path for path in backup_dir.glob("prometheus-*.tar.gz")
+                                  if (match := BACKUP_NAME.fullmatch(path.name)) and match.group(2) == snapshot_id)
                 for prior in existing:
                     if prior.is_symlink() or not prior.is_file():
                         continue
@@ -358,6 +359,8 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                 if retention_enabled:
                     try:
                         for old in retention_candidates(backup_dir):
+                            if old == target:
+                                continue
                             old.unlink()
                             deleted += 1
                         with _state_lock:
