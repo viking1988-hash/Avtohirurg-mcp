@@ -5,6 +5,8 @@ Never reads the active TSDB: input must be a directory under a snapshots root.
 Fails closed on symlinks, unexpected files, missing blocks or size limits.
 """
 import argparse
+import gzip
+import io
 import hashlib
 import os
 from pathlib import Path
@@ -61,9 +63,16 @@ def package(snapshot, snapshots_root, output, max_bytes=512*1024*1024):
     if temporary.exists() or temporary.is_symlink():
         raise FileExistsError(temporary)
     try:
-        with tarfile.open(temporary, "x:gz", dereference=False) as archive:
-            for file in sorted(files):
-                archive.add(file, arcname=str(Path("snapshot") / file.relative_to(snapshot)), recursive=False)
+        with temporary.open("xb") as raw:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+                with tarfile.open(fileobj=compressed, mode="w", dereference=False, format=tarfile.PAX_FORMAT) as archive:
+                    for file in sorted(files):
+                        info = archive.gettarinfo(str(file), arcname=str(Path("snapshot") / file.relative_to(snapshot)))
+                        info.mtime = 0
+                        info.uid = info.gid = 0
+                        info.uname = info.gname = ""
+                        with file.open("rb") as source:
+                            archive.addfile(info, source)
         digest_state = hashlib.sha256()
         with temporary.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -71,9 +80,7 @@ def package(snapshot, snapshots_root, output, max_bytes=512*1024*1024):
         digest = digest_state.hexdigest()
         if temporary.stat().st_size > max_bytes:
             raise ValueError("Archive exceeds compressed size limit")
-        if output.exists():
-            raise FileExistsError(output)
-        os.rename(temporary, output)
+        os.link(temporary, output, follow_symlinks=False)
         return digest, len(blocks)
     finally:
         if temporary.exists():
