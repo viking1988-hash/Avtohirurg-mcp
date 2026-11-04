@@ -275,6 +275,23 @@ class ReceiverTests(unittest.TestCase):
         self.assertIn("Decompressed tar stream size limit exceeded", body["reason"])
         self.assertEqual(list(self.backups.iterdir()), [])
 
+    def test_global_pax_metadata_amplification_rejected_over_http(self):
+        archive = self.root / "global-pax-amplification.tar.gz"
+        with tarfile.open(
+            archive, "w:gz", format=tarfile.PAX_FORMAT,
+            pax_headers={f"k{i}": "v" for i in range(2000)},
+        ) as stream:
+            for index in range(2000):
+                info = tarfile.TarInfo(f"snapshot/{BLOCK}/chunks/dir-{index}")
+                info.type = tarfile.DIRTYPE
+                stream.addfile(info)
+        payload = archive.read_bytes()
+        with patch.object(receiver, "MAX_EXTRACT_BYTES", 100):
+            status, body = self.post(payload, hashlib.sha256(payload).hexdigest())
+        self.assertEqual(status, 400)
+        self.assertIn("PAX metadata is not allowed", body["reason"])
+        self.assertEqual(list(self.backups.iterdir()), [])
+
     def test_excessive_tar_members_rejected_over_http(self):
         archive = self.root / "many-members.tar.gz"
         with tarfile.open(archive, "w:gz") as stream:
