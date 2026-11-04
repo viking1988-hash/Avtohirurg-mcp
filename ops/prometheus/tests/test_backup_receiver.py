@@ -1,4 +1,5 @@
 """HTTP integration tests for authenticated backup receiver and restore gate."""
+import gzip
 import hashlib
 import http.client
 import io
@@ -362,6 +363,23 @@ class ReceiverTests(unittest.TestCase):
                 info = tarfile.TarInfo(f"snapshot/{BLOCK}/chunks/dir-{index}")
                 info.type = tarfile.DIRTYPE
                 stream.addfile(info)
+        payload = archive.read_bytes()
+        with patch.object(receiver, "MAX_EXTRACT_BYTES", 100):
+            status, body = self.post(payload, hashlib.sha256(payload).hexdigest())
+        self.assertEqual(status, 400)
+        self.assertIn("PAX metadata is not allowed", body["reason"])
+        self.assertEqual(list(self.backups.iterdir()), [])
+
+    def test_repeated_pax_records_rejected_over_http_without_publication(self):
+        archive = self.root / "repeated-pax-records.tar.gz"
+        records = b"6 a=b\n" * 500000
+        info = tarfile.TarInfo("pax-extended-header")
+        info.type = tarfile.XHDTYPE
+        info.size = len(records)
+        with gzip.open(archive, "wb") as compressed:
+            compressed.write(info.tobuf(format=tarfile.USTAR_FORMAT))
+            compressed.write(records)
+            compressed.write(b"\x00" * ((-len(records)) % 512 + 1024))
         payload = archive.read_bytes()
         with patch.object(receiver, "MAX_EXTRACT_BYTES", 100):
             status, body = self.post(payload, hashlib.sha256(payload).hexdigest())
