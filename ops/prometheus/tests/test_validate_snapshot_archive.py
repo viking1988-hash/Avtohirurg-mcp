@@ -44,6 +44,21 @@ class ArchiveValidatorTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = pathlib.Path(self.temp.name) / "backup.tar.gz"
 
+    def test_rejects_excessive_directory_entries(self):
+        with tarfile.open(self.path, "w:gz") as tar:
+            for i in range(6):
+                info = tarfile.TarInfo(f"{ROOT}/{BLOCK}/chunks/dir-{i}")
+                info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+        digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        old_limit = validator.MAX_ARCHIVE_MEMBERS
+        try:
+            validator.MAX_ARCHIVE_MEMBERS = 5
+            with self.assertRaisesRegex(ValueError, "member count limit"):
+                validator.validate(self.path, digest, 1)
+        finally:
+            validator.MAX_ARCHIVE_MEMBERS = old_limit
+
     def test_valid_archive(self):
         sha = archive_at(self.path)
         self.assertEqual(validator.validate(self.path, sha, 1), (sha, 1))
