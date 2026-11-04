@@ -158,6 +158,37 @@ class ReceiverTests(unittest.TestCase):
         self.assertFalse(self.server.upload_busy)
         self.assertEqual(list(self.backups.glob(".incoming-*.partial")), [])
 
+    def test_trickle_upload_expires_absolute_deadline(self):
+        with patch.object(receiver, "UPLOAD_DEADLINE_SECONDS", 0.2):
+            connection = socket.create_connection(self.url, timeout=5)
+            self.addCleanup(connection.close)
+            connection.sendall(
+                (f"POST {receiver.UPLOAD_PATH} HTTP/1.1\r\n"
+                 "Host: 127.0.0.1\r\n"
+                 f"Authorization: Bearer {TOKEN}\r\n"
+                 "Content-Length: 1024\r\n"
+                 f"X-Archive-SHA256: {'0' * 64}\r\n"
+                 "X-Expected-Blocks: 1\r\n"
+                 "X-Snapshot-ID: trickle\r\n\r\n").encode("ascii")
+            )
+            for _ in range(100):
+                if self.server.upload_busy:
+                    break
+                time.sleep(0.005)
+            self.assertTrue(self.server.upload_busy)
+            for _ in range(15):
+                try:
+                    connection.sendall(b"x")
+                except OSError:
+                    break
+                time.sleep(0.05)
+            for _ in range(100):
+                if not self.server.upload_busy:
+                    break
+                time.sleep(0.01)
+            self.assertFalse(self.server.upload_busy)
+            self.assertEqual(list(self.backups.glob(".incoming-*.partial")), [])
+
     def test_unauthorized_upload_writes_nothing(self):
         archive = self.root / "fixture.tar.gz"
         digest = make_archive(archive)
