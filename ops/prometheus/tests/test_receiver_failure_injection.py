@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -70,6 +71,12 @@ class ReceiverFailureInjectionTests(unittest.TestCase):
         self.assertEqual(failed_retry_status, 503)
         self.assertEqual(failed_retry_body["error"], "backup metadata not persisted")
         self.assertEqual(len(list(self.backups.glob("prometheus-*.tar.gz"))), 1)
+        # The server sends its response before releasing the exclusive upload slot.
+        # Wait for handler cleanup rather than racing the immediate retry.
+        deadline = time.monotonic() + 2
+        while self.server.upload_busy and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(self.server.upload_busy, "upload slot was not released")
         retry_status, retry_body = self.upload(data, digest)
         self.assertEqual(retry_status, 200, f"retry response: {retry_body!r}")
         self.assertEqual(retry_body["status"], "already-verified")
