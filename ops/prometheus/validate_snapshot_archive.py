@@ -44,6 +44,36 @@ def validate(archive, expected_sha256, expected_blocks, max_uncompressed_bytes=M
             if expanded > max_uncompressed_bytes + MAX_TAR_METADATA_OVERHEAD:
                 raise ValueError("Decompressed tar stream size limit exceeded")
 
+    # Inspect raw 512-byte tar headers before tarfile materializes PAX records.
+    # A metadata bomb may fit within the decompressed byte budget yet allocate
+    # many times that size while tarfile parses repeated PAX key/value records.
+    with gzip.open(archive, "rb") as raw_tar:
+        while True:
+            header = raw_tar.read(512)
+            if not header:
+                break
+            if len(header) != 512:
+                raise ValueError("Truncated tar header")
+            if header == b"\\x00" * 512:
+                break
+            if header[156:157] in (b"x", b"g"):
+                raise ValueError("PAX metadata is not allowed in snapshot archives")
+            size_field = header[124:136].strip(b"\\x00 ")
+            if not size_field or size_field.startswith(b"\\x80"):
+                raise ValueError("Invalid raw tar member size")
+            try:
+                raw_size = int(size_field, 8)
+            except ValueError as exc:
+                raise ValueError("Invalid raw tar member size") from exc
+            if raw_size < 0:
+                raise ValueError("Invalid raw tar member size")
+            remaining = ((raw_size + 511) // 512) * 512
+            while remaining:
+                data = raw_tar.read(min(1024 * 1024, remaining))
+                if not data:
+                    raise ValueError("Truncated tar member")
+                remaining -= len(data)
+
     blocks = {}
     root = None
     seen_names = set()
