@@ -21,10 +21,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
-from validate_snapshot_archive import validate as validate_archive
+from validate_snapshot_archive import validate as validate_archive, MAX_UNCOMPRESSED_BYTES
 from validate_restored_tsdb import validate as validate_restored
 
 MAX_UPLOAD_BYTES = int(os.environ.get("PROMETHEUS_BACKUP_MAX_BYTES", str(512 * 1024 * 1024)))
+MAX_EXTRACT_BYTES = MAX_UNCOMPRESSED_BYTES
 UPLOAD_PATH = "/v1/upload"
 BACKUP_NAME = re.compile(r"^prometheus-(\d{8}T\d{6}Z)-([0-9A-Za-z_-]{1,80})\.tar\.gz$")
 _state_lock = threading.Lock()
@@ -49,6 +50,7 @@ def _sha256(path):
 def _extract_validated(archive, destination):
     """Extract regular files/directories after the archive validator has passed."""
     destination = Path(destination)
+    extracted_bytes = 0
     with tarfile.open(archive, "r:gz") as stream:
         members = list(stream)
         if not members:
@@ -65,12 +67,23 @@ def _extract_validated(archive, destination):
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
+            if member.size < 0 or extracted_bytes + member.size > MAX_EXTRACT_BYTES:
+                raise ValueError("Uncompressed archive size limit exceeded")
             source = stream.extractfile(member)
             if source is None:
                 raise ValueError(f"Could not read archive member: {member.name}")
             target.parent.mkdir(parents=True, exist_ok=True)
             with source, target.open("xb") as output:
-                shutil.copyfileobj(source, output, length=1024 * 1024)
+                remaining = member.size
+                while remaining:
+                    chunk = source.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise ValueError("Truncated archive member")
+                    output.write(chunk)
+                    remaining -= len(chunk)
+                    extracted_bytes += len(chunk)
+                    if extracted_bytes > MAX_EXTRACT_BYTES:
+                        raise ValueError("Uncompressed archive size limit exceeded")
 
 
 def _timestamp_from_name(path):
@@ -251,7 +264,7 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                 actual_sha = digest.hexdigest()
                 if not hmac.compare_digest(actual_sha.lower(), expected_sha.lower()):
                     raise ValueError("SHA-256 mismatch")
-                validate_archive(temporary, expected_sha, expected_blocks)
+                validate_archive(temporary, expected_sha, expected_blocks, max_uncompressed_bytes=MAX_EXTRACT_BYTES)
 
                 with tempfile.TemporaryDirectory(prefix="prometheus-restore-test-") as restored:
                     _extract_validated(temporary, restored)
