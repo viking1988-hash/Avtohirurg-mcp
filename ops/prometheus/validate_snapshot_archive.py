@@ -2,6 +2,7 @@
 """Read-only validation of a Prometheus TSDB snapshot tar.gz. Python 3.9+."""
 import argparse
 import hashlib
+import gzip
 import json
 import re
 import sys
@@ -11,6 +12,7 @@ from pathlib import PurePosixPath
 MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 10000
 MAX_MEMBER_NAME_BYTES = 4096
+MAX_TAR_METADATA_OVERHEAD = 4 * 1024 * 1024
 
 ULID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 
@@ -28,6 +30,19 @@ def validate(archive, expected_sha256, expected_blocks, max_uncompressed_bytes=M
     actual = digest.hexdigest()
     if actual.lower() != expected_sha256.lower():
         raise ValueError(f"SHA-256 mismatch: {actual}")
+
+    # Preflight the decompressed tar stream before tarfile parses PAX headers.
+    # This bounds metadata expansion even when a PAX header is never yielded
+    # as a regular tar member.
+    expanded = 0
+    with gzip.open(archive, "rb") as decompressed:
+        while True:
+            chunk = decompressed.read(1024 * 1024)
+            if not chunk:
+                break
+            expanded += len(chunk)
+            if expanded > max_uncompressed_bytes + MAX_TAR_METADATA_OVERHEAD:
+                raise ValueError("Decompressed tar stream size limit exceeded")
 
     blocks = {}
     root = None
