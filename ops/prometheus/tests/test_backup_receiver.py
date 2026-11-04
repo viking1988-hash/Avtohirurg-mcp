@@ -109,6 +109,28 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(list(self.backups.glob(".incoming-*.partial")), [])
         self.assertFalse((self.backups / "last-verified.json").exists())
 
+    def test_snapshot_id_suffix_does_not_collide(self):
+        archive = self.root / "fixture.tar.gz"
+        digest = make_archive(archive)
+        data = archive.read_bytes()
+        first_code, _ = self.post(data, digest, snapshot="prefix-shared")
+        second_code, second = self.post(data, digest, snapshot="shared")
+        self.assertEqual(first_code, 201)
+        self.assertEqual(second_code, 201)
+        self.assertTrue(second["archive"].endswith("-shared.tar.gz"))
+        self.assertEqual(len(list(self.backups.glob("prometheus-*.tar.gz"))), 2)
+
+    def test_retention_preserves_just_published_archive(self):
+        self.server.RequestHandlerClass = receiver.make_handler(self.backups, TOKEN, str(self.promtool), True)
+        archive = self.root / "fixture.tar.gz"
+        digest = make_archive(archive)
+        data = archive.read_bytes()
+        first_code, _ = self.post(data, digest, snapshot="z")
+        second_code, second = self.post(data, digest, snapshot="a")
+        self.assertEqual(first_code, 201)
+        self.assertEqual(second_code, 201)
+        self.assertTrue((self.backups / second["archive"]).is_file())
+
     def test_unauthorized_upload_writes_nothing(self):
         archive = self.root / "fixture.tar.gz"
         digest = make_archive(archive)
