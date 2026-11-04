@@ -35,14 +35,10 @@ Keep PR #47 Draft and HOLD/NO-GO until external-effect safety is independently d
 - These CI tests are NOT an end-to-end proof of a real external side effect.
   The previous Railway synthetic E2E deployment predates this commit.
 
-### Outstanding release blockers (NO-GO)
-1. Main Railway Bun HTTP sink uses volatile in-process Maps; it has no
-   demonstrated persistent inbox/receipt transaction across process restart.
-2. No demonstrated two-worker PostgreSQL lease-expiry race through the actual
-   external receiver and durable receipt recovery after a lost response.
-3. Real Telegram delivery lacks a receiver-side idempotency contract.
-4. No independent submitted security approval for PR #78.
-5. PR #47 is not cleared for merge or Production traffic.
+### Updated verification — 2026-11-04
 
-**Release decision: HOLD.** Green synthetic tests are necessary but not
-sufficient. No Production mutation or real sends authorized.
+- PR #78 code HEAD `0bf693666fb114511bc281d48affcf74769da22c`: `Jarvis Return Worker` run 41884745803 and `Avtohirurg MCP check` run 41884745576 both completed SUCCESS.
+- Worker CI: 315 passed, 1 Starlette/AnyIO deprecation warning, 9 subtests; PostgreSQL restart-recovery step PASS.
+- `test_orchestrator_http_effect_after_pg_recovery_stays_reconciliation_required` now runs worker A and recovery worker B as separate Python OS processes with independent PostgreSQL repository instances. A pauses after the successful database lease fence; B recovers the expired delivery marker; A resumes and commits one effect to the synthetic durable loopback HTTP receiver while simulating a lost acknowledgement. The row remains `RECONCILIATION_REQUIRED`, another dispatcher cannot claim it, and receiver audit reports `effect_count=1`.
+- The separate-process test is GitHub CI evidence against disposable PostgreSQL and the loopback receiver. Railway staging separately confirms durable synthetic receiver persistence and same-key duplicate/conflict handling; the integrated worker race itself was not run on Railway.
+- Release blockers: no receiver-side idempotency guarantee for real Telegram, no independent submitted security approval, and no production receiver parity/authorization. Keep PR Draft and HOLD; no real sends or Production changes.
