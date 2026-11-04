@@ -54,12 +54,12 @@ def validate(archive, expected_sha256, expected_blocks, max_uncompressed_bytes=M
                 break
             if len(header) != 512:
                 raise ValueError("Truncated tar header")
-            if header == b"\\x00" * 512:
+            if header == b"\x00" * 512:
                 break
             if header[156:157] in (b"x", b"g"):
                 raise ValueError("PAX metadata is not allowed in snapshot archives")
             size_field = header[124:136].strip(b"\\x00 ")
-            if not size_field or size_field.startswith(b"\\x80"):
+            if not size_field or size_field.startswith(b"\x80"):
                 raise ValueError("Invalid raw tar member size")
             try:
                 raw_size = int(size_field, 8)
