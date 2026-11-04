@@ -53,6 +53,8 @@ def validate(archive, expected_sha256, expected_blocks, max_uncompressed_bytes=M
     # for every member (quadratic metadata memory amplification).
     with tarfile.open(archive, "r|gz") as tar:
         for member in tar:
+            if member.pax_headers:
+                raise ValueError("PAX metadata is not allowed in snapshot archives")
             member_count += 1
             if member_count > MAX_ARCHIVE_MEMBERS:
                 raise ValueError("Archive member count limit exceeded")
