@@ -92,7 +92,7 @@ class ReceiverTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         stalled = socket.create_connection(server.server_address, timeout=2)
         self.addCleanup(stalled.close)
-        stalled.sendall(b"GET /healthz HTTP/1.1\\r\\nHost: incomplete")
+        stalled.sendall(b"GET /healthz HTTP/1.1\r\nHost: incomplete")
         deadline = time.monotonic() + 1
         while server._connection_slots.acquire(blocking=False):
             server._connection_slots.release()
@@ -102,7 +102,7 @@ class ReceiverTests(unittest.TestCase):
         excess = socket.create_connection(server.server_address, timeout=2)
         self.addCleanup(excess.close)
         excess.settimeout(1)
-        excess.sendall(b"GET /healthz HTTP/1.1\\r\\nHost: excess\\r\\n\\r\\n")
+        excess.sendall(b"GET /healthz HTTP/1.1\r\nHost: excess\r\n\r\n")
         self.assertEqual(excess.recv(1024), b"")
         self.assertFalse(server._connection_slots.acquire(blocking=False))
 
