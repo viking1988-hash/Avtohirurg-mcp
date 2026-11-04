@@ -17,6 +17,7 @@ import shutil
 import tempfile
 import tarfile
 import threading
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -237,6 +238,7 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
         def _receive(self):
             # Bound a stalled authenticated client's occupancy of the upload slot.
             self.connection.settimeout(30)
+            upload_deadline = time.monotonic() + 120
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError as exc:
@@ -265,6 +267,10 @@ def make_handler(backup_dir, token, promtool="/bin/promtool", retention_enabled=
                 remaining = length
                 with os.fdopen(fd, "wb") as output:
                     while remaining:
+                        remaining_seconds = upload_deadline - time.monotonic()
+                        if remaining_seconds <= 0:
+                            raise TimeoutError("Upload deadline exceeded")
+                        self.connection.settimeout(min(30, remaining_seconds))
                         chunk = self.rfile.read(min(1024 * 1024, remaining))
                         if not chunk:
                             raise EOFError("Upload ended before Content-Length")
