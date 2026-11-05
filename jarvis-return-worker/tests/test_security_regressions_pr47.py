@@ -244,12 +244,12 @@ class LegacyApprovalTests(unittest.TestCase):
         from jarvis_return_worker.app import _create_dispatch_intent
         conn = Mock()
         old = {"task_id": "legacy-task", "state": "APPROVED",
-               "correlation_id": "legacy-corr"}
+               "correlation_id": "legacy-corr", "version": 1}
         new = {**old, "state": "READY", "version": 2}
         conn.execute.return_value.fetchone.side_effect = [old, new]
         event = {"event_id": "legacy-event", "aggregate_id": "legacy-task",
                  "event_type": "TaskApproved",
-                 "payload": {"new_state": "APPROVED"}}
+                 "payload": {"new_state": "APPROVED", "aggregate_version": 1}}
         with patch("jarvis_return_worker.audit.record") as audit:
             _create_dispatch_intent(conn, event)
         sql = [call.args[0] for call in conn.execute.call_args_list]
