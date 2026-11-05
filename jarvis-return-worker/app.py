@@ -40,21 +40,30 @@ def _create_dispatch_intent(conn,event):
     if event["event_type"]!="TaskApproved" or payload.get("new_state")!="APPROVED":
         raise ValueError("invalid TaskApproved dispatch event")
     if not payload.get("approved_at") or not payload.get("approved_fingerprint"):
-        # Historical approval is not authorization for a new dispatch.
+        # Historical approval is not authorization for a new dispatch. Only
+        # invalidate the approval when the event proves it is still the same
+        # aggregate version; an unversioned/stale event must never revoke a
+        # newer approval during outbox catch-up.
+        aggregate_version=payload.get("aggregate_version")
         from .audit import record
         row=conn.execute("SELECT * FROM jarvis_return_actions WHERE task_id=%s FOR UPDATE",
                          (event["aggregate_id"],)).fetchone()
-        if row and row["state"]=="APPROVED":
+        if (row and row["state"]=="APPROVED"
+                and isinstance(aggregate_version,int) and not isinstance(aggregate_version,bool)
+                and row["version"]==aggregate_version):
             updated=conn.execute("""UPDATE jarvis_return_actions
                 SET state='READY',approved_by=NULL,approved_at=NULL,
                     approval_expires_at=NULL,approved_fingerprint=NULL,
                     lease_owner=NULL,lease_until=NULL,
                     version=version+1,updated_at=clock_timestamp()
-                WHERE task_id=%s RETURNING *""",(event["aggregate_id"],)).fetchone()
-            record(conn,row,updated,"requeue_requires_fresh_approval",
-                   "jarvis.lifecycle-projector",
-                   metadata={"reason":"legacy_approval_event_missing_binding",
-                             "outbox_event_id":str(event["event_id"])})
+                WHERE task_id=%s AND version=%s RETURNING *""",
+                (event["aggregate_id"],aggregate_version)).fetchone()
+            if updated:
+                record(conn,row,updated,"requeue_requires_fresh_approval",
+                       "jarvis.lifecycle-projector",
+                       metadata={"reason":"legacy_approval_event_missing_binding",
+                                 "outbox_event_id":str(event["event_id"]),
+                                 "aggregate_version":aggregate_version})
         return
     provider=payload.get("provider") or "fake"
     conn.execute("""INSERT INTO jarvis_provider_dispatch_intents
