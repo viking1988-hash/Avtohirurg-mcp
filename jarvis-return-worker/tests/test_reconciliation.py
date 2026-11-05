@@ -280,8 +280,8 @@ def test_uncertain_delivery_stays_nonretryable_without_verified_evidence(repo):
              comment="synthetic provider check found no delivery")
     current = repo.get(task_id)
     assert current["state"] == "RECONCILIATION_REQUIRED"
-    assert current["approved_by"] is None
-    assert current["approved_fingerprint"] is None
+    assert current["approved_by"] == row["approved_by"]
+    assert current["approved_fingerprint"] == row["approved_fingerprint"]
     with pytest.raises(Conflict):
         call(repo, task_id, "operator-a", "request-new-approval", current)
     assert repo.claim("another-worker") is None
