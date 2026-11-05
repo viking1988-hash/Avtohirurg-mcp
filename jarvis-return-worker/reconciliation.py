@@ -159,18 +159,11 @@ def mutate(repo, task_id, actor, action, expected_version, *, reason, comment=No
                 _require(before, "RECONCILIATION_REQUIRED")
                 if before.get("reconciliation_status") not in ("REQUIRED", "IN_REVIEW"):
                     raise Conflict("delivery is not awaiting confirmation")
-                after = conn.execute(
-                    """UPDATE jarvis_return_actions SET state='UNDELIVERED_CONFIRMED',
-                       delivery_status='UNDELIVERED',reconciliation_status='UNDELIVERED_CONFIRMED',
-                       reconciliation_reason=%s,reconciliation_by=%s,
-                       reconciliation_at=clock_timestamp(),reconciliation_comment=%s,
-                       version=version+1,updated_at=clock_timestamp()
-                       WHERE task_id=%s RETURNING *""",
-                    (reason, actor, comment, task_id)).fetchone()
-                _event(conn, before, after, actor, action, reason, before.get("provider"),
-                       {"comment": comment, "provider_receipt": before.get("provider_receipt"),
-                        "provider_message_id": before.get("provider_message_id"),
-                        "expected_version": expected_version})
+                # Free text is not authoritative proof of provider non-delivery.
+                # Keep UNKNOWN non-retryable until evidence can be verified server-side.
+                raise Conflict(
+                    "authoritative provider non-delivery evidence verification is not supported"
+                )
             elif action == "request-new-approval":
                 _require(before, "UNDELIVERED_CONFIRMED")
                 after = conn.execute(
