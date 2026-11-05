@@ -68,12 +68,17 @@ def _create_dispatch_intent(conn,event):
          payload["approved_fingerprint"]))
 
 
-def make_dispatcher(config, repository):
-    dispatcher=TransportDispatcher()
+def make_dispatcher(config, repository, *, runtime=False):
+    """Build providers for tests; production runtime is fake-only while stale-send P1 is open."""
     selected=os.environ.get('JARVIS_TRANSPORT','fake')
-    # Keep the provider registry composable: selecting the primary transport
-    # does not unregister other Sandbox providers that have credentials.
+    dispatcher=TransportDispatcher()
     dispatcher.register('fake',FakeTransport(float(os.environ.get('JARVIS_FAKE_DELAY_SECONDS','0'))),enabled=True)
+    if runtime:
+        if selected!='fake':
+            raise ValueError('external transports are disabled while stale-worker P1 is unresolved')
+        return dispatcher
+    selected=os.environ.get('JARVIS_TRANSPORT','fake')
+    # Non-runtime callers retain the composable registry for isolated tests.
     # Real Telegram delivery is fail-closed until separately approved.
     # Credentials alone must never enable an outbound transport.
     telegram_opt_in=os.environ.get('JARVIS_TELEGRAM_OUTBOUND_APPROVED','').strip()=='1'
@@ -121,7 +126,7 @@ def make_dispatcher(config, repository):
 
 
 def make_transport(config, repository):
-    dispatcher=make_dispatcher(config,repository)
+    dispatcher=make_dispatcher(config,repository,runtime=True)
     selected=os.environ.get('JARVIS_TRANSPORT','fake')
     return dispatcher.dispatch(selected).client
 
@@ -132,7 +137,7 @@ async def lifespan(app):
     repo=QueueRepository(config)
     await asyncio.to_thread(repo.migrate)
     stop=asyncio.Event()
-    dispatcher=make_dispatcher(config,repo)
+    dispatcher=make_dispatcher(config,repo,runtime=True)
     registry=EventBus()
     registry.register("jarvis.lifecycle-projector","*",_project_event,version=1)
     CRMAdapter().register(registry)
