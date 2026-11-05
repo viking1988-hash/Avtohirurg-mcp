@@ -239,7 +239,12 @@ def test_mock_telegram_response_lost_is_reviewed_without_resend(repo,caplog):
 def test_legacy_approval_event_is_idempotent_and_requires_new_approval(repo):
     suffix=uuid.uuid4().hex
     task_id,_=prepare(repo,suffix)
-    legacy={'event_id':uuid.uuid4(),'aggregate_id':task_id,'event_type':'TaskApproved','payload':{'new_state':'APPROVED'}}
+    with repo.connection() as conn:
+        aggregate_version=conn.execute(
+            'SELECT version FROM jarvis_return_actions WHERE task_id=%s',(task_id,)
+        ).fetchone()['version']
+    legacy={'event_id':uuid.uuid4(),'aggregate_id':task_id,'event_type':'TaskApproved',
+            'payload':{'new_state':'APPROVED','aggregate_version':aggregate_version}}
     with repo.connection() as conn:
         _create_dispatch_intent(conn,legacy)
         _create_dispatch_intent(conn,legacy)
@@ -247,3 +252,34 @@ def test_legacy_approval_event_is_idempotent_and_requires_new_approval(repo):
         row=conn.execute('SELECT state,approved_by,approved_fingerprint FROM jarvis_return_actions WHERE task_id=%s',(task_id,)).fetchone()
         n=conn.execute('SELECT count(*) AS n FROM jarvis_provider_dispatch_intents WHERE task_id=%s',(task_id,)).fetchone()['n']
     assert (row['state'],row['approved_by'],row['approved_fingerprint'],n)==('READY',None,None,0)
+
+
+def test_stale_legacy_approval_event_does_not_revoke_new_approval(repo):
+    task_id,_=prepare(repo,uuid.uuid4().hex)
+    with repo.connection() as conn:
+        historical_version=conn.execute(
+            'SELECT version FROM jarvis_return_actions WHERE task_id=%s',(task_id,)
+        ).fetchone()['version']
+        conn.execute("""UPDATE jarvis_return_actions SET state='READY',approved_by=NULL,
+            approved_at=NULL,approval_expires_at=NULL,approved_fingerprint=NULL,
+            version=version+1 WHERE task_id=%s""",(task_id,))
+    current=repo.get(task_id)
+    repo.approve(task_id,current['action_fingerprint'],
+        datetime.now(timezone.utc)+timedelta(minutes=5),'ci-human')
+    before=repo.get(task_id)
+    assert before['state']=='APPROVED'
+    assert before['version']>historical_version
+
+    stale={'event_id':uuid.uuid4(),'aggregate_id':task_id,'event_type':'TaskApproved',
+           'payload':{'new_state':'APPROVED','aggregate_version':historical_version}}
+    with repo.connection() as conn:
+        _create_dispatch_intent(conn,stale)
+    after=repo.get(task_id)
+    assert after['state']=='APPROVED'
+    assert after['version']==before['version']
+    assert after['approved_at']==before['approved_at']
+    assert after['approved_fingerprint']==before['approved_fingerprint']
+    with repo.connection() as conn:
+        n=conn.execute('SELECT count(*) AS n FROM jarvis_provider_dispatch_intents WHERE task_id=%s',
+            (task_id,)).fetchone()['n']
+    assert n==0
