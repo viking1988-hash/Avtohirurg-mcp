@@ -68,7 +68,7 @@ def _create_dispatch_intent(conn,event):
          payload["approved_fingerprint"]))
 
 
-def make_dispatcher(config, repository, *, runtime=False):
+def make_dispatcher(config, repository, *, runtime=True):
     """Build providers for tests; production runtime is fake-only while stale-send P1 is open."""
     selected=os.environ.get('JARVIS_TRANSPORT','fake')
     dispatcher=TransportDispatcher()

@@ -154,6 +154,6 @@ def test_generic_http_provider_registers_alongside_existing_providers(monkeypatc
     monkeypatch.setenv("JARVIS_HTTP_SANDBOX_URL","https://booking-sandbox.up.railway.app")
     monkeypatch.setenv("JARVIS_HTTP_SANDBOX_TOKEN","synthetic-http-token")
     config=SimpleNamespace(telegram_bot_token="synthetic-bot",telegram_test_chat_id="-1000000000000")
-    dispatcher=make_dispatcher(config,None)
+    dispatcher=make_dispatcher(config,None,runtime=False)
     assert dispatcher.names()==("crm","email","fake","http","telegram")
     assert dispatcher.dispatch("http").provider=="http"

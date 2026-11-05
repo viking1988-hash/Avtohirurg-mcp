@@ -24,14 +24,14 @@ def configure_external_providers(monkeypatch):
         monkeypatch.setenv(key, value)
 
 
-def test_runtime_dispatcher_ignores_credentials_and_exposes_only_fake(monkeypatch):
+def test_default_dispatcher_ignores_credentials_and_exposes_only_fake(monkeypatch):
     configure_external_providers(monkeypatch)
     config = SimpleNamespace(
         telegram_bot_token="synthetic-telegram-token",
         telegram_test_chat_id="-1000000000000",
     )
 
-    dispatcher = make_dispatcher(config, repository=None, runtime=True)
+    dispatcher = make_dispatcher(config, repository=None)
 
     assert dispatcher.names() == ("fake",)
     for provider in ("telegram", "crm", "email", "http", "webhook"):
@@ -40,9 +40,9 @@ def test_runtime_dispatcher_ignores_credentials_and_exposes_only_fake(monkeypatc
 
 
 @pytest.mark.parametrize("selected", ["telegram", "crm", "email", "http", "webhook"])
-def test_runtime_cannot_select_external_transport(monkeypatch, selected):
+def test_default_dispatcher_cannot_select_external_transport(monkeypatch, selected):
     configure_external_providers(monkeypatch)
     monkeypatch.setenv("JARVIS_TRANSPORT", selected)
 
     with pytest.raises(ValueError, match="external transports are disabled"):
-        make_dispatcher(SimpleNamespace(), repository=None, runtime=True)
+        make_dispatcher(SimpleNamespace(), repository=None)

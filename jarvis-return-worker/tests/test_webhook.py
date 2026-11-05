@@ -143,7 +143,7 @@ def test_webhook_endpoint_credentials_alone_do_not_enable_outbound(monkeypatch):
     monkeypatch.delenv("JARVIS_HTTP_SANDBOX_TOKEN", raising=False)
     config = SimpleNamespace(telegram_bot_token=None, telegram_test_chat_id=None)
 
-    dispatcher = make_dispatcher(config, None)
+    dispatcher = make_dispatcher(config, None, runtime=False)
 
     assert "webhook" not in dispatcher.names()
     assert "fake" in dispatcher.names()
@@ -162,7 +162,7 @@ def test_webhook_outbound_requires_exact_opt_in_without_sending(monkeypatch):
     monkeypatch.delenv("JARVIS_HTTP_SANDBOX_TOKEN", raising=False)
     config = SimpleNamespace(telegram_bot_token=None, telegram_test_chat_id=None)
 
-    dispatcher = make_dispatcher(config, None)
+    dispatcher = make_dispatcher(config, None, runtime=False)
 
     assert "webhook" in dispatcher.names()
     assert dispatcher.dispatch("webhook").provider == "webhook"

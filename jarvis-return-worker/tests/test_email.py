@@ -135,7 +135,7 @@ def test_dispatcher_registry_keeps_fake_telegram_crm_and_email_together(monkeypa
     monkeypatch.setenv('JARVIS_EMAIL_SANDBOX_SMTP_HOST','mailpit.railway.internal')
     config=SimpleNamespace(telegram_bot_token='synthetic-ci-bot-token',
                            telegram_test_chat_id='-1000000000000')
-    dispatcher=make_dispatcher(config,None)
+    dispatcher=make_dispatcher(config,None,runtime=False)
     assert dispatcher.names()==('crm','email','fake','telegram')
     assert dispatcher.dispatch('fake')
     assert dispatcher.dispatch('telegram')
@@ -294,7 +294,7 @@ def test_telegram_credentials_alone_do_not_enable_outbound(monkeypatch):
     monkeypatch.delenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', raising=False)
     config=SimpleNamespace(telegram_bot_token='synthetic-ci-bot-token',
                            telegram_test_chat_id='-1000000000000')
-    dispatcher=make_dispatcher(config,None)
+    dispatcher=make_dispatcher(config,None,runtime=False)
     assert 'telegram' not in dispatcher.names()
     assert 'fake' in dispatcher.names()
     with pytest.raises(DispatcherError):
@@ -309,9 +309,9 @@ def test_telegram_outbound_requires_exact_opt_in(monkeypatch):
                            telegram_test_chat_id='-1000000000000')
     for value in ('0', 'true', 'yes', ' 1x '):
         monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', value)
-        assert 'telegram' not in make_dispatcher(config,None).names()
+        assert 'telegram' not in make_dispatcher(config,None,runtime=False).names()
     monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', '1')
-    assert 'telegram' in make_dispatcher(config,None).names()
+    assert 'telegram' in make_dispatcher(config,None,runtime=False).names()
 
 
 def test_selected_telegram_transport_refuses_start_without_approval(monkeypatch):
@@ -322,7 +322,7 @@ def test_selected_telegram_transport_refuses_start_without_approval(monkeypatch)
     config=SimpleNamespace(telegram_bot_token='synthetic-ci-bot-token',
                            telegram_test_chat_id='-1000000000000')
     with pytest.raises(ValueError, match='Telegram requires Sandbox bot credentials and a test chat'):
-        make_dispatcher(config,None)
+        make_dispatcher(config,None,runtime=False)
 
 
 def test_telegram_approval_without_credentials_cannot_register(monkeypatch):
@@ -331,4 +331,4 @@ def test_telegram_approval_without_credentials_cannot_register(monkeypatch):
     monkeypatch.setenv('JARVIS_TRANSPORT', 'fake')
     monkeypatch.setenv('JARVIS_TELEGRAM_OUTBOUND_APPROVED', '1')
     config=SimpleNamespace(telegram_bot_token='',telegram_test_chat_id='')
-    assert 'telegram' not in make_dispatcher(config,None).names()
+    assert 'telegram' not in make_dispatcher(config,None,runtime=False).names()
