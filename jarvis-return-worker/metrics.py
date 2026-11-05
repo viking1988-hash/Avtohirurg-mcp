@@ -167,3 +167,20 @@ def render_metrics(repo):
  for name,counter in _reconciliation_metrics.items(): _sync_counter(counter,name,totals[name])
  return generate_latest(_registry)
 
+
+_webhook_requests=Counter('webhook_requests_total','Webhook HTTP attempts',registry=_registry)
+_webhook_success=Counter('webhook_success_total','Successful webhook operations',registry=_registry)
+_webhook_failed=Counter('webhook_failed_total','Definitively failed webhook operations',registry=_registry)
+_webhook_unknown=Counter('webhook_unknown_total','Webhook operations requiring reconciliation',registry=_registry)
+_webhook_replayed=Counter('webhook_replayed_total','Webhook operations materialized from outbox by Replay Worker',registry=_registry)
+_webhook_duplicates=Counter('webhook_duplicate_prevented_total','Duplicate webhook intents prevented',registry=_registry)
+_webhook_latency=Histogram('webhook_latency_seconds','Webhook request latency',registry=_registry)
+def webhook_request_attempt(): _webhook_requests.inc()
+def observe_webhook(outcome,elapsed):
+ _webhook_latency.observe(max(0,elapsed))
+ if outcome=='success': _webhook_success.inc()
+ elif outcome=='unknown': _webhook_unknown.inc()
+ elif outcome=='retryable': _webhook_failed.inc()
+ else: _webhook_failed.inc()
+def webhook_replayed(): _webhook_replayed.inc()
+def prevent_webhook_duplicate(): _webhook_duplicates.inc()

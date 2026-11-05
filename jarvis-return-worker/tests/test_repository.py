@@ -17,6 +17,7 @@ def repo():
     r.migrate()
     # Each integration scenario gets an isolated fixture inside the disposable CI database.
     with r.connection() as c:
+        c.execute('DELETE FROM jarvis_provider_dispatch_intents')
         c.execute('DELETE FROM jarvis_return_action_events')
         c.execute('DELETE FROM jarvis_fake_receipts')
         c.execute('DELETE FROM jarvis_return_actions')
@@ -144,3 +145,97 @@ def test_restart_repository_never_resends_completed_action(repo):
     restarted=QueueRepository(repo.config)
     assert restarted.get(id)['state']=='DONE'
     assert restarted.claim('worker-after-restart') is None
+
+def test_dispatch_fence_rejects_expired_lease_after_start(repo):
+    id=make(repo)
+    task=repo.claim('worker-a')
+    repo.mark_delivery_started(id,'worker-a',task['attempt_count'])
+    assert repo.verify_dispatch_lease(id,'worker-a',task['attempt_count']) is True
+    with repo.connection() as c:
+        c.execute("UPDATE jarvis_return_actions SET lease_until=clock_timestamp()-interval '1 second' WHERE task_id=%s",(id,))
+    with pytest.raises(Conflict):
+        repo.verify_dispatch_lease(id,'worker-a',task['attempt_count'])
+
+
+def test_dispatch_fence_rejects_recovered_stale_worker(repo):
+    id=make(repo)
+    task=repo.claim('worker-a')
+    repo.mark_delivery_started(id,'worker-a',task['attempt_count'])
+    with repo.connection() as c:
+        c.execute("""UPDATE jarvis_return_actions
+            SET lease_until=clock_timestamp()-interval '1 minute',
+                heartbeat_at=clock_timestamp()-interval '1 minute'
+            WHERE task_id=%s""",(id,))
+    with pytest.raises(Conflict):
+        repo.verify_dispatch_lease(id,'worker-a',task['attempt_count'])
+    assert repo.recover('recovery') == 1
+    assert repo.get(id)['state'] == 'RECONCILIATION_REQUIRED'
+
+
+def test_separate_process_stale_sender_after_recovery_is_fenced(repo):
+    """Real OS child and parent use separate PostgreSQL connections; no real provider."""
+    import subprocess
+    import sys
+    task_id=make(repo)
+    task=repo.claim('worker-a')
+    repo.mark_delivery_started(task_id,'worker-a',task['attempt_count'])
+    child_code=r'''
+import os,sys,importlib.util
+from pathlib import Path
+from types import SimpleNamespace
+root=Path(sys.argv[3])
+spec=importlib.util.spec_from_file_location('jarvis_return_worker',root/'__init__.py',submodule_search_locations=[str(root)])
+module=importlib.util.module_from_spec(spec)
+sys.modules['jarvis_return_worker']=module
+spec.loader.exec_module(module)
+from jarvis_return_worker.queue import QueueRepository,Conflict
+r=QueueRepository(SimpleNamespace(database_url=os.environ['JARVIS_WORKER_CI_DATABASE_URL'],worker_id='worker-a',lease_seconds=30,heartbeat_seconds=5,max_attempts=3))
+task_id=sys.argv[1]; attempt=int(sys.argv[2])
+r.verify_dispatch_lease(task_id,'worker-a',attempt)
+print('FENCE_OK',flush=True)
+if sys.stdin.readline().strip()!='RESUME': sys.exit(3)
+# Synthetic external effect occurs AFTER the pre-send lease check has gone stale.
+print('SYNTHETIC_REMOTE_EFFECT',flush=True)
+try:
+    r.save_delivery_receipt(task_id,'worker-a',attempt,'late-synthetic-receipt')
+except Conflict:
+    print('LATE_RECEIPT_FENCED',flush=True)
+else:
+    sys.exit(4)
+try:
+    r.fail(task_id,'worker-a',attempt)
+except Conflict:
+    print('STALE_FAILURE_FENCED',flush=True)
+else:
+    sys.exit(5)
+'''
+    from pathlib import Path
+    child_env=os.environ.copy()
+    worker_root=str(Path(__file__).resolve().parents[1])
+    # Do not add worker_root to sys.path: queue.py shadows Python's stdlib queue,
+    # which psycopg imports. The child loads the package via importlib instead.
+    proc=subprocess.Popen([sys.executable,'-u','-c',child_code,task_id,str(task['attempt_count']),worker_root],
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
+        env=child_env)
+    try:
+        first_line=proc.stdout.readline().strip()
+        if first_line!='FENCE_OK':
+            stderr=proc.stderr.read()
+            pytest.fail(f'child process did not reach dispatch fence (exit={proc.poll()}): {stderr[-2000:]}')
+        with repo.connection() as c:
+            c.execute("UPDATE jarvis_return_actions SET lease_until=now()-interval '1 minute',heartbeat_at=now()-interval '1 minute' WHERE task_id=%s",(task_id,))
+        assert repo.recover('worker-b')>=1
+        assert repo.get(task_id)['state']=='RECONCILIATION_REQUIRED'
+        assert repo.claim('worker-b') is None
+        proc.stdin.write('RESUME\\n'.replace('\\n','\n'))
+        proc.stdin.flush()
+        output,errors=proc.communicate(timeout=15)
+        assert proc.returncode==0,errors
+        assert output.splitlines()==['SYNTHETIC_REMOTE_EFFECT','LATE_RECEIPT_FENCED','STALE_FAILURE_FENCED']
+        row=repo.get(task_id)
+        assert row['state']=='RECONCILIATION_REQUIRED'
+        assert not row['delivery_receipt']
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate(timeout=5)

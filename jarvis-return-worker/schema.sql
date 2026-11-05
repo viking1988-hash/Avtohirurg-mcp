@@ -315,3 +315,70 @@ CREATE INDEX IF NOT EXISTS jarvis_ai_usage_created_model_idx
  ON jarvis_ai_usage_events(created_at,provider,model);
 
 
+-- A TaskApproved event must be durably replayed into this intent before the
+-- delivery worker may claim it. This is a DB-only outbox subscriber effect.
+CREATE TABLE IF NOT EXISTS jarvis_provider_dispatch_intents (
+ event_id text PRIMARY KEY REFERENCES jarvis_outbox_events(event_id),
+ task_id text NOT NULL REFERENCES jarvis_return_actions(task_id),
+ approved_at timestamptz NOT NULL,
+ approved_fingerprint text NOT NULL,
+ provider text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(task_id,approved_at)
+);
+CREATE INDEX IF NOT EXISTS jarvis_provider_dispatch_task_idx
+ ON jarvis_provider_dispatch_intents(task_id,approved_at,approved_fingerprint);
+
+-- Webhook operation rows are created only by the outbox subscriber. An expired
+-- delivery lease is ambiguous and goes to reconciliation, never back to PENDING.
+CREATE TABLE IF NOT EXISTS jarvis_webhook_operations (
+ event_id text PRIMARY KEY REFERENCES jarvis_outbox_events(event_id),
+ idempotency_key text NOT NULL UNIQUE,
+ method text NOT NULL CHECK(method IN ('GET','POST','PUT','PATCH','DELETE')),
+ path text NOT NULL,
+ request_body jsonb,
+ correlation_id text,
+ state text NOT NULL DEFAULT 'PENDING'
+   CHECK(state IN ('PENDING','PROCESSING','DONE','FAILED','CANCELLED','RECONCILIATION_REQUIRED')),
+ version bigint NOT NULL DEFAULT 0 CHECK(version>=0),
+ attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ lease_owner text,
+ lease_until timestamptz,
+ request_id text,
+ response_id text,
+ provider_status text,
+ http_status integer,
+ receipt jsonb,
+ duration_ms double precision,
+ retry_count integer NOT NULL DEFAULT 0 CHECK(retry_count>=0),
+ reconciliation_reason text,
+ reconciliation_evidence jsonb,
+ reconciled_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(state <> 'RECONCILIATION_REQUIRED' OR reconciliation_reason IS NOT NULL)
+);
+-- Backfill-safe migration: a DONE result may come from explicit, persisted
+-- reconciliation when the original write returned an ambiguous non-2xx status.
+ALTER TABLE jarvis_webhook_operations ADD COLUMN IF NOT EXISTS reconciliation_evidence jsonb;
+ALTER TABLE jarvis_webhook_operations ADD COLUMN IF NOT EXISTS reconciled_at timestamptz;
+ALTER TABLE jarvis_webhook_operations DROP CONSTRAINT IF EXISTS jarvis_webhook_operations_check1;
+ALTER TABLE jarvis_webhook_operations DROP CONSTRAINT IF EXISTS jarvis_webhook_done_requires_evidence;
+ALTER TABLE jarvis_webhook_operations ADD CONSTRAINT jarvis_webhook_done_requires_evidence
+ CHECK(state <> 'DONE' OR (request_id IS NOT NULL AND receipt IS NOT NULL
+   AND (http_status BETWEEN 200 AND 299 OR
+        (reconciled_at IS NOT NULL AND reconciliation_evidence IS NOT NULL))));
+CREATE INDEX IF NOT EXISTS jarvis_webhook_pending_idx
+ ON jarvis_webhook_operations(state,next_attempt_at,created_at,event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS jarvis_webhook_response_unique
+ ON jarvis_webhook_operations(response_id) WHERE response_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS jarvis_webhook_operation_events (
+ event_id text NOT NULL REFERENCES jarvis_webhook_operations(event_id),
+ event_sequence bigint GENERATED ALWAYS AS IDENTITY,
+ action text NOT NULL,
+ actor text NOT NULL,
+ reason text,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(event_id,event_sequence)
+);

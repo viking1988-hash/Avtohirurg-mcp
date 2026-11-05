@@ -18,6 +18,7 @@ class Config:
     shutdown_seconds: int = 20
     telegram_bot_token: str = field(default='', repr=False)
     telegram_test_chat_id: str = field(default='', repr=False)
+    require_outbox_dispatch: bool = True
 
     @classmethod
     def from_env(cls):
@@ -52,6 +53,15 @@ class Config:
             raise ValueError('distinct strong read and human approval credentials required')
         if os.environ.get('JARVIS_TRANSPORT', 'fake') == 'telegram' and (not self.telegram_bot_token or not self.telegram_test_chat_id):
             raise ValueError('Telegram Sandbox transport requires a bot token and explicit test chat allowlist')
+        # Webhook HTTP attempts can consume the full timeout and retry budget.
+        # Refuse configurations where recovery may revoke the lease mid-send.
+        if os.environ.get('JARVIS_WEBHOOK_BASE_URL'):
+            timeout = float(os.environ.get('JARVIS_WEBHOOK_TIMEOUT_SECONDS', '8'))
+            retries = int(os.environ.get('JARVIS_WEBHOOK_MAX_RETRIES', '2'))
+            # Each retry may wait up to 10s for Retry-After; include scheduling slack.
+            if not (0.01 <= timeout <= 30 and 0 <= retries <= 5
+                    and self.lease_seconds > (retries + 1) * timeout + retries * 10 + 5):
+                raise ValueError('Webhook delivery budget exceeds lease; refusing startup')
         if not (5 <= self.lease_seconds <= 300 and 1 <= self.heartbeat_seconds < self.lease_seconds / 2
                 and 1 <= self.recovery_seconds <= 300 and 0.1 <= self.poll_seconds <= 60
                 and 1 <= self.max_attempts <= 20 and 5 <= self.shutdown_seconds <= 60):

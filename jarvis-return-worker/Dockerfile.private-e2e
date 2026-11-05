@@ -1,0 +1,5 @@
+FROM python:3.12-alpine
+WORKDIR /app
+COPY private_railway_e2e.py /app/private_railway_e2e.py
+USER 65532:65532
+ENTRYPOINT ["python", "-I", "/app/private_railway_e2e.py"]

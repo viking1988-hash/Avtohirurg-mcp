@@ -44,9 +44,16 @@ def append_audit_outbox(conn, audit_event_id, before, after, action, provider=No
         "previous_state": before.get("state") if before else None,
         "new_state": after.get("state"),
         "aggregate_version": after.get("version"),
-        "provider": provider or after.get("provider"),
+        "provider": provider or after.get("provider") or (
+            "telegram" if str(after.get("destination_key", "")).startswith("sandbox:telegram:") else
+            "http" if str(after.get("destination_key", "")).startswith("sandbox:http:") else "fake"
+        ),
         "reason": reason,
     }
+    if action == "approve":
+        # Bind the durable dispatch intent to this exact, human-approved version.
+        payload["approved_at"] = _json_value(after.get("approved_at"))
+        payload["approved_fingerprint"] = after.get("approved_fingerprint")
     return append_event(conn, aggregate_id=after["task_id"], aggregate_type="queue_task",
         event_type=event_type, event_version=1, payload=payload,
         correlation_id=after.get("correlation_id"), causation_id=str(audit_event_id))

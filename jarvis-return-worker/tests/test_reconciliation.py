@@ -70,18 +70,27 @@ def test_confirm_delivered_is_atomic_and_blocks_repeat(repo):
     assert delivered_event["metadata"]["snapshot"]["provider_message_id"] == "tg-101"
     assert delivered_event["metadata"]["snapshot"]["delivery_status"] == "DELIVERED"
 
-def test_confirm_undelivered_requires_new_approval_and_recovery_cannot_resend(repo):
+def test_free_text_cannot_confirm_undelivered_or_request_new_approval(repo):
     task_id, row = uncertain(repo)
-    rejected = call(repo, task_id, "operator-a", "confirm-undelivered", row,
-                    comment="test chat checked; no message")
-    assert rejected["state"] == "UNDELIVERED_CONFIRMED"
-    ready = call(repo, task_id, "operator-a", "request-new-approval", rejected)
-    assert ready["state"] == "READY"
-    assert ready["approved_by"] is None and ready["approved_fingerprint"] is None
-    assert ready["delivery_started_at"] is None
+    with pytest.raises(Conflict, match="authoritative provider non-delivery evidence"):
+        call(repo, task_id, "operator-a", "confirm-undelivered", row,
+             comment="test chat checked; no message")
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["delivery_status"] == "UNKNOWN"
+    assert current["version"] == row["version"]
+    with pytest.raises(Conflict):
+        call(repo, task_id, "operator-a", "request-new-approval", current,
+             comment="request retry")
     assert repo.recover("recovery-after-reconcile") == 0
     assert repo.claim("worker-after-reconcile") is None
     assert repo.get(task_id)["attempt_count"] == 1
+    with repo.connection() as conn:
+        events = conn.execute(
+            "SELECT action, actor, metadata FROM jarvis_return_action_events "
+            "WHERE task_id=%s ORDER BY event_id", (task_id,)).fetchall()
+    assert sum(e["action"] == "reconcile_failed" and e["actor"] == "operator-a"
+               for e in events) >= 2
 
 def test_two_operators_with_same_version_only_one_reconcile_wins(repo):
     task_id, row = uncertain(repo)
@@ -152,6 +161,36 @@ def test_stale_api_version_and_duplicate_confirm_are_rejected_and_audited(repo):
         assert stale.status_code == 409
     assert repo.get(task_id)["reconciliation_status"] == "IN_REVIEW"
 
+
+
+def test_api_rejects_free_text_undelivered_confirmation(repo):
+    task_id, row = uncertain(repo)
+    app = FastAPI()
+    app.include_router(router)
+    app.state.repository = repo
+    app.state.orchestrator = Orchestrator(repo, TransportDispatcher())
+    app.state.config = SimpleNamespace(read_token=READ_TOKEN, approval_token=APPROVAL_TOKEN,
+                                       operator_id="sandbox-operator")
+    headers = {"Authorization": "Bearer "+APPROVAL_TOKEN}
+    body = {"expected_version": row["version"], "reason": "checked manually",
+            "comment": "provider shows no message"}
+    with TestClient(app) as client:
+        response = client.post(f"/queue/{task_id}/confirm-undelivered",
+                               headers=headers, json=body)
+        assert response.status_code == 409
+        assert "evidence verification is not supported" in response.json()["detail"]
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["delivery_status"] == "UNKNOWN"
+    assert current["version"] == row["version"]
+    with repo.connection() as conn:
+        events = conn.execute(
+            "SELECT action, actor, metadata FROM jarvis_return_action_events "
+            "WHERE task_id=%s ORDER BY event_id", (task_id,)).fetchall()
+    assert any(e["action"] == "reconcile_failed" and e["actor"] == "sandbox-operator"
+               and e["metadata"].get("requested_action") == "confirm-undelivered"
+               for e in events)
+
 def test_reconciliation_metrics_export_persisted_counters(repo):
     task_id, row = uncertain(repo)
     call(repo, task_id, "operator-a", "reconcile", row)
@@ -161,3 +200,89 @@ def test_reconciliation_metrics_export_persisted_counters(repo):
                    "delivery_rejected_total", "reconciliation_required_total",
                    "manual_review_total", "provider_unknown_total"):
         assert f"#{' HELP'} {metric}" in output
+
+
+def test_comment_alone_cannot_confirm_delivery_and_rejection_is_audited(repo):
+    task_id, row = uncertain(repo)
+    with pytest.raises(Conflict, match="delivery evidence"):
+        call(repo, task_id, "operator-a", "confirm-delivered", row,
+             provider="telegram", comment="message probably delivered")
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["version"] == row["version"]
+    with repo.connection() as conn:
+        events = conn.execute(
+            "SELECT action, actor, metadata FROM jarvis_return_action_events "
+            "WHERE task_id=%s ORDER BY event_id", (task_id,)).fetchall()
+    assert any(e["action"] == "reconcile_failed" and e["actor"] == "operator-a"
+               and e["metadata"].get("requested_action") == "confirm-delivered"
+               for e in events)
+
+
+def test_confirmation_api_rejects_reader_and_comment_only_evidence(repo):
+    task_id, row = uncertain(repo)
+    app = FastAPI()
+    app.include_router(router)
+    app.state.repository = repo
+    app.state.orchestrator = Orchestrator(repo, TransportDispatcher())
+    app.state.config = SimpleNamespace(read_token=READ_TOKEN, approval_token=APPROVAL_TOKEN,
+                                       operator_id="sandbox-operator")
+    path = f"/queue/{task_id}/confirm-delivered"
+    body = {"expected_version":row["version"], "reason":"reviewed synthetic channel",
+            "comment":"comment alone is not proof", "provider":"telegram"}
+    with TestClient(app) as client:
+        unauthenticated = client.post(path, json=body)
+        reader = client.post(path, headers={"Authorization":"Bearer "+READ_TOKEN}, json=body)
+        operator = client.post(path, headers={"Authorization":"Bearer "+APPROVAL_TOKEN}, json=body)
+    assert unauthenticated.status_code == 401
+    assert reader.status_code == 401
+    assert operator.status_code == 409
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["version"] == row["version"]
+    with repo.connection() as conn:
+        events = conn.execute(
+            "SELECT action,actor FROM jarvis_return_action_events WHERE task_id=%s",
+            (task_id,)).fetchall()
+    assert any(e["action"] == "reconcile_failed" and e["actor"] == "sandbox-operator"
+               for e in events)
+
+
+@pytest.mark.parametrize("provider,receipt,message", [
+    ("telegram", "   ", None),
+    ("telegram", None, "   "),
+    ("telegram", "  ", "   "),
+    ("   ", "valid-receipt", None),
+])
+def test_blank_delivery_evidence_is_rejected_and_audited(repo, provider, receipt, message):
+    task_id, row = uncertain(repo)
+    with pytest.raises(Conflict, match="delivery evidence"):
+        call(repo, task_id, "operator-a", "confirm-delivered", row,
+             provider=provider, provider_receipt=receipt,
+             provider_message_id=message, comment="synthetic review")
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["version"] == row["version"]
+    with repo.connection() as conn:
+        events = conn.execute(
+            "SELECT action FROM jarvis_return_action_events WHERE task_id=%s",
+            (task_id,)).fetchall()
+    assert any(event["action"] == "reconcile_failed" for event in events)
+
+
+def test_uncertain_delivery_stays_nonretryable_without_verified_evidence(repo):
+    task_id, row = uncertain(repo)
+    with pytest.raises(Conflict):
+        repo.requeue(task_id, "operator-a")
+    assert repo.claim("another-worker") is None
+    with pytest.raises(Conflict, match="authoritative provider non-delivery evidence"):
+        call(repo, task_id, "operator-a", "confirm-undelivered", row,
+             comment="synthetic provider check found no delivery")
+    current = repo.get(task_id)
+    assert current["state"] == "RECONCILIATION_REQUIRED"
+    assert current["approved_by"] == row["approved_by"]
+    assert current["approved_fingerprint"] == row["approved_fingerprint"]
+    with pytest.raises(Conflict):
+        call(repo, task_id, "operator-a", "request-new-approval", current)
+    assert repo.claim("another-worker") is None
+    assert repo.get(task_id)["attempt_count"] == 1
