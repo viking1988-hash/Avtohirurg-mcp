@@ -283,3 +283,9 @@ def test_stale_legacy_approval_event_does_not_revoke_new_approval(repo):
         n=conn.execute('SELECT count(*) AS n FROM jarvis_provider_dispatch_intents WHERE task_id=%s',
             (task_id,)).fetchone()['n']
     assert n==0
+    # Keep the shared ephemeral CI database isolated from later claim tests.
+    with repo.connection() as conn:
+        conn.execute("""UPDATE jarvis_return_actions SET state='CANCELLED',
+            approved_by=NULL,approved_at=NULL,approval_expires_at=NULL,
+            approved_fingerprint=NULL,version=version+1 WHERE task_id=%s""",(task_id,))
+
