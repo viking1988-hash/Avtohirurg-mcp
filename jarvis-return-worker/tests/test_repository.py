@@ -239,3 +239,42 @@ else:
         if proc.poll() is None:
             proc.kill()
             proc.communicate(timeout=5)
+
+
+def test_recovery_skips_task_while_atomic_external_dispatch_holds_row_lock(repo):
+    """A lease may expire during send, but no second worker can reclaim it mid-call."""
+    import threading
+    import time
+
+    repo.config.lease_seconds=1
+    repo.config.heartbeat_seconds=0.1
+    task_id=make(repo)
+    task=repo.claim('worker-a')
+    repo.mark_delivery_started(task_id,'worker-a',task['attempt_count'])
+
+    entered=threading.Event()
+    release=threading.Event()
+    effects=[]
+    def synthetic_external_effect():
+        effects.append('sent-once')
+        entered.set()
+        if not release.wait(4):
+            raise TimeoutError('test did not release synthetic dispatch')
+        return 'synthetic-result'
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(repo.dispatch_with_fence,task_id,'worker-a',
+                           task['attempt_count'],synthetic_external_effect)
+        assert entered.wait(3)
+        time.sleep(1.2)  # The lease expires while the transaction still owns the row.
+        assert repo.recover('worker-b')==0  # Recovery uses SKIP LOCKED.
+        assert repo.claim('worker-b') is None
+        assert repo.get(task_id)['state']=='PROCESSING'
+        release.set()
+        assert future.result(timeout=5)=='synthetic-result'
+
+    assert effects==['sent-once']
+    assert repo.recover('worker-b')==1
+    assert repo.get(task_id)['state']=='RECONCILIATION_REQUIRED'
+    assert repo.claim('worker-c') is None
+    assert effects==['sent-once']
