@@ -7,7 +7,9 @@ import json
 import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from .safe_http import open_without_redirects
 
 from .transport import Classification, DeliveryError
 
@@ -86,7 +88,7 @@ class CRMIntakeProvider:
         self.__base_url = base_url.rstrip("/")
         self.__api_key = api_key
         self.timeout_seconds = timeout_seconds
-        self._opener = opener or urlopen
+        self._opener = opener or open_without_redirects
 
     def create_lead(self, payload):
         body = normalize_intake(payload)
