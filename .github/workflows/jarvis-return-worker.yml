@@ -25,6 +25,8 @@ jobs:
       - run: pip install -r jarvis-return-worker/requirements.txt pytest httpx
       - name: Syntax-check Issue 77 cross-system runner
         run: python -m py_compile jarvis-return-worker/issue77_crm_cross_system_e2e.py
+      - name: Syntax-check Issue 77 synthetic cleanup runner
+        run: python -m py_compile jarvis-return-worker/cleanup_issue77_synthetic.py
       - run: |
           python - <<'CODE'
           import os, subprocess
