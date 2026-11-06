@@ -9,11 +9,12 @@ from .transport import Classification, DeliveryError
 
 
 class Orchestrator:
-    def __init__(self, repository, dispatcher, policy=None, event_bus=None):
+    def __init__(self, repository, dispatcher, policy=None, event_bus=None, intake_store=None):
         self.repository=repository
         self.dispatcher=dispatcher
         self.policy=policy or PolicyEngine()
         self.event_bus=event_bus or EventBus()
+        self.intake_store=intake_store
 
     def enqueue(self, *args, **kwargs): return self.repository.enqueue(*args, **kwargs)
     def list_tasks(self, limit=100): return self.repository.list(limit)
@@ -45,6 +46,209 @@ class Orchestrator:
         provider=self.dispatcher.dispatch(name)
         provider_call(name,"cancel")
         return provider.cancel(message_id)
+
+    def claim_crm_operation(self, owner):
+        return self.repository.claim_crm_operation(owner)
+
+    def claim_crm_intake_operation(self, owner):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.claim(owner)
+
+    def request_email(self, recipient, subject, body, correlation_id, causation_id):
+        from .email_provider import EmailProvider
+        if not EmailProvider._valid_recipient(recipient):
+            raise ValueError('only Sandbox test-domain recipients are permitted')
+        if not isinstance(correlation_id,str) or not correlation_id or not isinstance(causation_id,str) or not causation_id:
+            raise ValueError('email correlation and causation IDs are required')
+        if not isinstance(subject,str) or not subject.strip() or len(subject)>998 or '\r' in subject or '\n' in subject:
+            raise ValueError('invalid email subject')
+        if not isinstance(body,str) or not body.strip() or len(body)>100000:
+            raise ValueError('invalid email body')
+        from .outbox import append_event
+        with self.repository.connection() as conn:
+            return append_event(conn,aggregate_id=causation_id,aggregate_type='email',
+                event_type='EmailRequested',event_version=1,
+                payload={'to':recipient,'subject':subject,'body':body},
+                correlation_id=correlation_id,causation_id=causation_id)
+
+    def claim_email_operation(self,owner):
+        return self.repository.claim_email_operation(owner)
+
+    def read_email_operation(self,event_id):
+        return self.repository.get_email_operation(event_id)
+
+    def cancel_email_operation(self,event_id,actor,expected_version):
+        operation=self.repository.get_email_operation(event_id)
+        decision=self.policy.email_cancellation(operation or {})
+        if decision.action!='cancel':
+            raise Conflict(decision.reason)
+        return self.repository.cancel_email_operation(event_id,actor,expected_version)
+
+    def reconcile_email_operation(self,event_id,actor,expected_version,outcome,evidence=None):
+        operation=self.repository.get_email_operation(event_id)
+        decision=self.policy.email_reconciliation(operation or {})
+        if decision.action!='reconcile':
+            raise Conflict(decision.reason)
+        provider=self.dispatcher.dispatch('email')
+        from .metrics import provider_call
+        provider_call('email','reconcile')
+        lookup=provider.reconcile({'event_id':event_id,'smtp_message_id':operation.get('smtp_message_id')})
+        # A caller may attach explicit, audited operator evidence. A provider's
+        # generic SMTP UNKNOWN is never treated as delivery evidence.
+        evidence=evidence or {}
+        if not evidence.get('reason'):
+            raise Conflict('manual verification reason is required')
+        if outcome=='delivered' and not (evidence.get('receipt') or evidence.get('provider_message_id')):
+            raise Conflict('delivery evidence is required')
+        if lookup.get('status') not in ('delivered','accepted') and not evidence:
+            raise Conflict('SMTP provider did not confirm delivery; manual evidence is required')
+        return self.repository.resolve_email_reconciliation(
+            event_id,actor,expected_version,outcome,evidence)
+
+    async def process_email_operation(self,operation,owner):
+        try:
+            decision=self.policy.email_operation(operation)
+            if decision.action!='dispatch':
+                await asyncio.to_thread(self.repository.fail_email_operation,
+                    operation['event_id'],owner,operation['attempt_count'],
+                    Classification.PERMANENT,decision.reason)
+                return
+            provider=self.dispatcher.dispatch('email')
+            from .metrics import provider_call,transport_dispatch
+            transport_dispatch('email'); provider_call('email','send')
+            message={**operation['payload'],'to':operation['recipient']}
+            result=await asyncio.to_thread(provider.send,message,operation['idempotency_key'])
+            await asyncio.to_thread(self.repository.finish_email_operation,
+                operation['event_id'],owner,operation['attempt_count'],result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            decision=self.policy.email_delivery_failure(exc,operation)
+            classification=(exc.classification if isinstance(exc,DeliveryError)
+                            else Classification.UNKNOWN)
+            reason=(exc.code if isinstance(exc,DeliveryError) else decision.reason)
+            try:
+                await asyncio.to_thread(self.repository.fail_email_operation,
+                    operation['event_id'],owner,operation['attempt_count'],classification,reason,
+                    getattr(exc,'retry_after',None))
+            except Conflict:
+                logging.getLogger(__name__).warning('Email operation fenced')
+            except Exception:
+                logging.getLogger(__name__).warning('Email operation state unavailable')
+
+    def prepare_crm_intake(self,payload,correlation_id,actor):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.prepare(payload,correlation_id,actor)
+
+    def approve_crm_intake(self,source_id,expected_version,actor):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.approve(source_id,expected_version,actor)
+
+    def read_crm_intake(self,source_id):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.get(source_id)
+
+    def read_crm_intake_events(self,source_id):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.events(source_id)
+
+    def reconcile_crm_intake(self,source_id,expected_version,outcome,evidence,actor,external_lead_id=None):
+        if self.intake_store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        return self.intake_store.reconcile(source_id,expected_version,outcome,evidence,actor,external_lead_id)
+
+    def read_crm_operation(self,event_id):
+        return self.repository.get_crm_operation(event_id)
+
+    def reconcile_crm_operation(self,event_id,actor,expected_version):
+        operation=self.repository.get_crm_operation(event_id)
+        decision=self.policy.crm_reconciliation(operation or {})
+        if decision.action!='reconcile':
+            raise Conflict(decision.reason)
+        provider=self.dispatcher.dispatch('crm')
+        from .metrics import provider_call
+        provider_call('crm','reconcile')
+        try:
+            evidence=provider.reconcile(operation['payload'])
+        except Exception as exc:
+            reason=exc.code if isinstance(exc,DeliveryError) else 'crm_reconciliation_unavailable'
+            evidence={}
+        else:
+            reason='provider_did_not_prove_outcome'
+        return self.repository.resolve_crm_reconciliation(
+            event_id,actor,evidence,reason,expected_version)
+
+    async def process_crm_operation(self, operation, owner):
+        """Deliver one replay-created CRM intent behind policy and lease fencing."""
+        try:
+            decision=self.policy.crm_operation(operation)
+            if decision.action!='dispatch':
+                await asyncio.to_thread(self.repository.fail_crm_operation,
+                    operation['event_id'],owner,operation['attempt_count'],
+                    Classification.UNKNOWN,decision.reason)
+                return
+            provider=self.dispatcher.dispatch('crm')
+            method=getattr(provider,operation['operation'])
+            from .metrics import provider_call,transport_dispatch
+            transport_dispatch('crm')
+            provider_call('crm',operation['operation'])
+            result=await asyncio.to_thread(method,operation['payload'],operation['idempotency_key'])
+            if not result.get('receipt_id') and not result.get('provider_receipt'):
+                raise DeliveryError(Classification.UNKNOWN,'crm_provider_receipt_missing')
+            if not result.get('external_booking_id') or not result.get('status'):
+                raise DeliveryError(Classification.UNKNOWN,'crm_provider_booking_evidence_missing')
+            await asyncio.to_thread(self.repository.finish_crm_operation,
+                operation['event_id'],owner,operation['attempt_count'],result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            decision=self.policy.crm_delivery_failure(exc,operation)
+            classification=(exc.classification if isinstance(exc,DeliveryError)
+                            else Classification.UNKNOWN)
+            reason=(exc.code if isinstance(exc,DeliveryError) else decision.reason)
+            try:
+                await asyncio.to_thread(self.repository.fail_crm_operation,
+                    operation['event_id'],owner,operation['attempt_count'],classification,
+                    reason,getattr(exc,'retry_after',None))
+            except Conflict:
+                logging.getLogger(__name__).warning('CRM operation fenced')
+            except Exception:
+                logging.getLogger(__name__).warning('CRM operation state unavailable')
+
+    async def process_crm_intake_operation(self, operation, owner):
+        """Dispatch only a durably stored, human-approved intake request."""
+        store = self.intake_store
+        if store is None:
+            raise RuntimeError('CRM intake store is unavailable')
+        try:
+            decision = self.policy.crm_intake_operation(operation)
+            if decision.action != 'dispatch':
+                await asyncio.to_thread(store.fail, operation['source_id'], owner,
+                    operation['attempt_count'], Classification.UNKNOWN, decision.reason)
+                return
+            provider = self.dispatcher.dispatch('crm-intake')
+            result = await asyncio.to_thread(provider.create_lead, operation['payload'])
+            await asyncio.to_thread(store.finish, operation['source_id'], owner,
+                operation['attempt_count'], result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            decision = self.policy.crm_intake_delivery_failure(exc, operation)
+            classification = (exc.classification if isinstance(exc, DeliveryError)
+                              else Classification.UNKNOWN)
+            reason = exc.code if isinstance(exc, DeliveryError) else decision.reason
+            try:
+                await asyncio.to_thread(store.fail, operation['source_id'], owner,
+                    operation['attempt_count'], classification, reason)
+            except Conflict:
+                logging.getLogger(__name__).warning('CRM intake operation fenced')
+            except Exception:
+                logging.getLogger(__name__).warning('CRM intake state unavailable')
 
     def approve(self, task_id, fingerprint, expires_at, actor):
         result=self.repository.approve(task_id,fingerprint,expires_at,actor)
@@ -153,10 +357,14 @@ class Orchestrator:
         name=getattr(provider,"provider","unknown")
         try:
             transport_dispatch(name)
-            provider_call(name,"send")
+            operation=task.get("operation")
+            method=getattr(provider,operation,None) if operation in ("send","update","cancel") else None
+            method=method or provider.send
+            provider_call(name,operation if method is not provider.send and operation else "send")
             key=f"{task['task_id']}:{task.get('action_fingerprint','')}"
-            return provider.send(task,key)
+            return method(task,key)
         except Exception as exc:
             if exc.__class__.__name__=="DispatcherError":
                 dispatcher_failure(str(exc))
             raise
+

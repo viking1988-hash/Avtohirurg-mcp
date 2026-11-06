@@ -32,16 +32,18 @@ def append_event(conn, *, aggregate_id, aggregate_type, event_type, event_versio
                  payload, correlation_id=None, causation_id=None):
     """Insert an outbox event in the caller's business transaction."""
     event_id = str(uuid.uuid4())
-    conn.execute(
+    row = conn.execute(
         """INSERT INTO jarvis_outbox_events
            (event_id,aggregate_id,aggregate_type,event_type,event_version,payload,
             correlation_id,causation_id,created_at,status)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,clock_timestamp(),'PENDING')
-           ON CONFLICT (causation_id,event_type) DO NOTHING""",
+           ON CONFLICT (causation_id,event_type) DO UPDATE
+             SET event_id=jarvis_outbox_events.event_id
+           RETURNING event_id""",
         (event_id, str(aggregate_id), aggregate_type, event_type, event_version,
          Jsonb(payload), correlation_id, causation_id),
     )
-    return event_id
+    return row.fetchone()["event_id"]
 
 
 class SubscriberRegistry:
@@ -329,3 +331,4 @@ class ReplayWorker:
                 await asyncio.wait_for(self.stop.wait(), self.poll_seconds)
             except asyncio.TimeoutError:
                 pass
+
